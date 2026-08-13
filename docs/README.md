@@ -1,5 +1,9 @@
 # Euclid docs
 
+These docs are maintained **with** the code, not after it: every change that
+affects behavior updates the relevant doc and plan markers in the same commit.
+See the mapping table in [CLAUDE.md](../CLAUDE.md) for which doc to touch.
+
 Two kinds of content live here:
 
 - **`docs/*.md`** — developer reference: how things work and why. Written for
