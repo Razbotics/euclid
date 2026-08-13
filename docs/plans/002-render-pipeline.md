@@ -35,13 +35,46 @@ failed → refunded to 92; a second failed PATCH returns `applied:false` and
 does **not** double-refund; a terminal job cannot be revived to `done`.
 Ledger shows `-8 render:<id>` then `+8 refund:<id> (simulated crash)`.
 
-## Phase 3: TTS
+## Phase 3: TTS  ← NEXT
 - [ ] `TtsProvider` adapter interface (synthesize → audio + word timings)
 - [ ] First provider, chosen for word-level timestamps
 - [ ] Audio stored in R2; `narration.audio` (assetId, duration, words)
       written back into the doc as an op, so the document stays the single
       source of truth
 - [ ] Credit metering for TTS minutes
+
+### Design decisions (already made — don't re-derive)
+
+**The DSL already models this.** `NarrationAudio { assetId, durationSec,
+words[] }` and the `narration.set` op exist in `packages/dsl`; `ActorSchema`
+already has a `system` actor. Writing generated audio back into the document
+needs no schema change.
+
+**Word-level timestamps are the selection criterion** for the provider, not
+voice quality. Timestamps are what later allow animations to anchor to
+narration beats (Phase 4 of the roadmap). OpenAI or Azure both expose them;
+ElevenLabs is the premium-voice upgrade later. Put it behind the adapter so
+the choice is reversible.
+
+**Generation is explicit, not implicit.** Add an MCP tool
+`generate_narration(projectId, sceneId)` that synthesizes, stores audio in
+R2, and submits a `narration.set` op with the audio attached — as a `system`
+actor. Rationale: the op flows through the Durable Object like any other
+mutation, so the editor sees narration appear live, and the agent can
+inspect the real duration before choreographing animation against it.
+Generating silently at render time would hide that from both.
+
+**Credits:** debit TTS minutes at generation time (`CREDIT_COSTS.ttsPerMinute`
+already exists), the same up-front pattern as renders. Refund on failure.
+
+### Open question to resolve early
+
+Scene duration vs narration duration. If a 12-second narration lands in an
+8-second scene, the options are: (a) auto-extend the scene, (b) reject the
+op and make the agent choose, (c) let it clip. Recommendation is (b) —
+return the mismatch to the agent as a tool error with both durations, since
+the agent is the one who can rewrite either the script or the timing. Decide
+this before wiring the renderer, because Phase 4 assumes audio fits.
 
 ## Phase 4: Audio in the export
 - [ ] Renderer fetches per-scene narration audio
