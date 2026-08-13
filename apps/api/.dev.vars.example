@@ -1,5 +1,0 @@
-# copy to .dev.vars for local `wrangler dev`
-BETTER_AUTH_SECRET=dev-secret-change-me
-STRIPE_SECRET_KEY=sk_test_xxx
-STRIPE_WEBHOOK_SECRET=whsec_xxx
-INTERNAL_API_KEY=dev-internal-key

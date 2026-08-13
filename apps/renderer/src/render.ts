@@ -1,3 +1,4 @@
+import './load-env'
 import { spawn } from 'node:child_process'
 import { parseArgs } from 'node:util'
 import { chromium } from 'playwright'

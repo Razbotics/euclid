@@ -58,36 +58,18 @@ the v1 primitives; graphs/axes and code blocks come later.
 
 ```sh
 pnpm install
-pnpm dev:web        # editor on :5173 (offline demo works with no backend)
-pnpm dev:api        # api on :8787 (needs .dev.vars — see apps/api/.dev.vars.example)
-pnpm dev:mcp        # mcp on :8788 (service-binds to the api)
+pnpm dev:api        # api on :8787 (D1 + Durable Objects)
+pnpm dev:mcp        # mcp on :8788 (service-binds to the api; start api first)
+pnpm dev:web        # editor on :5173 (?project=<id> to connect; no param = offline demo)
 pnpm typecheck      # all packages
-
-# smoke-test the doc→ops→sample pipeline
-pnpm --filter @euclid/renderer exec tsx src/smoke.ts
-
-# screenshot timeline moments through the real export surface (vite must be running)
-pnpm --filter @euclid/renderer exec tsx src/shot.ts 1.0 7.0
-
-# render the demo/an actual project to mp4 (vite + api running; needs ffmpeg)
-pnpm --filter @euclid/renderer render -- --project <id> --out out.mp4
+scripts/tunnel.sh   # public tunnel to local api (Better Auth dashboard, webhooks)
 ```
 
-First-time backend setup: `wrangler d1 create euclid` (put the id in
-`apps/api/wrangler.jsonc`), apply `apps/api/schema.sql`, generate Better Auth
-tables with `npx @better-auth/cli generate`.
+Config lives in the root `.env` (committed defaults) + `.env.local`
+(gitignored secrets/overrides). Full setup, env details, and the
+verification tools: **[docs/dev-setup.md](docs/dev-setup.md)**.
 
-## Status / roadmap
+## Docs & roadmap
 
-Done: DSL + reducer, sampler, Pixi stage (write-on, keyframe tracks, latex
-crossfade-morph — all verified frame-accurate), MCP tool layer, ProjectDO
-sync, editor with live preview/timeline/inspector, credit + Stripe scaffold,
-renderer script.
-
-Next, in order:
-1. **v1 milestone**: agent builds a 60s narrated equation-morph video E2E.
-2. MCP OAuth (workers-oauth-provider backed by Better Auth) so claude.ai connects.
-3. TTS adapter (word-timestamp provider first) + audio mux in the renderer.
-4. Render queue → Cloudflare Containers; upload MP4 to R2; job status updates.
-5. Dashboard UI: project list, credits page, auth screens.
-6. Matched-glyph LaTeX morphing (upgrade inside the existing texMorph seam).
+Developer reference and phased plans (with task completion markers) live in
+**[docs/](docs/README.md)**. Current status: [docs/plans/000-roadmap.md](docs/plans/000-roadmap.md).

@@ -1,0 +1,76 @@
+# Architecture
+
+Read the root [README](../README.md) first for the component map. This doc
+records the load-bearing decisions and their reasoning.
+
+## The purity invariant
+
+Rendering is a pure function of `(document, time)`. The sampler
+(`packages/engine/src/sampler.ts`) resolves any node at any `t` with no
+accumulated state, no wall-clock, no randomness. Consequences:
+
+- Browser preview and headless export run the same code → pixel-identical.
+- Scrubbing is just evaluation at a different `t` — no simulation to replay.
+- The export worker double-renders each frame around `stage.whenIdle()` so
+  async LaTeX textures never produce half-loaded frames.
+
+Anything that would break this (physics, particles) must be expressed as a
+deterministic function of `t` when it's added.
+
+## Document model
+
+`packages/dsl` defines the scene document: project → scenes (sequential on
+the global timeline) → nodes (rect/circle/line/text/latex/group). Animation:
+
+- **Tracks** — per-property keyframes (`position`, `opacity`, `fill`, …),
+  eased per-segment (`smooth` = 3b1b smootherstep). The generic mechanism.
+- **Transitions** — effects not expressible as property keyframes: `write`
+  (draw-on reveal) and `texMorph` (equation morph; currently a crossfade,
+  planned upgrade to matched-glyph inside the same seam).
+
+Agent-facing sugar (`animate`, `write_on`, …) lives in the MCP layer and
+compiles to tracks/transitions; the document stays low-level and uniform so
+the timeline editor and the reducer only deal with one representation.
+
+## Sync: serialized ops + event log (deliberately not CRDT)
+
+Every writer — editor UI, MCP agent, system jobs — submits an `OpEnvelope`
+(`baseVersion`, actor, ≤50 ops) to the project's Durable Object. The DO is
+the single writer: it applies the envelope through the shared reducer
+(`applyOps`), bumps the version, appends the envelope to an event log, and
+broadcasts it to all WebSocket subscribers. Stale `baseVersion` → 409, the
+writer refetches and rebases (the MCP worker auto-retries ×3).
+
+Why not CRDT: a keyframe timeline has semantic conflicts (two writers moving
+the same clip) that CRDTs merge syntactically but wrongly. A single
+serialization point with rebase gives simpler semantics, plus free
+undo/history from the event log. The editor doesn't even apply its own edits
+optimistically — it waits for the WS echo, which at local latencies is
+imperceptible and guarantees convergence.
+
+Validation is layered: Zod schema on the envelope (bad shape → 400), reducer
+invariants (missing node, duplicate id → 422), and a full-document re-parse
+after each envelope so no op sequence can persist an invalid document.
+
+## Render path
+
+`apps/web/render.html` exposes `window.__euclid.{load, renderFrame}`.
+`apps/renderer` drives it in headless Chromium, screenshots the canvas per
+frame, and pipes PNGs into ffmpeg. Target: Cloudflare Containers consuming a
+Queue that `POST /render` feeds. Credits are debited at enqueue time
+(per-second × resolution, see `packages/dsl/src/limits.ts`).
+
+## Auth, credits, tenancy
+
+Better Auth (D1) owns identity; the same instance will back the MCP worker's
+OAuth so claude.ai can connect. Credits meter renders + TTS only — agent
+iteration must stay free (users burn their own Claude tokens over MCP), so
+MCP tools return compact text (outlines, ids) rather than anything expensive.
+Projects are single-user in v1; the DO/event-log design already supports
+multi-writer, so collaboration is an authorization feature, not a rewrite.
+
+## Dev-only auth bypass
+
+`DEV_ALLOW_ANON=1` (root `.env`) lets sessionless requests act as
+`dev-user` so the editor works before auth UI exists. The flag must never be
+set in production; the middleware checks the real session first either way.

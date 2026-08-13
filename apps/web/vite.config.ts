@@ -4,6 +4,8 @@ import { resolve } from 'node:path'
 
 export default defineConfig({
   plugins: [react()],
+  // VITE_* vars come from the repo-root .env / .env.local
+  envDir: resolve(__dirname, '../..'),
   build: {
     rollupOptions: {
       input: {

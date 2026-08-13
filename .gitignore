@@ -6,5 +6,5 @@ dist/
 .DS_Store
 *.mp4
 frames/
-.env
+.env.local
 apps/renderer/*.png

@@ -21,3 +21,9 @@ Read README.md for architecture. Non-negotiables when changing code:
 - Verify visual changes with
   `pnpm --filter @euclid/renderer exec tsx src/shot.ts <t...>` (vite dev
   server must be running) and read the PNGs.
+- **Docs discipline**: reference docs live in `docs/`, phased plans in
+  `docs/plans/` with `- [ ]`/`- [x]` task markers. When you complete plan
+  work, flip the markers in the same commit. New significant work starts a
+  new `NNN-name.md` plan. Env changes go in root `.env` (safe defaults) or
+  `.env.local` (secrets — never committed); `.dev.vars` files are generated,
+  never hand-edited.

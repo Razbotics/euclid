@@ -3,6 +3,7 @@
  * real export surface (render.html). Verifies the full Pixi + MathJax path.
  *   pnpm --filter @euclid/renderer exec tsx src/shot.ts 1.0 7.0
  */
+import './load-env'
 import { chromium } from 'playwright'
 import { demoDoc } from '../../web/src/demo'
 

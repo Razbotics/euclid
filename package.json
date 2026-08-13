@@ -4,8 +4,9 @@
   "packageManager": "pnpm@10.33.4",
   "scripts": {
     "typecheck": "pnpm -r typecheck",
+    "sync-env": "node scripts/sync-env.mjs",
     "dev:web": "pnpm --filter @euclid/web dev",
-    "dev:api": "pnpm --filter @euclid/api dev",
-    "dev:mcp": "pnpm --filter @euclid/mcp dev"
+    "dev:api": "node scripts/sync-env.mjs && pnpm --filter @euclid/api dev",
+    "dev:mcp": "node scripts/sync-env.mjs && pnpm --filter @euclid/mcp dev"
   }
 }

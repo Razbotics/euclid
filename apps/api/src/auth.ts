@@ -17,7 +17,7 @@ export function makeAuth(env: Env) {
     },
     secret: env.BETTER_AUTH_SECRET,
     baseURL: undefined,
-    trustedOrigins: [env.APP_ORIGIN],
+    trustedOrigins: [env.APP_ORIGIN, ...(env.TUNNEL_ORIGIN ? [env.TUNNEL_ORIGIN] : [])],
     emailAndPassword: { enabled: true },
   })
 }
