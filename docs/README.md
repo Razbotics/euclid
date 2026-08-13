@@ -30,6 +30,7 @@ Two kinds of content live here:
 | [architecture.md](architecture.md) | System shape: document model, sync, render path, credits |
 | [dev-setup.md](dev-setup.md) | Local environment, commands, verification tools |
 | [mcp-tools.md](mcp-tools.md) | The agent-facing tool surface and its semantics |
+| [market.md](market.md) | Competitive landscape, monetization evidence, strategy |
 
 | Plan | Scope |
 |---|---|
