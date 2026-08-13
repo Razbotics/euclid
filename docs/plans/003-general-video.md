@@ -79,6 +79,50 @@ Two paths:
 Recommendation: WebCodecs, and note that it pays for itself on the existing
 vector path regardless of whether the pivot completes.
 
+#### Server reality — measured, not assumed (2026-08-14)
+
+WebCodecs is a browser API, and the renderer already runs headless Chromium
+in a container, so the topology doesn't change. What *does* change by
+environment is which codecs exist. Measured with `bench-webcodecs.ts`
+locally and the same benchmark inside `mcr.microsoft.com/playwright:v1.62.1-noble`
+(GPU disabled, `--use-gl=swiftshader`, i.e. what a CPU-only container gives):
+
+| Environment | H.264 | VP9 / VP8 / AV1 | 1080p encode |
+|---|---|---|---|
+| macOS (local) | **yes** (Main L4.0) | yes | ~169–179 fps |
+| Linux container | **no** | yes | ~114 fps (VP9) |
+
+Two conclusions:
+
+1. **Chromium on Linux has no H.264 *encoder*.** Both `avc1.4d0028` and
+   `avc1.640028` report unsupported in a stock container — the known
+   licensing/build situation, not a misconfiguration. Any design that assumes
+   in-browser H.264 will work locally and fail in production.
+2. **Hardware acceleration is irrelevant here.** Disabling the GPU locally
+   made encoding *slightly faster* (179 vs 169 fps), so it was already
+   software-encoding. [Cloudflare Containers have no GPU](https://developers.cloudflare.com/changelog/product/containers/)
+   (GPU is Workers AI only), and that turns out not to matter.
+
+So the pipeline should be: **encode VP9 in-browser → transfer chunks (~15 KB
+a frame, versus 1–2 MB of PNG) → mux to WebM → transcode to H.264/MP4 with
+ffmpeg only where MP4 is required.** ffmpeg has libx264 and is already in the
+image. The double encode costs some CPU, but the PNG round-trip that
+currently dominates is gone either way. Deliver WebM directly where the
+target is the web.
+
+#### Unmeasured risk: WebGL under SwiftShader
+
+The container benchmark encoded a 2D canvas. It did **not** measure Pixi's
+WebGL rendering, which in a GPU-less container falls back to SwiftShader
+(software rasterization). That cost is unknown and applies to the *current*
+renderer too — `render.ts` has only ever been run on macOS with a real GPU.
+
+**Next concrete step before committing to Cloudflare Containers:** run the
+existing `render.ts` inside the Linux image against a real project and
+measure end-to-end fps. If SwiftShader is the bottleneck rather than
+encoding, the answer changes (bigger instance types, or a GPU host
+elsewhere, or moving compositing to ffmpeg).
+
 ### 5. Ingest + analysis subsystem (new)
 `link or upload → fetch → transcode + proxy → probe → STT transcript →
 shot/scene detection → candidate segments`.

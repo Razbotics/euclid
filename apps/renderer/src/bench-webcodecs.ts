@@ -57,7 +57,16 @@ const script = /* js */ `(async () => {
   return { supported: true, support, encoded, bytes, ms, codec }
 })()`
 
-const browser = await chromium.launch({ args: ['--force-color-profile=srgb'] })
+// --no-gpu approximates a CPU-only Linux container (SwiftShader for WebGL,
+// software video encoding) — i.e. what Cloudflare Containers / ECS give you.
+const noGpu = process.argv.includes('--no-gpu')
+const browser = await chromium.launch({
+  args: [
+    '--force-color-profile=srgb',
+    ...(noGpu ? ['--disable-gpu', '--use-gl=swiftshader', '--disable-accelerated-video-encode'] : []),
+  ],
+})
+console.log(noGpu ? '(simulating CPU-only server: GPU disabled)' : '(local, GPU available)')
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } })
 page.on('pageerror', (e) => console.error('[pageerror]', e.message))
 await page.goto(PAGE, { waitUntil: 'domcontentloaded' })
