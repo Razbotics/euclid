@@ -19,12 +19,16 @@ files; this file tracks the big picture.
 - [x] Root .env/.env.local system + Cloudflare tunnel script
 - [x] Better Auth cloud dashboard connected via tunnel
 
-## Phase 2: v1 milestone — 60s narrated equation-morph video E2E
+## Phase 2: v1 milestone — 60s narrated equation-morph video E2E → plans/002-render-pipeline.md
+- [x] Silent MP4 export verified end-to-end (animation confirmed in the file, not just a file produced)
+- [ ] Close the render job loop: R2 upload, job status, download URL, refund on failure
 - [ ] TTS adapter interface + first provider (word timestamps)
-- [ ] Narration audio generation + storage in R2, wordTimings into the doc
+- [ ] Narration audio in R2, wordTimings into the doc
 - [ ] Renderer: mux narration audio into the MP4
-- [ ] Render queue (Cloudflare Queues) → renderer container; job status updates; MP4 to R2
 - [ ] Run the milestone: agent builds the full video over MCP, human tweaks in editor, export downloads
+
+Render queue (Cloudflare Queues → Containers) is deliberately deferred until
+after the milestone — see plans/002 for the reasoning.
 
 ## Phase 3: Real users
 - [ ] MCP OAuth (workers-oauth-provider + Better Auth) — claude.ai connects
