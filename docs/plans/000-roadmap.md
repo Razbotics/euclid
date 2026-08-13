@@ -22,8 +22,10 @@ files; this file tracks the big picture.
 ## Phase 2: v1 milestone — 60s narrated equation-morph video E2E → plans/002-render-pipeline.md
 - [x] Silent MP4 export verified end-to-end (animation confirmed in the file, not just a file produced)
 - [x] Close the render job loop: R2 upload, job status, download URL, refund on failure
-- [ ] TTS adapter interface + first provider (word timestamps)
-- [ ] Narration audio in R2, wordTimings into the doc
+- [x] Asset registry (`assets` table + routes) — prerequisite for narration
+      audio; also the Phase 4 "assets as first-class" down payment
+- [x] TTS adapter interface + ElevenLabs provider (word timestamps)
+- [x] Narration audio in R2, wordTimings into the doc
 - [x] Captions: SRT/VTT export, document-derived (upgrades to word-accurate when TTS lands)
 - [ ] Renderer: mux narration audio into the MP4
 - [ ] Run the milestone: agent builds the full video over MCP, human tweaks in editor, export downloads
@@ -48,6 +50,13 @@ reel/clip workflows.
 - [ ] Ingest + analysis (fetch → transcode → STT → shot detection → segments)
 - [ ] Decide the rights/ToS model **before** building the ingest fetcher
 - [ ] Narration-anchored animation (sync to word timestamps)
+
+## Parallel track: desktop app → plans/004-desktop.md
+Evaluated, deliberately not started. Everything that breaks on the server
+(no H.264 encoder, no GPU, SwiftShader) is abundant on the desktop, and
+local rendering inverts the cost model. Revisit when the general-video
+direction is confirmed, container render cost becomes a constraint, or users
+prove unwilling to upload source footage.
 
 ## Phase 5: Vertical depth (deprioritized by the Phase 4 change)
 - [ ] Matched-glyph LaTeX morphing (upgrade inside texMorph seam)
