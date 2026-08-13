@@ -48,6 +48,10 @@ pnpm exec wrangler d1 execute euclid --local --file=./schema.sql       # app tab
 pnpm exec wrangler d1 execute euclid --local --file=./auth-schema.sql  # better auth tables
 ```
 
+`schema.sql` is idempotent (`CREATE TABLE IF NOT EXISTS`), so re-run it with
+`pnpm --filter @euclid/api db:migrate:local` after pulling a schema change —
+an existing local DB won't pick up a new table on its own.
+
 ## Daily loop
 
 ```sh
@@ -87,9 +91,11 @@ every run** — re-run and re-paste after restarting.
 | `smoke.ts` | reducer + sampler math, no browser |
 | `smoke-captions.ts` | cue generation at both fidelities, SRT/VTT formatting |
 | `shot.ts <t...>` | pixel-accurate frames of the demo doc through the export surface |
+| `check-assets.ts` | asset upload → download is byte-identical; tenancy enforced (needs `dev:api`) |
 | `check-app.ts` | editor loads with zero console/page errors |
 | `check-live.ts <projectId>` | external op appears in the open editor via WebSocket |
 | `render.ts --project <id>` | full MP4 export (needs ffmpeg) |
+| `bench-webcodecs.ts` | WebCodecs codec support + 1080p encode throughput in headless Chromium |
 
 Run any of them with `pnpm --filter @euclid/renderer exec tsx src/<script>`.
 Visual changes should be verified with screenshots (Read the PNGs), not by
