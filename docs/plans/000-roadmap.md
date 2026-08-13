@@ -21,7 +21,7 @@ files; this file tracks the big picture.
 
 ## Phase 2: v1 milestone — 60s narrated equation-morph video E2E → plans/002-render-pipeline.md
 - [x] Silent MP4 export verified end-to-end (animation confirmed in the file, not just a file produced)
-- [ ] Close the render job loop: R2 upload, job status, download URL, refund on failure
+- [x] Close the render job loop: R2 upload, job status, download URL, refund on failure
 - [ ] TTS adapter interface + first provider (word timestamps)
 - [ ] Narration audio in R2, wordTimings into the doc
 - [ ] Renderer: mux narration audio into the MP4

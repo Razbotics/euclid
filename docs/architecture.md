@@ -65,8 +65,20 @@ are priced against.
 `apps/web/render.html` exposes `window.__euclid.{load, renderFrame}`.
 `apps/renderer` drives it in headless Chromium, screenshots the canvas per
 frame, and pipes PNGs into ffmpeg. Target: Cloudflare Containers consuming a
-Queue that `POST /render` feeds. Credits are debited at enqueue time
-(per-second × resolution, see `packages/dsl/src/limits.ts`).
+Queue that `POST /render` feeds (queue deferred — see plans/002).
+
+Job lifecycle: `POST /render` prices the video (per-second × resolution, see
+`packages/dsl/src/limits.ts`), debits credits up front, and creates a
+`queued` job. The render worker then drives it — `rendering`, upload the MP4
+to R2 via `PUT /api/jobs/:id/output`, `done` — or marks it `failed`, which
+**refunds the credits automatically**. Terminal states are final at the SQL
+level (the UPDATE matches only non-terminal rows and the refund is gated on
+whether it applied), so a retried or duplicated callback cannot double-refund.
+Finished videos are streamed back through `GET /api/jobs/:id/download`.
+
+URLs handed to clients are built from `PUBLIC_API_ORIGIN`, never from the
+request origin: service-binding calls from the MCP worker arrive with an
+internal hostname and would otherwise produce unusable links.
 
 ## Auth, credits, tenancy
 

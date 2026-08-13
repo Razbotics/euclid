@@ -3,6 +3,13 @@ export interface Env {
   DB: D1Database
   ASSETS: R2Bucket
   APP_ORIGIN: string
+  /**
+   * Public origin of this API, used to build URLs handed to clients.
+   * Required because service-binding requests (from the MCP worker) arrive
+   * with an internal hostname — deriving the origin from the request would
+   * produce unusable links like https://api/...
+   */
+  PUBLIC_API_ORIGIN?: string
   BETTER_AUTH_SECRET: string
   /** Better Auth cloud dashboard key (optional; from .env.local). */
   BETTER_AUTH_API_KEY?: string

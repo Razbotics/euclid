@@ -24,8 +24,8 @@ The agent-facing API (`apps/mcp/src/index.ts`). Design rules:
 | `morph_latex` | queues a `texMorph` transition; multiple morphs chain in start-time order |
 | `write_on` | draw-on reveal; node invisible before `start` |
 | `set_narration` | per-scene narration script; TTS generated at render time |
-| `render_video` | **spends credits**; returns job id |
-| `get_render_status` | recent jobs for a project |
+| `render_video` | **spends credits** up front; returns a job id. The render worker completes the job asynchronously |
+| `get_render_status` | recent jobs; a `done` job carries `downloadUrl` for the MP4, and a `failed` job has already had its credits refunded |
 
 Auth: currently `dev-user` via the internal service key. TODO: OAuth
 (workers-oauth-provider backed by the API's Better Auth) so claude.ai

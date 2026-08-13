@@ -125,6 +125,7 @@ app.post('/api/projects/:id/render', async (c) => {
   // TODO(render): push jobId onto a Cloudflare Queue consumed by the container
   // worker (apps/renderer). Until the queue is wired, run the renderer manually:
   //   pnpm --filter @euclid/renderer render -- --project <id> --job <jobId>
+  // The worker then drives this job to done/failed (failure refunds the cost).
   return c.json({ jobId, cost, seconds, status: 'queued' })
 })
 
@@ -133,8 +134,122 @@ app.get('/api/projects/:id/renders', async (c) => {
     'SELECT id, status, cost, output_key, created_at FROM render_jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT 20',
   )
     .bind(c.req.param('id'))
-    .all()
-  return c.json({ jobs: rows.results })
+    .all<RenderJobRow>()
+  const origin = publicOrigin(c)
+  return c.json({
+    jobs: rows.results.map((j) => ({ ...j, downloadUrl: downloadUrlFor(origin, j) })),
+  })
+})
+
+// ---------- render jobs (lifecycle driven by the render worker) ----------
+
+interface RenderJobRow {
+  id: string
+  project_id?: string
+  user_id?: string
+  status: string
+  cost: number
+  output_key: string | null
+  created_at: number
+}
+
+const JOB_TERMINAL = ['done', 'failed']
+
+function downloadUrlFor(origin: string, job: { id: string; status: string; output_key: string | null }) {
+  return job.status === 'done' && job.output_key ? `${origin}/api/jobs/${job.id}/download` : null
+}
+
+/**
+ * Origin to use in client-facing URLs. Service-binding requests (MCP worker)
+ * have an internal hostname, so a configured origin always wins.
+ */
+function publicOrigin(c: { env: Env; req: { url: string } }): string {
+  return c.env.PUBLIC_API_ORIGIN ?? new URL(c.req.url).origin
+}
+
+/** Service-to-service calls only (render worker), not just any authenticated user. */
+function isInternal(c: { req: { header: (k: string) => string | undefined }; env: Env }): boolean {
+  const key = c.req.header('x-internal-key')
+  return !!key && key === c.env.INTERNAL_API_KEY
+}
+
+async function loadJob(env: Env, jobId: string): Promise<RenderJobRow & { user_id: string } | null> {
+  return env.DB.prepare('SELECT * FROM render_jobs WHERE id = ?')
+    .bind(jobId)
+    .first<RenderJobRow & { user_id: string }>()
+}
+
+app.get('/api/jobs/:jobId', async (c) => {
+  const job = await loadJob(c.env, c.req.param('jobId'))
+  if (!job) return c.json({ error: 'job_not_found' }, 404)
+  const userId = c.get('userId')
+  if (job.user_id !== userId && userId !== 'internal') return c.json({ error: 'forbidden' }, 403)
+  return c.json({ job: { ...job, downloadUrl: downloadUrlFor(publicOrigin(c), job) } })
+})
+
+/**
+ * Status transitions from the render worker. Terminal states are final, so a
+ * retry or duplicate callback can't double-refund: the UPDATE only matches
+ * non-terminal rows and the refund is gated on it having actually applied.
+ */
+app.patch('/api/jobs/:jobId', async (c) => {
+  if (!isInternal(c)) return c.json({ error: 'forbidden' }, 403)
+  const { status, error } = (await c.req.json()) as { status: string; error?: string }
+  if (!['rendering', 'done', 'failed'].includes(status)) {
+    return c.json({ error: 'invalid_status' }, 400)
+  }
+  const jobId = c.req.param('jobId')
+  const job = await loadJob(c.env, jobId)
+  if (!job) return c.json({ error: 'job_not_found' }, 404)
+
+  const res = await c.env.DB.prepare(
+    `UPDATE render_jobs SET status = ?, updated_at = ?
+     WHERE id = ? AND status NOT IN (${JOB_TERMINAL.map(() => '?').join(',')})`,
+  )
+    .bind(status, Date.now(), jobId, ...JOB_TERMINAL)
+    .run()
+
+  const applied = (res.meta?.changes ?? 0) > 0
+  if (applied && status === 'failed') {
+    await adjustCredits(c.env, job.user_id, job.cost, `refund:${jobId}${error ? ` (${error})` : ''}`)
+  }
+  return c.json({ status: applied ? status : job.status, applied, refunded: applied && status === 'failed' })
+})
+
+/** Render worker uploads the finished MP4 here; body is the raw file. */
+app.put('/api/jobs/:jobId/output', async (c) => {
+  if (!isInternal(c)) return c.json({ error: 'forbidden' }, 403)
+  const jobId = c.req.param('jobId')
+  const job = await loadJob(c.env, jobId)
+  if (!job) return c.json({ error: 'job_not_found' }, 404)
+  if (!c.req.raw.body) return c.json({ error: 'empty_body' }, 400)
+
+  const key = `renders/${job.project_id}/${jobId}.mp4`
+  await c.env.ASSETS.put(key, c.req.raw.body, {
+    httpMetadata: { contentType: 'video/mp4' },
+  })
+  await c.env.DB.prepare('UPDATE render_jobs SET output_key = ?, updated_at = ? WHERE id = ?')
+    .bind(key, Date.now(), jobId)
+    .run()
+  return c.json({ key })
+})
+
+app.get('/api/jobs/:jobId/download', async (c) => {
+  const job = await loadJob(c.env, c.req.param('jobId'))
+  if (!job) return c.json({ error: 'job_not_found' }, 404)
+  const userId = c.get('userId')
+  if (job.user_id !== userId && userId !== 'internal') return c.json({ error: 'forbidden' }, 403)
+  if (!job.output_key) return c.json({ error: 'not_ready', status: job.status }, 409)
+
+  const object = await c.env.ASSETS.get(job.output_key)
+  if (!object) return c.json({ error: 'output_missing' }, 410)
+  return new Response(object.body, {
+    headers: {
+      'content-type': 'video/mp4',
+      'content-length': String(object.size),
+      'content-disposition': `attachment; filename="euclid-${job.id}.mp4"`,
+    },
+  })
 })
 
 function projectStub(env: Env, projectId: string): DurableObjectStub {

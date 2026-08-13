@@ -385,7 +385,7 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
 
     this.server.tool(
       'get_render_status',
-      'Status of recent render jobs for a project.',
+      'Status of recent render jobs for a project. A finished job includes downloadUrl for the MP4; a failed job has had its credits refunded.',
       { projectId: z.string() },
       async ({ projectId }) => {
         const res = await this.api(`/api/projects/${projectId}/renders`)

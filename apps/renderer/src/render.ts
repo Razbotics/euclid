@@ -1,5 +1,8 @@
 import './load-env'
 import { spawn } from 'node:child_process'
+import { readFile, unlink } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { chromium } from 'playwright'
 import { docDuration, type EuclidDoc } from '@euclid/dsl'
@@ -13,11 +16,15 @@ import { docDuration, type EuclidDoc } from '@euclid/dsl'
  * /render endpoint pushes to. Runs identically on a laptop:
  *   pnpm --filter @euclid/renderer render -- --project <id> --out out.mp4
  *
+ * With --job it drives the job lifecycle: marks the job `rendering`, uploads
+ * the MP4 to R2 through the API, marks it `done` — or marks it `failed`,
+ * which refunds the user's credits. Without --job it just writes a local file.
+ *
  * Env: API_URL (default http://localhost:8787), INTERNAL_API_KEY,
  *      RENDER_PAGE_URL (default http://localhost:5173/render.html)
  *
- * TODO(pipeline): upload result to R2, PATCH render_jobs status, mux TTS
- * narration audio (generated per scene via the TTS adapter) with -i audio.
+ * TODO(pipeline): mux TTS narration audio (generated per scene via the TTS
+ * adapter) into the ffmpeg invocation.
  */
 
 const { values: args } = parseArgs({
@@ -34,13 +41,36 @@ if (!args.project) {
 
 const API_URL = process.env.API_URL ?? 'http://localhost:8787'
 const RENDER_PAGE_URL = process.env.RENDER_PAGE_URL ?? 'http://localhost:5173/render.html'
+const INTERNAL_HEADERS = {
+  'x-internal-key': process.env.INTERNAL_API_KEY ?? 'dev-internal-key',
+  'x-user-id': 'internal',
+}
+
+async function setJobStatus(status: 'rendering' | 'done' | 'failed', error?: string): Promise<void> {
+  if (!args.job) return
+  const res = await fetch(`${API_URL}/api/jobs/${args.job}`, {
+    method: 'PATCH',
+    headers: { ...INTERNAL_HEADERS, 'content-type': 'application/json' },
+    body: JSON.stringify({ status, error }),
+  })
+  if (!res.ok) console.error(`warn: job status → ${status} failed: ${res.status} ${await res.text()}`)
+}
+
+async function uploadOutput(file: string): Promise<void> {
+  if (!args.job) return
+  const body = await readFile(file)
+  const res = await fetch(`${API_URL}/api/jobs/${args.job}/output`, {
+    method: 'PUT',
+    headers: { ...INTERNAL_HEADERS, 'content-type': 'video/mp4' },
+    body,
+  })
+  if (!res.ok) throw new Error(`upload failed: ${res.status} ${await res.text()}`)
+  console.log(`uploaded ${(body.byteLength / 1024).toFixed(0)}KiB → ${(await res.json() as {key:string}).key}`)
+}
 
 async function main() {
   const docRes = await fetch(`${API_URL}/api/projects/${args.project}/doc`, {
-    headers: {
-      'x-internal-key': process.env.INTERNAL_API_KEY ?? 'dev-internal-key',
-      'x-user-id': 'internal',
-    },
+    headers: INTERNAL_HEADERS,
   })
   if (!docRes.ok) throw new Error(`doc fetch failed: ${docRes.status} ${await docRes.text()}`)
   const { doc } = (await docRes.json()) as { doc: EuclidDoc }
@@ -49,51 +79,68 @@ async function main() {
   const totalFrames = Math.ceil(docDuration(doc) * fps)
   console.log(`rendering "${doc.name}": ${totalFrames} frames @ ${fps}fps (${doc.canvas.width}x${doc.canvas.height})`)
 
+  // With a job the artifact belongs in R2, so --out is bypassed for a temp file.
+  const outPath = args.job ? join(tmpdir(), `euclid-${args.job}.mp4`) : args.out!
+  await setJobStatus('rendering')
+
   const browser = await chromium.launch({
     args: ['--force-color-profile=srgb', '--disable-lcd-text'],
   })
-  const page = await browser.newPage({
-    viewport: { width: doc.canvas.width, height: doc.canvas.height },
-    deviceScaleFactor: 1,
-  })
-  await page.goto(RENDER_PAGE_URL, { waitUntil: 'networkidle' })
-  await page.evaluate((d) => window.__euclid.load(d), doc as unknown)
+  try {
+    const page = await browser.newPage({
+      viewport: { width: doc.canvas.width, height: doc.canvas.height },
+      deviceScaleFactor: 1,
+    })
+    await page.goto(RENDER_PAGE_URL, { waitUntil: 'networkidle' })
+    await page.evaluate((d) => window.__euclid.load(d), doc as unknown)
 
-  const ffmpeg = spawn(
-    'ffmpeg',
-    [
-      '-y',
-      '-f', 'image2pipe',
-      '-framerate', String(fps),
-      '-i', '-',
-      '-c:v', 'libx264',
-      '-pix_fmt', 'yuv420p',
-      '-crf', '18',
-      args.out!,
-    ],
-    { stdio: ['pipe', 'inherit', 'inherit'] },
-  )
-
-  const canvas = page.locator('#euclid-canvas')
-  for (let f = 0; f < totalFrames; f++) {
-    const t = f / fps
-    await page.evaluate((tt) => window.__euclid.renderFrame(tt), t)
-    const png = await canvas.screenshot({ type: 'png' })
-    await new Promise<void>((resolve, reject) =>
-      ffmpeg.stdin.write(png, (err) => (err ? reject(err) : resolve())),
+    const ffmpeg = spawn(
+      'ffmpeg',
+      [
+        '-y',
+        '-f', 'image2pipe',
+        '-framerate', String(fps),
+        '-i', '-',
+        '-c:v', 'libx264',
+        '-pix_fmt', 'yuv420p',
+        '-crf', '18',
+        outPath,
+      ],
+      { stdio: ['pipe', 'inherit', 'inherit'] },
     )
-    if (f % (fps * 5) === 0) console.log(`  frame ${f}/${totalFrames}`)
+
+    const canvas = page.locator('#euclid-canvas')
+    for (let f = 0; f < totalFrames; f++) {
+      const t = f / fps
+      await page.evaluate((tt) => window.__euclid.renderFrame(tt), t)
+      const png = await canvas.screenshot({ type: 'png' })
+      await new Promise<void>((resolve, reject) =>
+        ffmpeg.stdin.write(png, (err) => (err ? reject(err) : resolve())),
+      )
+      if (f % (fps * 5) === 0) console.log(`  frame ${f}/${totalFrames}`)
+    }
+
+    ffmpeg.stdin.end()
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code}`))))
+    })
+  } finally {
+    await browser.close()
   }
 
-  ffmpeg.stdin.end()
-  await new Promise<void>((resolve, reject) => {
-    ffmpeg.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code}`))))
-  })
-  await browser.close()
-  console.log(`done → ${args.out}`)
+  if (args.job) {
+    await uploadOutput(outPath)
+    await setJobStatus('done')
+    await unlink(outPath).catch(() => {})
+    console.log(`done → job ${args.job}`)
+  } else {
+    console.log(`done → ${outPath}`)
+  }
 }
 
-main().catch((e) => {
+main().catch(async (e) => {
   console.error(e)
+  // Marking failed refunds the user's credits; never leave a paid job stuck.
+  await setJobStatus('failed', e instanceof Error ? e.message : String(e)).catch(() => {})
   process.exit(1)
 })

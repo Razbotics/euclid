@@ -18,15 +18,22 @@ Measured: 480 frames in ~29s (~16.5 fps capture, ~3.6× realtime). A 60s
 video costs ~3.6 min; the 10-min ceiling costs ~36 min. Acceptable for v1,
 but see "Known issues" before scaling.
 
-## Phase 2: Close the render job loop
-`POST /render` currently debits credits and creates a job row that nothing
-consumes — a user can pay and receive nothing. This phase makes the endpoint
-honor what it charges for.
-- [ ] Renderer uploads the finished MP4 to R2 under the job's key
-- [ ] Renderer PATCHes `render_jobs` status (rendering → done/failed)
-- [ ] API exposes a download URL for a finished job
-- [ ] Refund credits automatically when a job fails
-- [ ] `get_render_status` MCP tool returns the URL when ready
+## Phase 2: Close the render job loop (status: done)
+`POST /render` debited credits and created a job row that nothing consumed —
+a user could pay and receive nothing. Now the endpoint honors what it charges.
+- [x] Renderer uploads the finished MP4 to R2 under the job's key
+      (`PUT /api/jobs/:id/output`, internal-key only)
+- [x] Renderer PATCHes `render_jobs` status (queued → rendering → done/failed)
+- [x] API exposes a download URL for a finished job, streamed from R2
+- [x] Refund credits automatically when a job fails
+- [x] `get_render_status` MCP tool returns the URL when ready
+
+Verified end-to-end: 100 credits → job costs 8 → balance 92 → render →
+`done` with a download URL → downloaded file is byte-identical (91,053 B) and
+probes as 1920x1080, 480 frames, 8.000s. Failure path: balance 84 → PATCH
+failed → refunded to 92; a second failed PATCH returns `applied:false` and
+does **not** double-refund; a terminal job cannot be revived to `done`.
+Ledger shows `-8 render:<id>` then `+8 refund:<id> (simulated crash)`.
 
 ## Phase 3: TTS
 - [ ] `TtsProvider` adapter interface (synthesize → audio + word timings)
@@ -55,6 +62,16 @@ honor what it charges for.
   the output is worth automating.
 - **MCP OAuth.** Gates other people using this, not the milestone. The
   internal-key path works for first-party testing.
+
+## Notes / gotchas
+- Client-facing URLs must be built from `PUBLIC_API_ORIGIN`, not from the
+  request. Service-binding calls (MCP worker → API) arrive with the internal
+  hostname, so deriving the origin produced an unusable `https://api/...`
+  download link for agents. Caught only by fetching the URL an agent actually
+  receives.
+- Refund idempotency comes from the SQL, not application logic: the UPDATE
+  matches only non-terminal rows and the refund is gated on `meta.changes`,
+  so duplicate or retried callbacks can't pay a user twice.
 
 ## Known issues
 - Capture speed is bounded by one `page.screenshot()` round-trip per frame.
