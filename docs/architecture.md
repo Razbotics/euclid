@@ -52,6 +52,14 @@ Validation is layered: Zod schema on the envelope (bad shape → 400), reducer
 invariants (missing node, duplicate id → 422), and a full-document re-parse
 after each envelope so no op sequence can persist an invalid document.
 
+## Product ceilings (v1)
+
+1080p max, 30 or 60 fps, 10 minutes per video — enforced by the document
+schema and the render endpoint (`packages/dsl/src/limits.ts`). v1 primitives
+are LaTeX plus shapes/text/groups; graphs/axes and code blocks come later
+(see plans/000-roadmap.md). These bound render cost, which is what credits
+are priced against.
+
 ## Render path
 
 `apps/web/render.html` exposes `window.__euclid.{load, renderFrame}`.
