@@ -1,6 +1,7 @@
 // Generates per-worker .dev.vars from the root .env (+ .env.local overrides),
 // since wrangler only reads .dev.vars next to each wrangler.jsonc.
 // Runs automatically via the root dev:api / dev:mcp scripts.
+import { execSync } from 'node:child_process'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -32,11 +33,32 @@ const targets = {
   'apps/mcp/.dev.vars': ['INTERNAL_API_KEY'],
 }
 
+let changed = false
 for (const [file, keys] of Object.entries(targets)) {
+  const path = join(root, file)
   const body = keys
     .filter((k) => env[k] !== undefined)
     .map((k) => `${k}=${env[k]}`)
     .join('\n')
-  writeFileSync(join(root, file), `# generated from .env/.env.local — edit those, not this\n${body}\n`)
+  const next = `# generated from .env/.env.local — edit those, not this\n${body}\n`
+  const prev = existsSync(path) ? readFileSync(path, 'utf8') : ''
+  if (prev !== next) changed = true
+  writeFileSync(path, next)
   console.log(`wrote ${file}`)
+}
+
+// wrangler does not reliably hot-reload .dev.vars — a stale worker silently
+// keeps serving old secrets, which looks like a broken integration.
+if (changed) {
+  let running = false
+  try {
+    execSync('pgrep -f "wrangler dev" > /dev/null 2>&1')
+    running = true
+  } catch {
+    running = false
+  }
+  if (running) {
+    console.log('\n⚠  Values changed while a worker is running.')
+    console.log('   Restart it or the old values stay live: pkill -f "wrangler dev" && pnpm dev:api\n')
+  }
 }

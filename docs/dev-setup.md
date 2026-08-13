@@ -18,6 +18,11 @@ Never edit `.dev.vars` by hand — they're generated. Production secrets are
 set with `wrangler secret put <NAME>` per worker (same `BETTER_AUTH_API_KEY`
 value is used in prod and dev, per Better Auth cloud setup).
 
+> **Gotcha:** wrangler does **not** reliably hot-reload `.dev.vars`. After
+> changing a secret, restart the worker or it keeps serving the old value —
+> which looks exactly like a broken third-party integration. `sync-env`
+> prints a warning when it rewrites values while a worker is running.
+
 ## First-time setup
 
 ```sh
@@ -46,6 +51,12 @@ re-paste it wherever an external service points at your dev backend.
 
 Started automatically by `pnpm dev:api`; run standalone with `pnpm tunnel`
 (→ prints `https://<random>.trycloudflare.com` → :8787).
+
+A healthy running tunnel is **reused**, so restarting the backend keeps the
+same URL — quick-tunnel URLs are pasted into external dashboards by hand and
+shouldn't churn. Force a fresh one with `scripts/tunnel.sh --force`.
+To restart only the worker and keep the tunnel:
+`pkill -f "wrangler dev" && (cd apps/api && pnpm dev)`.
 
 Use it whenever something on the internet must reach local dev: the Better
 Auth cloud dashboard (Base URL = tunnel URL, base path `/api/auth`), Stripe

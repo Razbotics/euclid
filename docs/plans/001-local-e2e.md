@@ -39,3 +39,11 @@ features on top. Completed 2026-08-14.
 - zsh doesn't word-split unquoted vars — use arrays for curl header sets.
 - `mcp-session-id` must be grepped as `^mcp-session-id:` (CORS headers also
   contain the substring).
+- Better Auth cloud dashboard needs the `dash()` plugin from
+  `@better-auth/infra`; it verifies a JWT from the dash API and compares
+  `hash(apiKey)` to the token's `apiKeyHash`. Failure modes are logged as
+  `[Dash] …` — "hash mismatch" means wrong/stale key, "JWT missing" means an
+  unauthenticated probe.
+- wrangler does not hot-reload `.dev.vars`; a stale worker served the old
+  API key and looked exactly like a bad integration. Restart after secret
+  changes (sync-env now warns).
