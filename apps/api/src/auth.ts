@@ -1,4 +1,5 @@
 import { betterAuth } from 'better-auth'
+import { dash } from '@better-auth/infra'
 import { D1Dialect } from 'kysely-d1'
 import type { Env } from './env'
 
@@ -19,5 +20,7 @@ export function makeAuth(env: Env) {
     baseURL: undefined,
     trustedOrigins: [env.APP_ORIGIN, ...(env.TUNNEL_ORIGIN ? [env.TUNNEL_ORIGIN] : [])],
     emailAndPassword: { enabled: true },
+    // Better Auth cloud dashboard (ownership verification + metrics)
+    plugins: env.BETTER_AUTH_API_KEY ? [dash({ apiKey: env.BETTER_AUTH_API_KEY })] : [],
   })
 }

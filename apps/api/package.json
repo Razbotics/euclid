@@ -10,6 +10,7 @@
     "db:migrate:local": "wrangler d1 execute euclid --local --file=./schema.sql"
   },
   "dependencies": {
+    "@better-auth/infra": "^0.3.7",
     "@euclid/dsl": "workspace:*",
     "better-auth": "^1.1.14",
     "hono": "^4.6.14",
