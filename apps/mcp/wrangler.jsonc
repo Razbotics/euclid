@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "euclid-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "MCP_OBJECT", "class_name": "EuclidMcpAgent" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["EuclidMcpAgent"] }],
+  "services": [{ "binding": "API", "service": "euclid-api" }]
+  // Secrets: INTERNAL_API_KEY (must match the API worker's value)
+  // TODO(auth): wrap with workers-oauth-provider backed by the API's Better Auth
+  // so claude.ai can connect via OAuth. Until then requests run as 'dev-user'.
+}

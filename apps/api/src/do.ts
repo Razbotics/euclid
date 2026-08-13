@@ -1,0 +1,152 @@
+import { DurableObject } from 'cloudflare:workers'
+import {
+  OpEnvelopeSchema,
+  OpError,
+  applyEnvelope,
+  emptyDoc,
+  type EuclidDoc,
+  type OpEnvelope,
+} from '@euclid/dsl'
+import type { Env } from './env'
+
+/**
+ * One ProjectDO per project — the single writer for that project's document.
+ * All mutations arrive as OpEnvelopes (from the editor UI, the MCP worker, or
+ * system jobs), are validated + applied via the shared @euclid/dsl reducer,
+ * appended to an event log, and broadcast to every connected WebSocket.
+ *
+ * Envelopes carry baseVersion; a mismatch returns 409 and the writer rebases.
+ * This is what lets the whole backend stay stateless outside this object.
+ */
+export class ProjectDO extends DurableObject<Env> {
+  private doc: EuclidDoc | null = null
+  private version = 0
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env)
+    ctx.blockConcurrencyWhile(async () => {
+      this.doc = (await ctx.storage.get<EuclidDoc>('doc')) ?? null
+      this.version = (await ctx.storage.get<number>('version')) ?? 0
+    })
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url)
+
+    if (url.pathname === '/ws') {
+      if (request.headers.get('Upgrade') !== 'websocket') {
+        return json({ error: 'expected websocket upgrade' }, 426)
+      }
+      const pair = new WebSocketPair()
+      this.ctx.acceptWebSocket(pair[1])
+      return new Response(null, { status: 101, webSocket: pair[0] })
+    }
+
+    if (url.pathname === '/init' && request.method === 'POST') {
+      const body = (await request.json()) as { id: string; name: string }
+      if (!this.doc) {
+        this.doc = emptyDoc(body.id, body.name)
+        await this.ctx.storage.put({ doc: this.doc, version: this.version })
+      }
+      return json({ version: this.version })
+    }
+
+    if (url.pathname === '/doc') {
+      if (!this.doc) return json({ error: 'not_initialized' }, 404)
+      return json({ doc: this.doc, version: this.version })
+    }
+
+    if (url.pathname === '/ops' && request.method === 'POST') {
+      const parsed = OpEnvelopeSchema.safeParse(await request.json())
+      if (!parsed.success) return json({ error: 'invalid_envelope', detail: parsed.error.message }, 400)
+      return this.submit(parsed.data)
+    }
+
+    if (url.pathname === '/events') {
+      const since = Number(url.searchParams.get('since') ?? 0)
+      const events = await this.ctx.storage.list({
+        prefix: 'evt:',
+        start: eventKey(since + 1),
+      })
+      return json({ version: this.version, events: [...events.values()] })
+    }
+
+    return json({ error: 'not_found' }, 404)
+  }
+
+  private async submit(envelope: OpEnvelope): Promise<Response> {
+    if (!this.doc) return json({ error: 'not_initialized' }, 404)
+    if (envelope.baseVersion !== this.version) {
+      return json({ error: 'version_conflict', version: this.version }, 409)
+    }
+    let next: EuclidDoc
+    try {
+      next = applyEnvelope(this.doc, envelope)
+    } catch (e) {
+      if (e instanceof OpError) return json({ error: e.code, detail: e.message }, 422)
+      throw e
+    }
+    this.doc = next
+    this.version += 1
+    await this.ctx.storage.put({
+      doc: next,
+      version: this.version,
+      [eventKey(this.version)]: { version: this.version, envelope, at: Date.now() },
+    })
+    this.broadcast({ type: 'ops', version: this.version, envelope })
+    return json({ version: this.version })
+  }
+
+  private broadcast(msg: unknown): void {
+    const text = JSON.stringify(msg)
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        ws.send(text)
+      } catch {
+        // socket already closing; hibernation API cleans it up
+      }
+    }
+  }
+
+  async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    if (typeof message !== 'string') return
+    let msg: { type?: string; reqId?: string; envelope?: unknown }
+    try {
+      msg = JSON.parse(message)
+    } catch {
+      return
+    }
+    if (msg.type === 'ping') {
+      ws.send(JSON.stringify({ type: 'pong' }))
+      return
+    }
+    if (msg.type === 'ops') {
+      const parsed = OpEnvelopeSchema.safeParse(msg.envelope)
+      if (!parsed.success) {
+        ws.send(JSON.stringify({ type: 'nack', reqId: msg.reqId, error: 'invalid_envelope' }))
+        return
+      }
+      const res = await this.submit(parsed.data)
+      const body = (await res.json()) as Record<string, unknown>
+      ws.send(
+        JSON.stringify(
+          res.ok
+            ? { type: 'ack', reqId: msg.reqId, version: body.version }
+            : { type: 'nack', reqId: msg.reqId, ...body },
+        ),
+      )
+    }
+  }
+}
+
+function eventKey(version: number): string {
+  // zero-padded so storage.list() range scans stay in numeric order
+  return `evt:${String(version).padStart(10, '0')}`
+}
+
+function json(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  })
+}

@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "euclid-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "PROJECT", "class_name": "ProjectDO" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ProjectDO"] }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "euclid",
+      "database_id": "REPLACE_AFTER_wrangler_d1_create_euclid"
+    }
+  ],
+  "r2_buckets": [{ "binding": "ASSETS", "bucket_name": "euclid-assets" }],
+  "vars": {
+    "APP_ORIGIN": "http://localhost:5173"
+  }
+  // Secrets (wrangler secret put / .dev.vars):
+  //   BETTER_AUTH_SECRET, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, INTERNAL_API_KEY
+}

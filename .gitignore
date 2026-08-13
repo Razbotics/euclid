@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+*.local
+.DS_Store
+*.mp4
+frames/
+.env
+apps/renderer/*.png

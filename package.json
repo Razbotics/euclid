@@ -1,0 +1,11 @@
+{
+  "name": "euclid",
+  "private": true,
+  "packageManager": "pnpm@10.33.4",
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "dev:web": "pnpm --filter @euclid/web dev",
+    "dev:api": "pnpm --filter @euclid/api dev",
+    "dev:mcp": "pnpm --filter @euclid/mcp dev"
+  }
+}

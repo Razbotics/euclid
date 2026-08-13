@@ -1,0 +1,25 @@
+{
+  "name": "@euclid/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "db:migrate:local": "wrangler d1 execute euclid --local --file=./schema.sql"
+  },
+  "dependencies": {
+    "@euclid/dsl": "workspace:*",
+    "better-auth": "^1.1.14",
+    "hono": "^4.6.14",
+    "kysely": "^0.27.5",
+    "kysely-d1": "^0.3.0",
+    "stripe": "^17.5.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250801.0",
+    "typescript": "^5.7.2",
+    "wrangler": "^4.0.0"
+  }
+}
