@@ -4,6 +4,15 @@ Researched 2026-08-14. Strategic context for the open-source + hosted
 question. Revisit when the competitive picture moves; this is a snapshot,
 not a standing truth.
 
+> **Superseded in part (2026-08-14).** The product direction changed: Euclid
+> is no longer scoped to educational math animation (see
+> [plans/003-general-video.md](plans/003-general-video.md)). That resolves
+> the differentiation-vs-monetization tension identified below — general
+> video has budget — at the cost of entering two crowded categories:
+> agentic motion graphics (Midrender, Motion) and clip generation from
+> source video (Opus Clip, Reap). The competitive facts below still hold;
+> the strategic conclusion about staying niche does not.
+
 ## Bottom line
 
 The architecture Euclid is built on — MCP agent + visual timeline editor +

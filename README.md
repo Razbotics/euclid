@@ -1,10 +1,14 @@
 # Euclid
 
-An agentic studio for 3Blue1Brown-style educational videos. The user's own
-Claude connects over **MCP** and authors videos by calling tools; a **React +
-PixiJS** frontend shows every change live on a canvas/timeline editor; a
-**Cloudflare** backend owns the document, auth, credits, and the render
-pipeline.
+An agentic video studio. The user's own Claude connects over **MCP** and
+authors videos by calling tools; a **React + PixiJS** frontend shows every
+change live on a canvas/timeline editor; a **Cloudflare** backend owns the
+document, auth, credits, and the render pipeline.
+
+Explanatory/math animation (3Blue1Brown-style) is the **first vertical**, not
+the boundary — the roadmap extends to general video editing and reels,
+including ingesting source footage and having the agent generate segments
+from it. See [plans/003-general-video.md](docs/plans/003-general-video.md).
 
 Everything rests on one invariant: **rendering is a pure function of
 `(document, time)`** — which is what makes the live preview and the final

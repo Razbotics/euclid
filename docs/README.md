@@ -37,3 +37,4 @@ Two kinds of content live here:
 | [plans/000-roadmap.md](plans/000-roadmap.md) | Top-level phases from scaffold to launch |
 | [plans/001-local-e2e.md](plans/001-local-e2e.md) | Local backend + agentic loop verification |
 | [plans/002-render-pipeline.md](plans/002-render-pipeline.md) | Export, job loop, TTS, audio — toward the v1 milestone |
+| [plans/003-general-video.md](plans/003-general-video.md) | Direction change: assets, video/audio nodes, reels, ingest |

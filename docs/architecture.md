@@ -73,9 +73,15 @@ themselves from estimated to exact the moment TTS lands — no migration.
 
 1080p max, 30 or 60 fps, 10 minutes per video — enforced by the document
 schema and the render endpoint (`packages/dsl/src/limits.ts`). v1 primitives
-are LaTeX plus shapes/text/groups; graphs/axes and code blocks come later
-(see plans/000-roadmap.md). These bound render cost, which is what credits
-are priced against.
+are LaTeX plus shapes/text/groups. These bound render cost, which is what
+credits are priced against.
+
+Note the document model is **not** math-specific: nodes are a discriminated
+union, so `video` and `audio` clip types extend it without a rewrite. That
+matters because the product direction now targets general video and reels —
+see [plans/003-general-video.md](plans/003-general-video.md), which also
+covers the one piece that genuinely must be replaced (per-frame screenshot
+capture, which cannot composite decoded video at usable speed).
 
 ## Render path
 

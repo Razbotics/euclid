@@ -37,9 +37,19 @@ after the milestone — see plans/002 for the reasoning.
 - [ ] Dashboard: project list, create/delete, credits page + Stripe checkout flow
 - [ ] Deploy: workers, D1, R2, Containers; production secrets
 
-## Phase 4: Depth
+## Phase 4: General video → plans/003-general-video.md
+Direction change: not limited to educational math animation. Math is the
+first vertical; the target is a general agentic video editor including
+reel/clip workflows.
+- [ ] Replace per-frame screenshot capture with WebCodecs (wins on the current path too)
+- [ ] Assets as first-class (registry, proxies, thumbnails)
+- [ ] `video` / `audio` node types; tracks and layering within a scene
+- [ ] Multi-track timeline UI
+- [ ] Ingest + analysis (fetch → transcode → STT → shot detection → segments)
+- [ ] Decide the rights/ToS model **before** building the ingest fetcher
+- [ ] Narration-anchored animation (sync to word timestamps)
+
+## Phase 5: Vertical depth (deprioritized by the Phase 4 change)
 - [ ] Matched-glyph LaTeX morphing (upgrade inside texMorph seam)
 - [ ] Graphs/axes/function-plot primitives
-- [ ] Narration-anchored animation (sync to word timestamps)
-- [ ] Timeline editor: drag keyframes, per-track lanes
 - [ ] Code-block primitive with line-highlight animations
