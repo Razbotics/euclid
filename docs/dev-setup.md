@@ -18,6 +18,12 @@ Never edit `.dev.vars` by hand — they're generated. Production secrets are
 set with `wrangler secret put <NAME>` per worker (same `BETTER_AUTH_API_KEY`
 value is used in prod and dev, per Better Auth cloud setup).
 
+> **Gotcha:** the MCP worker reaches the API through a wrangler service
+> binding, and that discovery breaks if the API restarts on its own — calls
+> then fail with `Worker "euclid-api" not found`. Restart **both**, API
+> first: `pkill -f "wrangler dev"; pkill -f workerd`, start api, wait, start
+> mcp. (`cloudflared` is a separate process, so the tunnel URL survives.)
+
 > **Gotcha:** wrangler does **not** reliably hot-reload `.dev.vars`. After
 > changing a secret, restart the worker or it keeps serving the old value —
 > which looks exactly like a broken third-party integration. `sync-env`
@@ -69,6 +75,7 @@ every run** — re-run and re-paste after restarting.
 | Script | What it proves |
 |---|---|
 | `smoke.ts` | reducer + sampler math, no browser |
+| `smoke-captions.ts` | cue generation at both fidelities, SRT/VTT formatting |
 | `shot.ts <t...>` | pixel-accurate frames of the demo doc through the export surface |
 | `check-app.ts` | editor loads with zero console/page errors |
 | `check-live.ts <projectId>` | external op appears in the open editor via WebSocket |

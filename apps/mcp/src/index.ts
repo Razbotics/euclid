@@ -374,6 +374,16 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
     )
 
     this.server.tool(
+      'get_captions',
+      'Subtitles for the whole project (SRT or VTT). Free — derived from narration. Cues are word-accurate where TTS timings exist, and estimated from text length elsewhere.',
+      { projectId: z.string(), format: z.enum(['srt', 'vtt']).default('srt') },
+      async ({ projectId, format }) => {
+        const res = await this.api(`/api/projects/${projectId}/captions?format=${format}`)
+        return text(await res.text())
+      },
+    )
+
+    this.server.tool(
       'render_video',
       'Render the project to MP4. COSTS CREDITS (per second of video + TTS minutes). Returns a job id.',
       { projectId: z.string() },

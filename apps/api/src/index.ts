@@ -1,6 +1,13 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { CREDIT_COSTS, docDuration, type EuclidDoc } from '@euclid/dsl'
+import {
+  CREDIT_COSTS,
+  docDuration,
+  documentCues,
+  toSRT,
+  toVTT,
+  type EuclidDoc,
+} from '@euclid/dsl'
 import { makeAuth } from './auth'
 import { adjustCredits, billing, getBalance, handleStripeWebhook } from './billing'
 import type { Env, Vars } from './env'
@@ -92,6 +99,36 @@ app.get('/api/projects/:id/doc', (c) => forwardToDO(c, c.req.param('id'), '/doc'
 app.get('/api/projects/:id/events', (c) => forwardToDO(c, c.req.param('id'), '/events'))
 app.post('/api/projects/:id/ops', (c) => forwardToDO(c, c.req.param('id'), '/ops'))
 app.get('/api/projects/:id/ws', (c) => forwardToDO(c, c.req.param('id'), '/ws'))
+
+// ---------- captions ----------
+
+/**
+ * Derived from the document, so it's always current and costs no credits.
+ * Cues are word-accurate where TTS timings exist and estimated from text
+ * elsewhere; `?format=json` exposes which is which per cue.
+ */
+app.get('/api/projects/:id/captions', async (c) => {
+  const docRes = await forwardToDO(c, c.req.param('id'), '/doc')
+  if (!docRes.ok) return docRes
+  const { doc } = (await docRes.json()) as { doc: EuclidDoc }
+  const cues = documentCues(doc)
+  const format = c.req.query('format') ?? 'srt'
+
+  if (format === 'json') return c.json({ cues, estimated: cues.some((q) => q.estimated) })
+  if (format !== 'srt' && format !== 'vtt') return c.json({ error: 'unsupported_format' }, 400)
+
+  const body = format === 'vtt' ? toVTT(cues) : toSRT(cues)
+  return new Response(body, {
+    headers: {
+      'content-type': format === 'vtt' ? 'text/vtt; charset=utf-8' : 'application/x-subrip; charset=utf-8',
+      'content-disposition': `attachment; filename="${slugify(doc.name)}.${format}"`,
+    },
+  })
+})
+
+function slugify(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'captions'
+}
 
 // ---------- render ----------
 

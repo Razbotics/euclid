@@ -52,6 +52,23 @@ Validation is layered: Zod schema on the envelope (bad shape → 400), reducer
 invariants (missing node, duplicate id → 422), and a full-document re-parse
 after each envelope so no op sequence can persist an invalid document.
 
+## Captions
+
+Subtitles are a **pure function of the document**, the same discipline as
+rendering — so they're always current, cost no credits, and need no storage.
+`documentCues(doc)` emits cues at whichever fidelity the document supports,
+per scene:
+
+- `narration.audio.words` present (from TTS) → word-accurate cues
+- narration text only → sentences distributed across the scene in proportion
+  to their length, marked `estimated: true` so callers can tell the
+  difference instead of trusting inferred timing
+
+Cues respect subtitle conventions (~84 chars, ≤6s, break on sentence ends)
+and are lifted from scene-local to global time. Served as SRT or VTT from
+`GET /api/projects/:id/captions`, or as JSON for tooling. Captions upgrade
+themselves from estimated to exact the moment TTS lands — no migration.
+
 ## Product ceilings (v1)
 
 1080p max, 30 or 60 fps, 10 minutes per video — enforced by the document

@@ -35,6 +35,19 @@ failed → refunded to 92; a second failed PATCH returns `applied:false` and
 does **not** double-refund; a terminal job cannot be revived to `done`.
 Ledger shows `-8 render:<id>` then `+8 refund:<id> (simulated crash)`.
 
+## Captions / subtitles (status: done ahead of TTS)
+Built early because cues are a pure function of the document and degrade
+gracefully — they work now from narration text and sharpen automatically
+when TTS word timings arrive.
+- [x] `documentCues(doc)` in `packages/dsl/src/captions.ts`, both fidelities
+- [x] SRT + VTT formatters, subtitle conventions (~84 chars, ≤6s, sentence breaks)
+- [x] `GET /api/projects/:id/captions?format=srt|vtt|json`
+- [x] `get_captions` MCP tool (free — no credits)
+- [x] Verified: `smoke-captions.ts` (offsets, ordering, formats, empty doc)
+      plus live API and MCP round-trips
+- [ ] Burn-in option at render time (deferred — sidecar file first; decide
+      after seeing whether users want hardcoded captions)
+
 ## Phase 3: TTS  ← NEXT
 - [ ] `TtsProvider` adapter interface (synthesize → audio + word timings)
 - [ ] First provider, chosen for word-level timestamps
