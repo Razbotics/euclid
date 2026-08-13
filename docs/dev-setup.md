@@ -2,9 +2,19 @@
 
 ## Environment
 
-One root **`.env`** (committed — safe defaults only) plus **`.env.local`**
-(gitignored — machine overrides and real secrets like `BETTER_AUTH_API_KEY`).
-Precedence: real shell env > `.env.local` > `.env`.
+| File | Contents | Committed? |
+|---|---|---|
+| `.env` | **Production values — real keys.** The base layer. | **No** — gitignored |
+| `.env.local` | Only what must differ on this machine (localhost origins, dev flags, local auth secret). | **No** — gitignored |
+| `.env.example` | Template of every supported key, placeholders only. | Yes |
+
+Precedence: real shell env > `.env.local` > `.env`. So a laptop inherits
+every real key from `.env` and overrides just the handful that are
+environment-specific. New machine: `cp .env.example .env`, fill it in, then
+add local overrides in `.env.local`.
+
+**Never commit `.env` or `.env.local`.** Production deploys read `.env` and
+push each value with `wrangler secret put <NAME>`.
 
 Three consumers, three delivery paths:
 

@@ -18,7 +18,12 @@ function parse(file) {
   return out
 }
 
+// .env holds production values; .env.local overrides per machine and wins.
 const env = { ...parse(join(root, '.env')), ...parse(join(root, '.env.local')) }
+if (!existsSync(join(root, '.env'))) {
+  console.error('missing .env — copy .env.example and fill it in')
+  process.exit(1)
+}
 
 const targets = {
   'apps/api/.dev.vars': [
@@ -26,6 +31,7 @@ const targets = {
     'BETTER_AUTH_API_KEY',
     'TUNNEL_ORIGIN',
     'PUBLIC_API_ORIGIN',
+    'ELEVENLABS_API_KEY',
     'STRIPE_SECRET_KEY',
     'STRIPE_WEBHOOK_SECRET',
     'INTERNAL_API_KEY',
