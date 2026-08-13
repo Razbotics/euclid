@@ -6,7 +6,8 @@
     "typecheck": "pnpm -r typecheck",
     "sync-env": "node scripts/sync-env.mjs",
     "dev:web": "pnpm --filter @euclid/web dev",
-    "dev:api": "node scripts/sync-env.mjs && pnpm --filter @euclid/api dev",
+    "dev:api": "node scripts/sync-env.mjs && (scripts/tunnel.sh || echo 'tunnel skipped — is cloudflared installed?') && pnpm --filter @euclid/api dev",
+    "tunnel": "scripts/tunnel.sh",
     "dev:mcp": "node scripts/sync-env.mjs && pnpm --filter @euclid/mcp dev"
   }
 }

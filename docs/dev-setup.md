@@ -30,19 +30,22 @@ pnpm exec wrangler d1 execute euclid --local --file=./auth-schema.sql  # better 
 ## Daily loop
 
 ```sh
-pnpm dev:api    # :8787 — API + Durable Objects + D1
+pnpm dev:api    # :8787 — API + Durable Objects + D1; also starts the public tunnel
 pnpm dev:mcp    # :8788 — MCP worker (service-binds to api; start api first)
 pnpm dev:web    # :5173 — editor; ?project=<id> connects, no param = offline demo
 ```
+
+`dev:api` prints the tunnel URL before wrangler takes over the console (also
+recorded as `TUNNEL_ORIGIN` in `.env.local`). It changes on every restart —
+re-paste it wherever an external service points at your dev backend.
 
 `DEV_ALLOW_ANON=1` (default in `.env`) makes sessionless requests act as
 `dev-user`, so the editor syncs before auth UI exists.
 
 ## Public tunnel
 
-```sh
-scripts/tunnel.sh          # → prints https://<random>.trycloudflare.com → :8787
-```
+Started automatically by `pnpm dev:api`; run standalone with `pnpm tunnel`
+(→ prints `https://<random>.trycloudflare.com` → :8787).
 
 Use it whenever something on the internet must reach local dev: the Better
 Auth cloud dashboard (Base URL = tunnel URL, base path `/api/auth`), Stripe

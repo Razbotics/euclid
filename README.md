@@ -58,11 +58,11 @@ the v1 primitives; graphs/axes and code blocks come later.
 
 ```sh
 pnpm install
-pnpm dev:api        # api on :8787 (D1 + Durable Objects)
+pnpm dev:api        # api on :8787 (D1 + Durable Objects) + public tunnel
 pnpm dev:mcp        # mcp on :8788 (service-binds to the api; start api first)
 pnpm dev:web        # editor on :5173 (?project=<id> to connect; no param = offline demo)
 pnpm typecheck      # all packages
-scripts/tunnel.sh   # public tunnel to local api (Better Auth dashboard, webhooks)
+pnpm tunnel         # restart just the tunnel (new URL each run)
 ```
 
 Config lives in the root `.env` (committed defaults) + `.env.local`
