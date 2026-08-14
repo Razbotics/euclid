@@ -1,11 +1,12 @@
 import './load-env'
 import { spawn } from 'node:child_process'
-import { readFile, unlink } from 'node:fs/promises'
+import { readFile, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { chromium } from 'playwright'
 import { docDuration, type EuclidDoc } from '@euclid/dsl'
+import { buildFfmpegArgs, isTrimmed, planNarration, type NarrationPlacement } from './mux'
 
 /**
  * Headless export worker. Replays the scene document frame-by-frame in
@@ -20,11 +21,11 @@ import { docDuration, type EuclidDoc } from '@euclid/dsl'
  * the MP4 to R2 through the API, marks it `done` — or marks it `failed`,
  * which refunds the user's credits. Without --job it just writes a local file.
  *
+ * Narration audio (written into the document by generate_narration) is fetched
+ * per scene and laid onto an audio timeline in the same ffmpeg invocation.
+ *
  * Env: API_URL (default http://localhost:8787), INTERNAL_API_KEY,
  *      RENDER_PAGE_URL (default http://localhost:5173/render.html)
- *
- * TODO(pipeline): mux TTS narration audio (generated per scene via the TTS
- * adapter) into the ffmpeg invocation.
  */
 
 const { values: args } = parseArgs({
@@ -68,6 +69,25 @@ async function uploadOutput(file: string): Promise<void> {
   console.log(`uploaded ${(body.byteLength / 1024).toFixed(0)}KiB → ${(await res.json() as {key:string}).key}`)
 }
 
+/** Download the planned narration clips to temp files ffmpeg can read. */
+async function downloadNarration(
+  doc: EuclidDoc,
+): Promise<(NarrationPlacement & { path: string })[]> {
+  const clips: (NarrationPlacement & { path: string })[] = []
+  for (const placement of planNarration(doc)) {
+    const res = await fetch(`${API_URL}/api/assets/${placement.assetId}`, {
+      headers: INTERNAL_HEADERS,
+    })
+    if (!res.ok) {
+      throw new Error(`narration asset ${placement.assetId} (scene ${placement.sceneId}): ${res.status}`)
+    }
+    const path = join(tmpdir(), `euclid-narr-${placement.sceneId}-${placement.assetId}.mp3`)
+    await writeFile(path, Buffer.from(await res.arrayBuffer()))
+    clips.push({ ...placement, path })
+  }
+  return clips
+}
+
 async function main() {
   const docRes = await fetch(`${API_URL}/api/projects/${args.project}/doc`, {
     headers: INTERNAL_HEADERS,
@@ -83,6 +103,16 @@ async function main() {
   const outPath = args.job ? join(tmpdir(), `euclid-${args.job}.mp4`) : args.out!
   await setJobStatus('rendering')
 
+  const clips = await downloadNarration(doc)
+  if (clips.length === 0) {
+    console.log('no narration audio in this document — rendering silent')
+  } else {
+    for (const c of clips) {
+      const cut = isTrimmed(c) ? ` (cut from ${c.durationSec.toFixed(2)}s)` : ''
+      console.log(`  narration ${c.sceneId}: ${c.startSec}s → ${(c.startSec + c.playSec).toFixed(2)}s${cut}`)
+    }
+  }
+
   const browser = await chromium.launch({
     args: ['--force-color-profile=srgb', '--disable-lcd-text'],
   })
@@ -94,20 +124,9 @@ async function main() {
     await page.goto(RENDER_PAGE_URL, { waitUntil: 'networkidle' })
     await page.evaluate((d) => window.__euclid.load(d), doc as unknown)
 
-    const ffmpeg = spawn(
-      'ffmpeg',
-      [
-        '-y',
-        '-f', 'image2pipe',
-        '-framerate', String(fps),
-        '-i', '-',
-        '-c:v', 'libx264',
-        '-pix_fmt', 'yuv420p',
-        '-crf', '18',
-        outPath,
-      ],
-      { stdio: ['pipe', 'inherit', 'inherit'] },
-    )
+    const ffmpeg = spawn('ffmpeg', buildFfmpegArgs(fps, clips, outPath), {
+      stdio: ['pipe', 'inherit', 'inherit'],
+    })
 
     const canvas = page.locator('#euclid-canvas')
     for (let f = 0; f < totalFrames; f++) {
@@ -126,6 +145,7 @@ async function main() {
     })
   } finally {
     await browser.close()
+    await Promise.all(clips.map((c) => unlink(c.path).catch(() => {})))
   }
 
   if (args.job) {

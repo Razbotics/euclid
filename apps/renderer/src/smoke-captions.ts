@@ -52,6 +52,34 @@ const vtt = toVTT(cues)
 assert.match(vtt, /^WEBVTT\n\n/, 'VTT has header')
 assert.match(vtt, /00:00:06\.000 --> 00:00:07\.800/, 'VTT uses dot milliseconds')
 
+// Narration longer than its scene must not bleed into the next scene's cues.
+// generate_narration keeps overrunning audio (rather than billing a retry),
+// so the document can legitimately hold this state.
+let over = emptyDoc('p2', 'Overflow')
+over = applyOps(over, [
+  op.addScene({ id: 'o1', name: 'Short', duration: 1, background: '#000000', nodes: [] }),
+  op.addScene({ id: 'o2', name: 'Next', duration: 5, background: '#000000', nodes: [] }),
+  op.setNarration('o1', {
+    text: 'We rearrange both sides.',
+    audio: {
+      assetId: 'a2',
+      durationSec: 3.2,
+      words: [
+        { word: 'We', start: 0, end: 0.4 },
+        { word: 'rearrange', start: 0.5, end: 1.6 },
+        { word: 'both', start: 1.7, end: 2.4 },
+        { word: 'sides.', start: 2.5, end: 3.2 },
+      ],
+    },
+  }),
+  op.setNarration('o2', { text: 'Second scene speaks here.' }),
+])
+const overCues = documentCues(over)
+assert.equal(overCues[0]!.end, 1, 'a cue must not outlive its 1s scene')
+assert.ok(overCues[1]!.start >= overCues[0]!.end, 'clamped cue must not overlap the next scene')
+// A cue starting entirely past the scene end is dropped, not clamped to zero length.
+for (const c of overCues) assert.ok(c.end > c.start, 'no zero-length cues survive clamping')
+
 // empty project → empty output, not malformed output
 assert.equal(documentCues(emptyDoc('x', 'Empty')).length, 0)
 assert.equal(toSRT([]), '')

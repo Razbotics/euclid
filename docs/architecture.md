@@ -65,9 +65,56 @@ per scene:
   difference instead of trusting inferred timing
 
 Cues respect subtitle conventions (~84 chars, ≤6s, break on sentence ends)
-and are lifted from scene-local to global time. Served as SRT or VTT from
+and are lifted from scene-local to global time, then **clamped to the scene**:
+generated narration may legitimately outlast its scene (see Narration below),
+and an unclamped cue would both describe footage that is no longer on screen
+and overlap the next scene's subtitles. Served as SRT or VTT from
 `GET /api/projects/:id/captions`, or as JSON for tooling. Captions upgrade
 themselves from estimated to exact the moment TTS lands — no migration.
+
+## Assets
+
+Binary files owned by a project — narration audio today, video and image
+clips when the general-video phase lands. D1 holds the metadata row
+(`kind`, `mime`, `bytes`, `duration_sec`, R2 key); R2 holds the bytes under
+`assets/<projectId>/<assetId>`.
+
+Assets are **immutable**: a new upload mints a new id rather than replacing
+one. That is what makes an `assetId` embedded in a document safe — a
+`narration.audio.assetId` can never silently start pointing at different
+bytes — and it lets reads cache indefinitely.
+
+Creation (`POST /api/projects/:id/assets`) is internal-key only, because
+producers are server-side (TTS now, ingest later) and never the browser. The
+bytes stream straight into R2 so a large clip never has to fit in worker
+memory, and the D1 row is written only once they land — a document must never
+hold an id that resolves to nothing. Reads (`GET /api/assets/:assetId`) are
+allowed for the owning user or an internal caller; the render worker uses the
+latter to fetch narration audio, and tenancy is enforced by joining through
+`projects`, not by trusting the caller.
+
+## Narration (TTS)
+
+`apps/api/src/tts.ts` defines a `TtsProvider` seam — `synthesize({ text,
+voiceId }) → { audio, mime, durationSec, words }` — with ElevenLabs behind it.
+The provider was chosen for **word-level timestamps**, not voice quality:
+timings are what make captions exact and what will let animation anchor to
+narration beats. A better-sounding provider that can't say when each word
+lands is not a candidate.
+
+The seam is real rather than nominal: the adapter is written against
+web-standard APIs only (`fetch`, `atob`) with no Cloudflare types, so it runs
+and is tested outside the worker. ElevenLabs reports timing per character;
+grouping on whitespace is the whole conversion to the `words` the document
+already models.
+
+Synthesis runs in the **API worker**, not the MCP worker, because the API
+already owns credits, R2, and the path into the Durable Object — so debit →
+synthesize → store asset → submit op is one boundary with one refund path.
+Generation is explicit (an MCP tool), never implicit at render time, so the
+agent can read the real duration before choreographing against it and the
+editor sees narration appear live. See
+[plans/002](plans/002-render-pipeline.md) for the wiring.
 
 ## Product ceilings (v1)
 
@@ -87,7 +134,15 @@ capture, which cannot composite decoded video at usable speed).
 
 `apps/web/render.html` exposes `window.__euclid.{load, renderFrame}`.
 `apps/renderer` drives it in headless Chromium, screenshots the canvas per
-frame, and pipes PNGs into ffmpeg. Target: Cloudflare Containers consuming a
+frame, and pipes PNGs into ffmpeg.
+
+Narration is muxed in the same ffmpeg invocation: each scene's audio asset
+becomes an extra input placed at that scene's global start with `adelay`, so
+silence between clips falls out of placement rather than needing padding
+files. Audio that outruns its scene is cut at the boundary — the same rule
+captions follow — so one scene's voice never plays over another's frames.
+Placement is pure and lives in `apps/renderer/src/mux.ts`, separate from
+downloading, so offsets and trims are testable without rendering. Target: Cloudflare Containers consuming a
 Queue that `POST /render` feeds (queue deferred — see plans/002).
 
 Job lifecycle: `POST /render` prices the video (per-second × resolution, see

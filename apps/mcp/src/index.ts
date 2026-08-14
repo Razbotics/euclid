@@ -155,6 +155,26 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
     )
 
     this.server.tool(
+      'update_scene',
+      'Change a scene\'s name, duration, or background. Extending duration is the usual fix when generate_narration reports that speech overruns the scene.',
+      {
+        projectId: z.string(),
+        sceneId: z.string(),
+        name: z.string().optional(),
+        duration: z.number().positive().optional().describe('seconds'),
+        background: COLOR.optional(),
+      },
+      async ({ projectId, sceneId, name, duration, background }) => {
+        const patch = Object.fromEntries(
+          Object.entries({ name, duration, background }).filter(([, v]) => v !== undefined),
+        )
+        if (Object.keys(patch).length === 0) throw new Error('nothing to update')
+        await this.submit(projectId, [op.updateScene(sceneId, patch)])
+        return text(`updated scene ${sceneId}: ${JSON.stringify(patch)}`)
+      },
+    )
+
+    this.server.tool(
       'add_latex',
       'Add a LaTeX equation node (rendered like 3b1b math). Anchored at its center.',
       {
@@ -363,13 +383,31 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
 
     this.server.tool(
       'set_narration',
-      'Set the narration script for a scene. TTS audio is generated at render time (word timestamps become sync anchors).',
+      'Set the narration script for a scene. Free — writes text only. Call generate_narration afterwards to synthesize the audio.',
       { projectId: z.string(), sceneId: z.string(), narrationText: z.string(), voiceId: z.string().optional() },
       async ({ projectId, sceneId, narrationText, voiceId }) => {
         await this.submit(projectId, [
           op.setNarration(sceneId, { text: narrationText, voiceId }),
         ])
         return text(`narration set for ${sceneId} (${narrationText.split(/\s+/).length} words)`)
+      },
+    )
+
+    this.server.tool(
+      'generate_narration',
+      'Synthesize a scene\'s narration to speech. COSTS CREDITS (priced by script length). Stores the audio and writes word-level timings into the document, which makes captions exact and gives you real timings to animate against. Warns if the speech is longer than the scene.',
+      {
+        projectId: z.string(),
+        sceneId: z.string(),
+        text: z.string().optional().describe('overrides the scene\'s existing narration text'),
+        voiceId: z.string().optional(),
+      },
+      async ({ projectId, sceneId, text: override, voiceId }) => {
+        const res = await this.api(
+          `/api/projects/${projectId}/scenes/${sceneId}/narration/generate`,
+          { method: 'POST', body: JSON.stringify({ text: override, voiceId }) },
+        )
+        return text(await res.text())
       },
     )
 
@@ -385,7 +423,7 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
 
     this.server.tool(
       'render_video',
-      'Render the project to MP4. COSTS CREDITS (per second of video + TTS minutes). Returns a job id.',
+      'Render the project to MP4. COSTS CREDITS (per second of video; narration is billed separately by generate_narration). Returns a job id.',
       { projectId: z.string() },
       async ({ projectId }) => {
         const res = await this.api(`/api/projects/${projectId}/render`, { method: 'POST' })

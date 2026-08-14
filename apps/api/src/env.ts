@@ -15,6 +15,8 @@ export interface Env {
   BETTER_AUTH_API_KEY?: string
   /** Public dev-tunnel origin (optional; set by scripts/tunnel.sh). */
   TUNNEL_ORIGIN?: string
+  /** TTS provider (ElevenLabs, chosen for word-level timestamps). */
+  ELEVENLABS_API_KEY: string
   STRIPE_SECRET_KEY: string
   STRIPE_WEBHOOK_SECRET: string
   /** Shared secret for service-to-service calls (MCP worker, render worker). */

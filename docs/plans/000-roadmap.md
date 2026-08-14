@@ -27,7 +27,7 @@ files; this file tracks the big picture.
 - [x] TTS adapter interface + ElevenLabs provider (word timestamps)
 - [x] Narration audio in R2, wordTimings into the doc
 - [x] Captions: SRT/VTT export, document-derived (upgrades to word-accurate when TTS lands)
-- [ ] Renderer: mux narration audio into the MP4
+- [x] Renderer: mux narration audio into the MP4
 - [ ] Run the milestone: agent builds the full video over MCP, human tweaks in editor, export downloads
 
 Render queue (Cloudflare Queues → Containers) is deliberately deferred until

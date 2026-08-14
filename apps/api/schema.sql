@@ -23,6 +23,21 @@ CREATE TABLE IF NOT EXISTS credit_ledger (
 );
 CREATE INDEX IF NOT EXISTS idx_ledger_user ON credit_ledger (user_id, created_at DESC);
 
+-- Binary files owned by a project: narration audio now, video/image clips in
+-- the general-video phase. Rows are immutable — a new upload mints a new id,
+-- so `assetId` references inside a document never go stale.
+CREATE TABLE IF NOT EXISTS assets (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  kind TEXT NOT NULL,        -- audio | video | image
+  r2_key TEXT NOT NULL,
+  mime TEXT NOT NULL,
+  bytes INTEGER NOT NULL,
+  duration_sec REAL,         -- audio/video only; NULL for images
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_assets_project ON assets (project_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS render_jobs (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,

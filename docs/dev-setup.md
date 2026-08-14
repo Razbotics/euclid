@@ -90,11 +90,15 @@ every run** — re-run and re-paste after restarting.
 |---|---|
 | `smoke.ts` | reducer + sampler math, no browser |
 | `smoke-captions.ts` | cue generation at both fidelities, SRT/VTT formatting |
+| `smoke-tts.ts [--live]` | TTS alignment → word timings (free; `--live` makes one real call) |
+| `smoke-mux.ts` | narration placement + ffmpeg args: offsets, trims, silent path (free) |
 | `shot.ts <t...>` | pixel-accurate frames of the demo doc through the export surface |
 | `check-assets.ts` | asset upload → download is byte-identical; tenancy enforced (needs `dev:api`) |
+| `check-narration.ts [--refund]` | TTS generation end-to-end: pricing, debit, op reaches the doc, overflow warning (**spends credits**; `--refund` needs a broken key, costs nothing) |
 | `check-app.ts` | editor loads with zero console/page errors |
 | `check-live.ts <projectId>` | external op appears in the open editor via WebSocket |
-| `render.ts --project <id>` | full MP4 export (needs ffmpeg) |
+| `render.ts --project <id>` | full MP4 export with narration audio (needs ffmpeg) |
+| `check-mux.ts` | A/V sync in a real render, measured with `silencedetect` (**spends credits**; needs ffmpeg + `dev:api` + `dev:web`) |
 | `bench-webcodecs.ts` | WebCodecs codec support + 1080p encode throughput in headless Chromium |
 
 Run any of them with `pnpm --filter @euclid/renderer exec tsx src/<script>`.

@@ -30,15 +30,32 @@ export function documentCues(doc: EuclidDoc): Cue[] {
     const text = scene.narration?.text?.trim()
     if (text) {
       const words = scene.narration?.audio?.words
-      cues.push(
-        ...(words?.length
-          ? cuesFromWords(words, sceneStart)
-          : cuesFromText(text, sceneStart, scene.duration)),
-      )
+      const raw = words?.length
+        ? cuesFromWords(words, sceneStart)
+        : cuesFromText(text, sceneStart, scene.duration)
+      cues.push(...clampToScene(raw, sceneStart + scene.duration))
     }
     sceneStart += scene.duration
   }
   return cues
+}
+
+/**
+ * Generated narration can be longer than its scene: `generate_narration`
+ * reports the overrun but keeps the audio rather than billing the user twice
+ * to retry, so the document legitimately holds speech that outlasts its scene.
+ *
+ * Cues must not survive past the scene, for two reasons: they would describe
+ * footage that is no longer on screen, and — worse — they would overlap the
+ * next scene's cues, putting two subtitles up at once.
+ */
+function clampToScene(cues: Cue[], sceneEnd: number): Cue[] {
+  const out: Cue[] = []
+  for (const cue of cues) {
+    if (cue.start >= sceneEnd) continue // never on screen at all
+    out.push(cue.end <= sceneEnd ? cue : { ...cue, end: sceneEnd })
+  }
+  return out
 }
 
 /** Word timings are scene-local; `offset` lifts them onto the global timeline. */

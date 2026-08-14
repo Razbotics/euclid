@@ -17,3 +17,18 @@ export const CREDIT_COSTS = {
   renderPerSecond720: 0.5,
   ttsPerMinute: 10,
 } as const
+
+/**
+ * Speech rate used to price TTS. ~150 words/min at ~6 chars a word.
+ * Pricing on characters rather than on the resulting audio matters: the cost
+ * is knowable *before* synthesis, so the debit can be taken up front and
+ * quoted to the agent, and it tracks how TTS providers actually bill.
+ */
+export const TTS_CHARS_PER_MINUTE = 900
+
+/** Credits to synthesize `text`. Minimum 1 — no narration is free. */
+export function ttsCost(text: string): number {
+  const chars = text.trim().length
+  if (chars === 0) return 0
+  return Math.max(1, Math.ceil((chars / TTS_CHARS_PER_MINUTE) * CREDIT_COSTS.ttsPerMinute))
+}
