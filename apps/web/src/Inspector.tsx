@@ -62,7 +62,55 @@ export function Inspector({ doc: _doc, currentScene, selectedNodeId, onSelect, s
           )}
         </div>
       )}
+      <NarrationPanel scene={currentScene} submit={submit} />
     </aside>
+  )
+}
+
+/**
+ * Scene-level narration. Read-only on purpose: rewriting the script here would
+ * leave the generated audio and its word timings describing text that no longer
+ * exists, and regenerating costs credits — that belongs to the agent, which can
+ * call generate_narration.
+ *
+ * What the editor *can* usefully fix is the mismatch generate_narration reports
+ * but deliberately doesn't enforce: speech that outruns its scene. Extending
+ * the scene is an ordinary op, so it goes through the same path as every other
+ * edit.
+ */
+function NarrationPanel({ scene, submit }: { scene: Scene; submit: (ops: Op[]) => void }) {
+  const narration = scene.narration
+  if (!narration) return null
+  const audio = narration.audio
+  const overrun = audio ? audio.durationSec - scene.duration : 0
+
+  return (
+    <div className="narration-panel">
+      <h4>narration</h4>
+      <p className="narration-text">{narration.text}</p>
+      {!audio && <p className="narration-status pending">script only — no audio generated yet</p>}
+      {audio && (
+        <p className="narration-status">
+          {audio.durationSec.toFixed(2)}s
+          {audio.words?.length ? ` · ${audio.words.length} words timed` : ' · no word timings'}
+        </p>
+      )}
+      {overrun > 0 && (
+        <div className="narration-warning">
+          <span>
+            overruns the scene by {overrun.toFixed(2)}s — the last{' '}
+            {overrun.toFixed(2)}s will be cut from the export
+          </span>
+          <button
+            onClick={() =>
+              submit([op.updateScene(scene.id, { duration: Math.ceil(audio!.durationSec * 10) / 10 })])
+            }
+          >
+            fit scene to narration
+          </button>
+        </div>
+      )}
+    </div>
   )
 }
 

@@ -7,8 +7,8 @@
  * are right without spending 30 seconds and two TTS credits to find out.
  */
 import assert from 'node:assert'
-import { applyOps, emptyDoc, op } from '@euclid/dsl'
-import { buildFfmpegArgs, isTrimmed, planNarration } from './mux'
+import { applyOps, emptyDoc, isTrimmed, op, planNarration } from '@euclid/dsl'
+import { buildFfmpegArgs } from './mux'
 
 const audio = (assetId: string, durationSec: number) => ({ assetId, durationSec })
 

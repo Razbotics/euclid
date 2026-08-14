@@ -96,6 +96,7 @@ every run** — re-run and re-paste after restarting.
 | `check-assets.ts` | asset upload → download is byte-identical; tenancy enforced (needs `dev:api`) |
 | `check-narration.ts [--refund]` | TTS generation end-to-end: pricing, debit, op reaches the doc, overflow warning (**spends credits**; `--refund` needs a broken key, costs nothing) |
 | `check-app.ts` | editor loads with zero console/page errors |
+| `check-narration-ui.ts` | editor narration preview: audio loads cross-origin, exact captions render, overrun panel fixes the scene (**spends credits**; needs `dev:api` + `dev:web`) |
 | `check-live.ts <projectId>` | external op appears in the open editor via WebSocket |
 | `render.ts --project <id>` | full MP4 export with narration audio (needs ffmpeg) |
 | `check-mux.ts` | A/V sync in a real render, measured with `silencedetect` (**spends credits**; needs ffmpeg + `dev:api` + `dev:web`) |

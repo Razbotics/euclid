@@ -5,11 +5,25 @@ interface Props {
   doc: EuclidDoc
   time: number
   playing: boolean
+  muted: boolean
+  captions: boolean
   onSeek: (t: number) => void
   onTogglePlay: () => void
+  onToggleMute: () => void
+  onToggleCaptions: () => void
 }
 
-export function Timeline({ doc, time, playing, onSeek, onTogglePlay }: Props) {
+export function Timeline({
+  doc,
+  time,
+  playing,
+  muted,
+  captions,
+  onSeek,
+  onTogglePlay,
+  onToggleMute,
+  onToggleCaptions,
+}: Props) {
   const barRef = useRef<HTMLDivElement>(null)
   const total = docDuration(doc)
 
@@ -28,6 +42,20 @@ export function Timeline({ doc, time, playing, onSeek, onTogglePlay }: Props) {
         <span className="time-readout">
           {time.toFixed(2)}s / {total.toFixed(2)}s
         </span>
+        <button
+          className={muted ? 'toggle off' : 'toggle'}
+          onClick={onToggleMute}
+          title={muted ? 'unmute narration' : 'mute narration'}
+        >
+          {muted ? '🔇' : '🔊'}
+        </button>
+        <button
+          className={captions ? 'toggle' : 'toggle off'}
+          onClick={onToggleCaptions}
+          title={captions ? 'hide captions' : 'show captions'}
+        >
+          CC
+        </button>
       </div>
       <div
         ref={barRef}

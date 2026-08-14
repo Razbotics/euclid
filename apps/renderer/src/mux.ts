@@ -1,51 +1,10 @@
-import type { EuclidDoc } from '@euclid/dsl'
+import type { NarrationPlacement } from '@euclid/dsl'
 
 /**
- * Where each scene's narration sits on the global audio timeline, and how much
- * of it may play. Pure — separated from downloading so the offset and trim
- * decisions can be tested without a render or a network call.
+ * ffmpeg-specific half of the mux. Placement itself (`planNarration`) lives in
+ * @euclid/dsl so the editor's audio preview and this export derive the same
+ * offsets and trims from the document.
  */
-export interface NarrationPlacement {
-  sceneId: string
-  assetId: string
-  /** where this scene begins on the global timeline */
-  startSec: number
-  /** how much of the clip may play before its scene ends */
-  playSec: number
-  /** what the document says the audio actually runs for */
-  durationSec: number
-}
-
-/** True when the scene's narration had to be cut to fit. */
-export const isTrimmed = (p: NarrationPlacement): boolean => p.durationSec > p.playSec
-
-/**
- * Scenes without narration contribute nothing: the silence between clips comes
- * from placing them at offsets, not from padding files.
- *
- * Narration may outrun its scene — `generate_narration` warns but keeps the
- * audio rather than billing a retry — so it is cut at the scene boundary. That
- * matches what captions do (`clampToScene` in packages/dsl), and it prevents
- * one scene's voice from playing over the next scene's frames.
- */
-export function planNarration(doc: EuclidDoc): NarrationPlacement[] {
-  const placements: NarrationPlacement[] = []
-  let sceneStart = 0
-  for (const scene of doc.scenes) {
-    const audio = scene.narration?.audio
-    if (audio?.assetId) {
-      placements.push({
-        sceneId: scene.id,
-        assetId: audio.assetId,
-        startSec: sceneStart,
-        playSec: Math.min(audio.durationSec, scene.duration),
-        durationSec: audio.durationSec,
-      })
-    }
-    sceneStart += scene.duration
-  }
-  return placements
-}
 
 /**
  * Video always comes from the PNG pipe on stdin (input 0); each narration clip

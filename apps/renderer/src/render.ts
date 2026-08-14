@@ -5,8 +5,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { chromium } from 'playwright'
-import { docDuration, type EuclidDoc } from '@euclid/dsl'
-import { buildFfmpegArgs, isTrimmed, planNarration, type NarrationPlacement } from './mux'
+import {
+  docDuration,
+  isTrimmed,
+  planNarration,
+  type EuclidDoc,
+  type NarrationPlacement,
+} from '@euclid/dsl'
+import { buildFfmpegArgs } from './mux'
 
 /**
  * Headless export worker. Replays the scene document frame-by-frame in

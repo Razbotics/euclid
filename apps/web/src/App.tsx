@@ -4,6 +4,7 @@ import { useProject } from './useProject'
 import { Preview } from './Preview'
 import { Timeline } from './Timeline'
 import { Inspector } from './Inspector'
+import { CaptionOverlay, NarrationTrack } from './Narration'
 
 export function App() {
   const projectId = new URLSearchParams(window.location.search).get('project')
@@ -11,6 +12,8 @@ export function App() {
 
   const [time, setTime] = useState(0)
   const [playing, setPlaying] = useState(false)
+  const [muted, setMuted] = useState(false)
+  const [captions, setCaptions] = useState(true)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
 
   // Playback clock: rAF accumulates into `time`; rendering itself stays a pure
@@ -54,7 +57,10 @@ export function App() {
         {error && <span className="badge error">{error}</span>}
       </header>
       <main>
-        <Preview doc={doc} time={time} />
+        <div className="stage">
+          <Preview doc={doc} time={time} />
+          {captions && <CaptionOverlay doc={doc} time={time} />}
+        </div>
         <Inspector
           doc={doc}
           currentScene={at?.scene ?? null}
@@ -63,10 +69,15 @@ export function App() {
           submit={submit}
         />
       </main>
+      <NarrationTrack doc={doc} time={time} playing={playing} muted={muted} />
       <Timeline
         doc={doc}
         time={time}
         playing={playing}
+        muted={muted}
+        captions={captions}
+        onToggleMute={() => setMuted((m) => !m)}
+        onToggleCaptions={() => setCaptions((c) => !c)}
         onSeek={(t) => {
           setPlaying(false)
           setTime(t)

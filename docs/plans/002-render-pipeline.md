@@ -300,6 +300,48 @@ Measured: 8.00s h264+aac, `silencedetect` finds quiet across `[1.30 → 5.05]`
 spanning the silent scene, and speech resumes at **5.05s against an expected
 5.00s** — a clip placed at the wrong offset moves that boundary and fails.
 
+## Phase 4b: Editor narration preview  (status: done)
+
+Not originally planned. Audit before the milestone found the editor had **no
+audio at all** — narration's only presence was a yellow dot in the timeline.
+The milestone as written would still have passed (its editor step only tests
+live sync), but its actual purpose is judging whether the video is *good*, and
+tuning narration timing through a 30-second export cycle per iteration is not
+that.
+
+- [x] `planNarration` moved to `packages/dsl` so the editor and the export
+      derive identical offsets and trims
+- [x] `NarrationTrack` — one `<audio>` per narrated scene, driven off the
+      existing rAF playback clock
+- [x] `CaptionOverlay` — `documentCues` rendered over the canvas, dimmed and
+      italic when `estimated`
+- [x] Mute and CC toggles in the timeline controls
+- [x] Inspector narration panel: script, duration, word count, and an overrun
+      warning with a "fit scene to narration" button
+
+Decisions worth not re-deriving:
+- **Audio lives in the browser shell, never in `packages/engine`.** The
+  sampler must stay a pure function of (document, time); playback is neither.
+  The engine is untouched, so preview and export remain pixel-identical.
+- **Re-seek only past 0.25s of drift.** Once started, the audio element keeps
+  better time than a rAF loop; correcting every frame makes it stutter. We
+  intervene only after a genuine slip (scrub, stall, tab throttle).
+- **The script is read-only in the editor.** Rewriting it there would leave
+  the generated audio and word timings describing text that no longer exists,
+  and regenerating costs credits — that belongs to the agent. What the editor
+  *can* usefully fix is the overrun `generate_narration` reports but doesn't
+  enforce, and that's an ordinary `updateScene` op.
+
+Verified by `check-narration-ui.ts` (**spends credits**). The load assertion is
+the important one: assets are owner-scoped and served from a different origin,
+so the elements carry `crossOrigin="use-credentials"` — if CORS or the cookie
+path were wrong the UI would look perfect and simply never make a sound.
+Measured: both elements reach `readyState 4` with decoded durations matching
+the TTS output (1.39s / 2.93s), an exact non-estimated caption renders at the
+playhead, the fitting scene shows no warning, the overrunning one is flagged
+with the right delta, and the fit button extended a 1s scene to 2.7s through
+the normal ops path.
+
 ## Phase 5: The milestone  ← NEXT
 - [ ] Agent builds the full 60s narrated equation-morph video over MCP
 - [ ] Human tweak in the editor lands mid-build (live sync)

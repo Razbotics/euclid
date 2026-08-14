@@ -141,8 +141,14 @@ becomes an extra input placed at that scene's global start with `adelay`, so
 silence between clips falls out of placement rather than needing padding
 files. Audio that outruns its scene is cut at the boundary — the same rule
 captions follow — so one scene's voice never plays over another's frames.
-Placement is pure and lives in `apps/renderer/src/mux.ts`, separate from
-downloading, so offsets and trims are testable without rendering. Target: Cloudflare Containers consuming a
+
+Placement is `planNarration` in `packages/dsl`, deliberately **not** in the
+renderer: the editor's audio preview derives its offsets and trims from the
+same function, so what you hear while scrubbing is what lands in the file.
+`apps/renderer/src/mux.ts` keeps only the ffmpeg-specific half. This is the
+audio counterpart of the purity invariant — but note audio itself stays out of
+`packages/engine`, which must remain a pure function of (document, time);
+playback lives in the browser shell (`apps/web/src/Narration.tsx`). Target: Cloudflare Containers consuming a
 Queue that `POST /render` feeds (queue deferred — see plans/002).
 
 Job lifecycle: `POST /render` prices the video (per-second × resolution, see
