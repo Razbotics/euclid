@@ -38,6 +38,13 @@ the copy that cannot go stale.
   a non-starter, so asset upload is a plain endpoint (`POST
   /api/projects/:id/assets`, internal-key only).
 
+One capability returns an **image**: `preview_frames` hands back a contact
+sheet as an MCP image block beside its caption — the only way an agent can see
+what it is making. It is free, and refuses `execute_paid` so it stays that way.
+The gateway carries this generically: any capability may set `image`, and the
+plain-text response form says an image was omitted rather than dropping it
+silently.
+
 One capability is destructive: `delete_project` removes a project and
 everything it owns, and nothing can bring it back. It requires `confirm: true`;
 called without it, it reports what would be lost and deletes nothing — the same

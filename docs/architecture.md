@@ -214,6 +214,42 @@ Because validation moved server-side, error text is now the agent's only
 teacher — which is why lookups name what *does* exist and rejections name the
 capability to call next.
 
+## Agent sight
+
+The agent cannot scrub a timeline, and until now could not see anything it
+made: `get_project` confirms a highlight *exists*, never that it landed on the
+right glyph. `preview_frames` returns **one labeled contact sheet** — the
+capability's caption plus an MCP `image` block — for free, in about a second.
+See [plans/007](plans/007-agent-sight.md).
+
+Three properties carry it:
+
+- **Which times.** `keyMoments(doc)` in `packages/dsl` is pure, like
+  `scenePacing` and `documentCues`: the document already knows every morph
+  midpoint, highlight window and mid-reveal. Morphs are sampled at 25/50/75%,
+  because the failure being hunted is usually a trajectory rather than one bad
+  frame. The editor draws the same list on its scrubber, so the human and the
+  agent are never looking at two different maps.
+- **Not a second renderer.** Capture drives the same
+  `window.__euclid.renderFrame` the exporter drives, so a preview frame is not
+  an approximation of the export — it *is* one frame of it. Frames are composed
+  into the grid inside the page, so a twelve-tile sheet costs one image
+  transfer rather than twelve `page.screenshot()` round-trips. A Worker cannot
+  run Chromium, so capture lives behind `PREVIEW_ORIGIN`: a local
+  `preview-server.ts` today, the render backend later, and nothing else changes
+  when it moves.
+- **Free, deliberately.** Twelve frames is 0.3% of a 3,654-frame render. If
+  preview cost credits agents would render instead — 200× dearer and three
+  minutes slower — so `preview_frames` refuses the paid executor. This is the
+  same reasoning that keeps `get_project` free.
+
+A capture failure and a correctly-rendered dark frame are the same bytes: a
+valid PNG of the right size. So the backend measures the lit fraction of each
+tile where the pixels actually are (the PNG cannot be asked — row filtering
+makes flat regions look like zeros) and reports it; an all-blank sheet is
+refused as a capture fault rather than handed to an agent that would read it
+as a broken video.
+
 ## Deleting a project
 
 `DELETE /api/projects/:id` (and the `delete_project` capability) is the only

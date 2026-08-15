@@ -225,3 +225,29 @@ header .back h1 { color: inherit; }
 }
 .asset-actions a:hover, .asset-actions button:hover { color: #e6e8eb; }
 .asset-actions button:disabled { opacity: .4; cursor: default; }
+
+/* Key moments on the scrubber — the same times `preview_frames` captures.
+   Deliberately small and low-contrast: they are a map of where to look, not
+   content, and a bar crowded with markers is worse than no markers. */
+.timeline-bar .moment {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 7px;
+  padding: 0;
+  border: 0;
+  border-radius: 0 0 1px 1px;
+  transform: translateX(-1px);
+  background: #5b6673;
+  cursor: pointer;
+}
+.timeline-bar .moment:hover,
+.timeline-bar .moment:focus-visible {
+  height: 100%;
+  background: #8b97a6;
+  outline: none;
+}
+/* Effects earn a colour; a scene opening stays neutral, since every scene has one. */
+.timeline-bar .moment-texMorph { background: #58c4dd; }
+.timeline-bar .moment-highlight { background: #e8c74a; }
+.timeline-bar .moment-write { background: #7fb069; }

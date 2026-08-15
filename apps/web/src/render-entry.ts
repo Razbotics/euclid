@@ -27,6 +27,22 @@ declare global {
 window.__euclid = {
   async load(docJson: unknown) {
     doc = EuclidDocSchema.parse(docJson)
+
+    // Tear down any previous document first.
+    //
+    // Without this, every load appends another canvas carrying the same id, so
+    // `getElementById('euclid-canvas')` keeps returning the *first* one — which
+    // nothing renders into any more. A one-shot script never notices, because
+    // it loads once; a long-lived capture process (the preview server, and the
+    // render container that will replace it) gets a correct-looking black frame
+    // for every document after the first.
+    if (app) {
+      app.destroy({ removeView: true }, { children: true, texture: true })
+      app = null
+      stage = null
+    }
+    document.getElementById('euclid-canvas')?.remove()
+
     app = new Application()
     await app.init({
       width: doc.canvas.width,

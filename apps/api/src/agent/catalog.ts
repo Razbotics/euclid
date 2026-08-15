@@ -3,6 +3,7 @@ import { animTools } from './tools-anim'
 import { decisionTools } from './tools-decision'
 import { mediaTools } from './tools-media'
 import { nodeTools } from './tools-node'
+import { previewTools } from './tools-preview'
 import { projectTools } from './tools-project'
 import type { Capability } from './types'
 
@@ -11,6 +12,7 @@ const ALL: Capability[] = [
   ...nodeTools,
   ...animTools,
   ...mediaTools,
+  ...previewTools,
   ...decisionTools,
 ]
 

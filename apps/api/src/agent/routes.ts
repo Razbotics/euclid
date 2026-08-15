@@ -69,9 +69,18 @@ agent.post('/tools/:name/execute', async (c) => {
   try {
     const out = await executeCapability(ctx, name, args, { allowPaid: c.req.query('paid') === '1' })
     if (c.req.query('format') === 'json') {
-      return c.json({ revision: out.revision, name: out.name, data: out.data, text: out.text })
+      return c.json({
+        revision: out.revision,
+        name: out.name,
+        data: out.data,
+        text: out.text,
+        ...(out.image ? { image: out.image } : {}),
+      })
     }
-    return c.text(out.text)
+    // The plain-text form cannot carry an image, so it says one exists rather
+    // than dropping it silently — a caller reading only text should know it is
+    // missing the point of the call.
+    return c.text(out.image ? `${out.text}\n\n[image omitted: request ?format=json]` : out.text)
   } catch (e) {
     return failure(c, e)
   }

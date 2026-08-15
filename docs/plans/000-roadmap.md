@@ -48,11 +48,15 @@ rejected; and a patch to a property an animation keyframes changes the
 document but not the render, since the track wins — `update_node` now says
 so. Neither fix makes sight less necessary: an agent without a shell still
 could not have found the first one.
-- [ ] `keyMoments(doc)` in packages/dsl — pure, the transition times worth seeing
-- [ ] `preview_frames` MCP tool returning one labeled contact sheet — **free**
-- [ ] Full-res drill-down for a single suspicious frame
-- [ ] `check-preview.ts`; editor uses `keyMoments` to mark the scrubber
-- [ ] Bind capture to the render backend — **no second renderer**
+- [x] `keyMoments(doc)` in packages/dsl — pure, the transition times worth seeing
+- [x] `preview_frames` capability returning one labeled contact sheet — **free**
+      (12 tiles in ~1.2s, versus ~3 min and ~61 credits for a render)
+- [x] Full-res drill-down for a single suspicious frame
+- [x] `check-preview.ts`; editor marks the same moments on the scrubber
+- [ ] Bind capture to the render backend — **no second renderer**. Runs against
+      a local `preview-server.ts` today; `PREVIEW_ORIGIN` is the only seam.
+- [ ] Use it in a milestone run — the machinery is built and verified, but
+      nothing yet proves an agent *acts* on what it can now see.
 
 Preview frames are only trustworthy because of the purity invariant: a
 preview frame is not an approximation of the export, it *is* the export.

@@ -1,6 +1,16 @@
 /** Runtime smoke test for the doc → ops → sample pipeline. Run: pnpm --filter @euclid/renderer exec tsx src/smoke.ts */
 import assert from 'node:assert'
-import { applyOps, emptyDoc, op, OpError, type Track } from '@euclid/dsl'
+import {
+  applyOps,
+  emptyDoc,
+  formatMoments,
+  keyMoments,
+  op,
+  OpError,
+  SCHEMA_VERSION,
+  type EuclidDoc,
+  type Track,
+} from '@euclid/dsl'
 import { resolveNode, sampleKeyframes } from '../../../packages/engine/src/index'
 
 let doc = emptyDoc('p1', 'smoke')
@@ -103,4 +113,83 @@ assert.deepEqual((shadowed as { position: unknown }).position, { x: 960, y: 540 
 assert.deepEqual(resolveNode(shadowed, 0).props.position, { x: 100, y: 100 }, 'track wins at t=0')
 assert.deepEqual(resolveNode(shadowed, 2).props.position, { x: 500, y: 100 }, 'track wins at t=2')
 
-console.log('smoke OK — reducer, sampler, morph resolution all behave')
+// ---------- keyMoments: the times worth looking at ----------
+// Pure by design, so it is testable without a browser — which is the whole
+// reason the interesting timestamps live in the document rather than being
+// worked out by hand, as they were three separate times during the third
+// milestone run.
+const sighted: EuclidDoc = {
+  schema: SCHEMA_VERSION,
+  id: 'km',
+  name: 'Key Moments',
+  canvas: { width: 1920, height: 1080, fps: 60 },
+  scenes: [
+    {
+      id: 's1',
+      name: 'One',
+      duration: 10,
+      background: '#000000',
+      nodes: [
+        {
+          id: 'eq',
+          type: 'latex',
+          tex: 'a^2',
+          color: '#ffffff',
+          fontSize: 64,
+          position: { x: 0, y: 0 },
+          scale: 1,
+          rotation: 0,
+          opacity: 1,
+          tracks: [],
+          transitions: [
+            { type: 'texMorph', start: 2, duration: 2, toTex: 'b^2', easing: 'smooth' },
+            { type: 'highlight', start: 6, duration: 2, style: 'color', color: '#e8c74a', tex: 'b' },
+            { type: 'write', start: 0, duration: 1 },
+          ],
+        },
+      ],
+    },
+    { id: 's2', name: 'Two', duration: 5, background: '#000000', nodes: [] },
+  ],
+}
+
+const moments = keyMoments(sighted)
+const kinds = moments.map((m) => m.kind)
+assert.ok(kinds.includes('scene'), 'a scene opening is a moment — static layout errors live there')
+assert.ok(kinds.includes('texMorph'), 'morphs are moments')
+assert.ok(kinds.includes('highlight'), 'highlights are moments')
+assert.ok(kinds.includes('write'), 'writes are moments')
+
+// Times are GLOBAL, not scene-local: scene two opens after scene one's 10s.
+const secondScene = moments.find((m) => m.sceneId === 's2')!
+assert.ok(secondScene.t >= 10, `scene two must be lifted to global time, got ${secondScene.t}`)
+
+// A morph is sampled across its span, so a re-layout shows as a trajectory
+// rather than as one worst frame.
+const morphs = moments.filter((m) => m.kind === 'texMorph').map((m) => m.t)
+assert.deepEqual(morphs, [2.5, 3, 3.5], `morph sampled at 25/50/75%, got ${morphs.join(',')}`)
+
+// The highlight is caught mid-hold, where it is at full strength.
+assert.equal(moments.find((m) => m.kind === 'highlight')!.t, 7, 'highlight sampled at its middle')
+
+// Sorted, inside the document, and never two tiles of the same instant.
+for (let i = 1; i < moments.length; i++) {
+  assert.ok(moments[i]!.t >= moments[i - 1]!.t, 'moments come back in time order')
+  assert.ok(moments[i]!.t - moments[i - 1]!.t >= 0.05, 'near-identical times are deduped')
+}
+assert.ok(moments.every((m) => m.t < 15), 'no moment may fall past the end of the document')
+
+// The cap keeps midpoints and thins the flanking samples, and it thins across
+// the whole timeline — a cap must never mean "only the first half was seen".
+const capped = keyMoments(sighted, { max: 4 })
+assert.equal(capped.length, 4, 'the cap is respected')
+assert.ok(
+  capped.some((m) => m.kind === 'highlight') && capped.some((m) => m.kind === 'texMorph'),
+  'capping keeps the effects, dropping only the extra samples of one',
+)
+assert.ok(capped.at(-1)!.t > 5, 'a capped set still reaches the back half of the video')
+
+assert.equal(keyMoments({ ...sighted, scenes: [] }).length, 0, 'an empty document has no moments')
+assert.match(formatMoments(moments), /t=\s*2\.50\s+texMorph/, 'formatting is one compact line each')
+
+console.log('smoke OK — reducer, sampler, morph resolution and key moments all behave')

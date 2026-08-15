@@ -12,6 +12,11 @@ interface Env {
 /** Set by the OAuth layer once wired; dev fallback below. */
 type Props = { userId?: string }
 
+/** What a tool hands back: a caption, and sometimes something to look at. */
+type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; data: string; mimeType: string }
+
 /** How long to wait for a client to collect an answer before falling back. */
 const ELICIT_TIMEOUT_MS = 30_000
 
@@ -56,11 +61,27 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
    * A failure body is already written for the agent — it names the argument to
    * fix or the capability to call next — so it is passed through untouched
    * rather than wrapped in a status code the agent cannot act on.
+   *
+   * A JSON body may also carry an image (today only `preview_frames`), which
+   * becomes a second content block. The caption block comes first: an image
+   * with no caption cannot say which tile is which, and the labels are what
+   * make a contact sheet readable.
    */
-  private async relay(res: Response): Promise<{ content: { type: 'text'; text: string }[] }> {
+  private async relay(res: Response): Promise<{ content: ContentBlock[] }> {
     const body = await res.text()
     if (!res.ok) throw new Error(body)
-    return { content: [{ type: 'text' as const, text: body }] }
+    if (!(res.headers.get('content-type') ?? '').includes('application/json')) {
+      return { content: [{ type: 'text', text: body }] }
+    }
+    const parsed = JSON.parse(body) as {
+      text?: string
+      image?: { base64: string; mimeType: string }
+    }
+    const content: ContentBlock[] = [{ type: 'text', text: parsed.text ?? body }]
+    if (parsed.image) {
+      content.push({ type: 'image', data: parsed.image.base64, mimeType: parsed.image.mimeType })
+    }
+    return { content }
   }
 
   /**
@@ -183,7 +204,9 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
       },
       async ({ name, args }) =>
         this.relay(
-          await this.api(`/api/agent/tools/${encodeURIComponent(name)}/execute`, {
+          // format=json so a capability that returns something to look at
+          // (preview_frames) can carry the image alongside its caption.
+          await this.api(`/api/agent/tools/${encodeURIComponent(name)}/execute?format=json`, {
             method: 'POST',
             body: JSON.stringify(args ?? {}),
           }),
@@ -203,7 +226,7 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
       },
       async ({ name, args }) =>
         this.relay(
-          await this.api(`/api/agent/tools/${encodeURIComponent(name)}/execute?paid=1`, {
+          await this.api(`/api/agent/tools/${encodeURIComponent(name)}/execute?paid=1&format=json`, {
             method: 'POST',
             body: JSON.stringify(args ?? {}),
           }),

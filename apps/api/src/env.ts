@@ -22,6 +22,13 @@ export interface Env {
   /** Shared secret for service-to-service calls (MCP worker, render worker). */
   INTERNAL_API_KEY: string
   /**
+   * Where `preview_frames` captures frames. A Worker cannot run Chromium, so
+   * capture happens out of process; defaults to the local preview server in
+   * dev. Production points this at the render backend — never a second
+   * renderer, or preview frames stop being export frames.
+   */
+  PREVIEW_ORIGIN?: string
+  /**
    * Dev-only: '1' lets requests without a session act as user 'dev-user' so
    * the editor can sync before auth UI exists. NEVER set in production.
    */

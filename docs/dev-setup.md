@@ -105,6 +105,11 @@ an existing local DB won't pick up a new table on its own.
 pnpm dev:api    # :8787 — API + Durable Objects + D1; also starts the public tunnel
 pnpm dev:mcp    # :8788 — MCP worker (service-binds to api; start api first)
 pnpm dev:web    # :5173 — `/` lists projects; ?project=<id> opens one; ?demo=1 = offline demo
+
+# Capture backend for preview_frames. A Worker cannot run Chromium, so the
+# capability posts documents here; without it preview_frames returns a 503
+# that says exactly this. Needs dev:web, since it drives render.html.
+pnpm --filter @euclid/renderer exec tsx src/preview-server.ts   # :8790
 ```
 
 `dev:api` prints the tunnel URL before wrangler takes over the console (also
@@ -144,6 +149,8 @@ every run** — re-run and re-paste after restarting.
 | `shot.ts <t...>` | pixel-accurate frames of the demo doc through the export surface |
 | `shot-project.ts <projectId> <t...>` | the same, for a **real project** at global seconds — how every milestone run has actually found its visual bugs (`OUT_DIR=` to choose where; needs `dev:api` + `dev:web`). Superseded once `preview_frames` lands (plans/007) |
 | `check-mcp-tools.ts` | MCP surface driven as a real client does: `animate` arg coercion, tool registration (free; needs `dev:api` + `dev:mcp`) |
+| `preview.ts <projectId> [t...]` | contact sheet of a real project at its key moments (`FULL=<i>` also writes that frame full-res; free, needs `dev:api` + `dev:web`) — the developer half of the agent's `preview_frames` |
+| `check-preview.ts` | agent sight end to end: key moments → sheet → drill-down, delivered as base64 through the gateway, plus the blank-capture guards (free; needs `dev:api`, `dev:web`, `preview-server.ts`) |
 | `check-gateway.ts` | agent gateway (plans/008): instructions → describe → execute, and **every capability in the catalog** — transitions and overlap-replace, the credit gate, both `update_node` traps, arg coercion, asset in-use refusal (free; needs `dev:api` only) |
 | `check-decisions.ts` | agent → human → agent question loop, driven headless as a shell-less client would (free; needs `dev:api` + `dev:mcp`) |
 | `check-delete.ts` | project deletion: confirm guard, side-effect-free dry run, tenancy, and that the cascade clears D1 rows, R2 bytes **and** the Durable Object's document (free; needs `dev:api`) |

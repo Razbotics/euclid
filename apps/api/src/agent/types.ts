@@ -39,6 +39,14 @@ export interface AgentCtx {
 export interface CapabilityResult {
   data: unknown
   text: string
+  /**
+   * An image the caller should *look at*, base64-encoded.
+   *
+   * Deliberately alongside `text` rather than instead of it: an image with no
+   * caption cannot say which tile is which, and a caller that cannot render
+   * images still gets the useful half. Only `preview_frames` sets this today.
+   */
+  image?: { base64: string; mimeType: string }
 }
 
 export interface Capability<A = any> {

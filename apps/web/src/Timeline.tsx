@@ -1,5 +1,5 @@
 import { useMemo, useRef } from 'react'
-import { docDuration, planNarration, type EuclidDoc } from '@euclid/dsl'
+import { docDuration, keyMoments, planNarration, type EuclidDoc } from '@euclid/dsl'
 
 interface Props {
   doc: EuclidDoc
@@ -26,6 +26,9 @@ export function Timeline({
 }: Props) {
   const barRef = useRef<HTMLDivElement>(null)
   const total = docDuration(doc)
+  // Pure function of the document, so this costs nothing to recompute and can
+  // never disagree with what the agent's contact sheet shows.
+  const moments = useMemo(() => keyMoments(doc, { max: 24 }), [doc])
   // Same placement the export's ffmpeg mux uses, so the lane shows where audio
   // actually lands in the file — including narration trimmed at a scene edge.
   // The gaps between blocks are the silence `get_project` reports as tail.
@@ -83,6 +86,27 @@ export function Timeline({
             {sc.narration && <span className="narration-dot" title="has narration">●</span>}
           </div>
         ))}
+        {/* The same moments `preview_frames` captures, from the same pure
+            function — so the human and the agent look at one list rather than
+            two. Clicking one seeks there, which is the shortest path from
+            "the agent says tile 6 looks wrong" to watching it move. */}
+        {total > 0 &&
+          moments.map((m) => (
+            <button
+              key={`${m.kind}-${m.t}`}
+              type="button"
+              className={`moment moment-${m.kind}`}
+              style={{ left: `${(m.t / total) * 100}%` }}
+              title={`${m.t.toFixed(2)}s — ${m.kind} ${m.label}`}
+              aria-label={`seek to ${m.t.toFixed(2)} seconds, ${m.kind}`}
+              onPointerDown={(e) => {
+                // The bar seeks on pointer-down anywhere; stop it so a marker
+                // lands exactly on its moment rather than on the pixel clicked.
+                e.stopPropagation()
+                onSeek(m.t)
+              }}
+            />
+          ))}
         {total > 0 && (
           <div className="playhead" style={{ left: `${(Math.min(time, total) / total) * 100}%` }} />
         )}

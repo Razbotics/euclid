@@ -1,4 +1,4 @@
-# 007 — Agent sight: preview frames over MCP (status: active — Phase 3)
+# 007 — Agent sight: preview frames over MCP (status: built, unproven in a run)
 
 Direction decided 2026-08-15 (after the third milestone run): the agent
 cannot see what it makes. This **supersedes**
@@ -77,9 +77,9 @@ no browser, shared by the editor and MCP. Sampling a transition at 25/50/75%
 rather than only 50% is what shows a *trajectory* instead of a single worst
 frame.
 
-- [ ] `keyMoments(doc)` with per-transition sampling
-- [ ] `smoke.ts` coverage — pure, no browser
-- [ ] Editor uses it to mark the scrubber
+- [x] `keyMoments(doc)` with per-transition sampling — `packages/dsl/src/moments.ts`
+- [x] `smoke.ts` coverage — pure, no browser
+- [x] Editor uses it to mark the scrubber (clickable; seeks to the moment)
 
 ### 2. `preview_frames` MCP tool
 
@@ -95,10 +95,13 @@ and both the overlapping `P(` at t=34.6 and the off-centre "prior" label are
 obvious at tile size. `full: <index>` drills into one frame at full
 resolution when a tile looks wrong.
 
-- [ ] Contact-sheet composition (grid, labels, scale)
-- [ ] `preview_frames` registered, defaulting to `moments: true`
-- [ ] Full-res drill-down for a single frame
-- [ ] `check-preview.ts` — the tool driven as a real client does
+- [x] Contact-sheet composition (grid, labels, scale) — `apps/renderer/src/sheet.ts`
+- [x] `preview_frames` registered, defaulting to key moments
+- [x] Full-res drill-down for a single frame (`full: <index>`)
+- [x] `check-preview.ts` — driven through the gateway as an agent receives it
+- [x] `preview-server.ts` — the capture backend a Worker cannot be
+- [ ] **Use it in a milestone run.** Everything above is machinery; none of it
+      proves an agent *acts* on what it sees.
 
 ### 3. Pricing: free, deliberately
 
@@ -179,3 +182,59 @@ until the agent can verify its own output.
   ~12 interesting moments; a 10-minute one has hundreds.
 - Does the editor expose the same contact sheet? It would make the "human
   tweaks mid-build" milestone task (still unproven) much easier to land.
+
+## What was built (2026-08-15)
+
+`keyMoments(doc)` → `sheet.ts` (capture + grid) → `preview-server.ts` (the
+backend a Worker cannot be) → `preview_frames` in the catalog → an MCP `image`
+content block beside its caption. Free, and refused by `execute_paid` so it
+stays that way.
+
+Measured on the Bayes project: **12 tiles in 1.2s**, against ~3 minutes and
+~61 credits for the render that was previously the only way to look. The first
+sheet it produced immediately reproduced the third run's finding — the fraction
+morph at t≈34.9s is illegible mid-flight — which had cost a terminal, `ffmpeg`
+and a hand-rolled script to find the first time.
+
+### The open questions, answered
+
+- **Image block, stored URL, or both?** Block only. Previews are meant to be
+  called constantly; writing each one into the asset registry would bury a
+  project's real files under render debris, and the registry had just been
+  cleaned of exactly that. A human wanting the picture has the editor, which
+  now marks the same moments on the scrubber.
+- **Should `keyMoments` cap or page?** Cap, at 12 by default. When the cap
+  binds it drops the 25/75% flanking samples before any midpoint, then thins
+  what remains *evenly across the timeline* — a cap must never quietly mean
+  "only the first half was looked at".
+- **Does the editor expose the sheet?** Not the sheet — the moments. Same pure
+  function, drawn as clickable markers on the scrubber, so "tile [6] looks
+  wrong" is one click from watching it move. That is the half a human needs;
+  the sheet exists because the agent cannot scrub.
+
+## Notes / gotchas
+
+- **Two silent-blank-frame bugs, found by the tool on its own output.** Both
+  produced a valid PNG of the right size, all black — the failure that looks
+  most like success.
+  1. Pixi creates its WebGL context without `preserveDrawingBuffer`, so the
+     drawing buffer is cleared once the frame composites. Reading the canvas
+     from a *second* `page.evaluate` is a later task and gets a cleared buffer.
+     Render and copy must happen in one call. `page.screenshot()` never hits
+     this because it captures through the compositor.
+  2. `render-entry.load()` appended a new canvas per call, all carrying id
+     `euclid-canvas`, so `getElementById` kept returning the *first* — which
+     nothing rendered into any more. A one-shot script never notices; a
+     long-lived capture process gets black frames for every document after the
+     first. **This would have hit the render Container too**, and it was fixed
+     in the shared surface rather than worked around in the capturer.
+- **Blankness cannot be measured from the PNG.** Row filtering turns flat
+  regions into zero bytes, so an all-black sheet scored *higher* on a
+  byte-level check (1.99%) than a correct busy frame (0.74%) — the first guard
+  waved both bugs straight through. It is now measured per tile in the browser,
+  where the pixels are, and returned as `x-preview-ink`. That turned a test
+  hack into a product safeguard: an all-blank sheet is refused as a capture
+  fault rather than handed to an agent that would read it as a broken video.
+- The backend is still the **local path**. `PREVIEW_ORIGIN` is the single seam
+  to move it to Browser Rendering or the render Container; nothing else changes.
+  Until then a shell-less client is served only where that process runs.
