@@ -31,8 +31,18 @@ value is used in prod and dev, per Better Auth cloud setup).
 > **Gotcha:** the MCP worker reaches the API through a wrangler service
 > binding, and that discovery breaks if the API restarts on its own — calls
 > then fail with `Worker "euclid-api" not found`. Restart **both**, API
-> first: `pkill -f "wrangler dev"; pkill -f workerd`, start api, wait, start
+> first: `pkill -f wrangler; pkill -f workerd`, start api, wait, start
 > mcp. (`cloudflared` is a separate process, so the tunnel URL survives.)
+>
+> Use `pkill -f wrangler`, **not** `pkill -f "wrangler dev"` — the actual
+> process is `node .../wrangler.js dev --port 8787`, so the quoted form
+> matches nothing and silently leaves the old worker running. Two instances
+> then fight over the port and the newer one dies during bundling.
+
+> **Gotcha:** killing wrangler mid-build leaves a stale bundle behind, and
+> the next start fails with `Could not resolve .../\.wrangler/tmp/bundle-XXXX/
+> middleware-loader.entry.ts`. Fix by deleting `apps/*/.wrangler/tmp`. Never
+> delete `.wrangler/state` — that is the local D1 database and R2 bucket.
 
 > **Gotcha:** wrangler does **not** reliably hot-reload `.dev.vars`. After
 > changing a secret, restart the worker or it keeps serving the old value —
@@ -93,6 +103,8 @@ every run** — re-run and re-paste after restarting.
 | `smoke-tts.ts [--live]` | TTS alignment → word timings (free; `--live` makes one real call) |
 | `smoke-mux.ts` | narration placement + ffmpeg args: offsets, trims, silent path (free) |
 | `shot.ts <t...>` | pixel-accurate frames of the demo doc through the export surface |
+| `check-mcp-tools.ts` | MCP surface driven as a real client does: `animate` arg coercion, tool registration (free; needs `dev:api` + `dev:mcp`) |
+| `check-decisions.ts` | agent → human → agent question loop: asked over MCP, arrives live in the editor, answered by click (free; needs all three servers) |
 | `check-assets.ts` | asset upload → download is byte-identical; tenancy enforced (needs `dev:api`) |
 | `check-narration.ts [--refund]` | TTS generation end-to-end: pricing, debit, op reaches the doc, overflow warning (**spends credits**; `--refund` needs a broken key, costs nothing) |
 | `check-app.ts` | editor loads with zero console/page errors |

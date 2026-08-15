@@ -52,6 +52,35 @@ const vtt = toVTT(cues)
 assert.match(vtt, /^WEBVTT\n\n/, 'VTT has header')
 assert.match(vtt, /00:00:06\.000 --> 00:00:07\.800/, 'VTT uses dot milliseconds')
 
+// A long sentence must split into balanced lines at a clause boundary, not be
+// filled greedily and leave a stub. This exact sentence produced
+// "…add it to both / sides." (79 chars then 6) in the Phase 5 milestone.
+const LONG = 'Now the key move: take half of the x coefficient, square it, and add it to both sides.'
+let long = emptyDoc('p3', 'Long')
+long = applyOps(long, [
+  op.addScene({ id: 'l1', name: 'Long', duration: 12, background: '#000000', nodes: [] }),
+  op.setNarration('l1', {
+    text: LONG,
+    audio: {
+      assetId: 'a3',
+      durationSec: 6,
+      // even 0.6s per word, so timing never forces the split — only length does
+      words: LONG.split(' ').map((word, i) => ({ word, start: i * 0.6, end: i * 0.6 + 0.55 })),
+    },
+  }),
+])
+const longCues = documentCues(long)
+assert.equal(longCues.length, 2, '85 chars must split into exactly two cues, not one plus a stub')
+const [a, b] = [longCues[0]!.text, longCues[1]!.text]
+assert.ok(a.length <= 84 && b.length <= 84, 'both cues respect the character limit')
+// The real fix: neither line is a crumb. Greedy gave 79/6; balanced gives ~49/36.
+assert.ok(
+  Math.min(a.length, b.length) / Math.max(a.length, b.length) > 0.5,
+  `cues should be balanced, got ${a.length} and ${b.length}`,
+)
+assert.ok(/[,;:]$/.test(a), `first cue should end at a clause boundary, got "${a}"`)
+assert.equal(`${a} ${b}`, LONG, 'splitting must not lose or reorder a single word')
+
 // Narration longer than its scene must not bleed into the next scene's cues.
 // generate_narration keeps overrunning audio (rather than billing a retry),
 // so the document can legitimately hold this state.

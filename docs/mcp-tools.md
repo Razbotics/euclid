@@ -14,7 +14,7 @@ The agent-facing API (`apps/mcp/src/index.ts`). Design rules:
 | Tool | Semantics |
 |---|---|
 | `list_projects` / `create_project` | dashboard-level CRUD |
-| `get_project` | cheap text outline of everything — call freely |
+| `get_project` | cheap text outline of everything — call freely. Includes pacing: total silence as a percentage, and per scene `speech=`/`tail=`, with tails over 2s marked `(long)` |
 | `get_scene` | full JSON of one scene for detailed inspection |
 | `add_scene` | appends a scene (name, duration, background) |
 | `update_scene` | patch a scene's name/duration/background; extending `duration` is the fix when narration overruns |
@@ -26,6 +26,10 @@ The agent-facing API (`apps/mcp/src/index.ts`). Design rules:
 | `write_on` | draw-on reveal; node invisible before `start` |
 | `set_narration` | per-scene narration script. Free — writes text only |
 | `generate_narration` | **spends credits** (priced by script length). Synthesizes the scene's narration, stores the audio, and writes word timings into the document as a `system` op. Reports — but does not reject — speech that overruns the scene |
+| `fit_scene_to_narration` | set a scene's duration to its speech plus a held tail — the one-call fix for the dead air `get_project` flags as `(long)` |
+| `ask_user` | put a choice to the human instead of deciding alone. Free. Appears live in their editor, where they can scrub to the moment in question before answering. Returns a decision id |
+| `get_answer` | poll for the human's answer, or list every question and its status. Free |
+| `record_answer` | record an answer the human gave in chat rather than in the editor; provenance is kept (`via: agent` vs `via: editor`) |
 | `get_captions` | SRT/VTT subtitles for the project. Free — derived from narration; word-accurate where TTS timings exist, estimated elsewhere |
 | `render_video` | **spends credits** up front (video seconds only; narration is billed by `generate_narration`); returns a job id. The render worker completes the job asynchronously |
 | `get_render_status` | recent jobs; a `done` job carries `downloadUrl` for the MP4, and a `failed` job has already had its credits refunded |

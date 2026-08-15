@@ -102,3 +102,49 @@ main { display: flex; flex: 1; min-height: 0; }
   background: #6b3f22; color: #ffd8a8; border: none; border-radius: 3px;
   padding: 4px 8px; font-size: 11px; cursor: pointer;
 }
+
+/* ---------- agent questions ---------- */
+
+/* The side column now stacks questions above the inspector; an unanswered
+   question means an agent is stalled, so it sits at the top and is loud. */
+.side { display: flex; flex-direction: column; min-width: 0; overflow-y: auto; }
+.side .inspector { flex: 1; }
+
+.decisions { border-bottom: 1px solid #1d2229; padding: 12px 14px; }
+.decisions h3 {
+  margin: 0 0 8px; font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.06em; color: #7d868f; display: flex; align-items: center; gap: 8px;
+}
+.decision-badge {
+  background: #2f5d8a; color: #dbeaff; border-radius: 10px;
+  padding: 1px 8px; font-size: 10px; text-transform: none; letter-spacing: 0;
+}
+.decision { border-radius: 5px; padding: 10px; margin-bottom: 8px; }
+.decision.open { background: #16253a; border: 1px solid #2f5d8a; }
+.decision.answered { background: #14181d; border: 1px solid #1d2229; opacity: 0.7; }
+.decision-question { margin: 0 0 4px; font-size: 13px; color: #e6e8eb; line-height: 1.4; }
+.decision-detail { margin: 0 0 8px; font-size: 11px; color: #9aa3ad; line-height: 1.45; }
+.decision-seek {
+  background: none; border: none; color: #7fb3ff; font-size: 11px;
+  padding: 0; margin-bottom: 8px; cursor: pointer;
+}
+.decision-options { display: flex; flex-direction: column; gap: 6px; }
+.decision-options button {
+  text-align: left; background: #1c2733; color: #e6e8eb;
+  border: 1px solid #2b3946; border-radius: 4px; padding: 7px 9px;
+  font-size: 12px; cursor: pointer; display: flex; flex-direction: column; gap: 2px;
+}
+.decision-options button:hover { background: #24344a; border-color: #3d5a7a; }
+.opt-detail { font-size: 10px; color: #9aa3ad; line-height: 1.35; }
+.decision-note { display: flex; gap: 6px; margin-top: 8px; }
+.decision-note input {
+  flex: 1; min-width: 0; background: #101418; color: #e6e8eb;
+  border: 1px solid #263140; border-radius: 4px; padding: 5px 7px; font-size: 11px;
+}
+.decision-note button {
+  background: #2f5d8a; color: #dbeaff; border: none; border-radius: 4px;
+  padding: 5px 10px; font-size: 11px; cursor: pointer;
+}
+.decision-note button:disabled { background: #1c2733; color: #5c646d; cursor: default; }
+.decision-resolved { margin: 0; font-size: 12px; color: #9aa3ad; }
+.decision-via { color: #5c646d; font-size: 10px; }

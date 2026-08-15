@@ -51,6 +51,10 @@ reel/clip workflows.
 - [ ] Decide the rights/ToS model **before** building the ingest fetcher
 - [ ] Narration-anchored animation (sync to word timestamps)
 
+## Parallel track: agent asks the human → plans/005-agent-questions.md
+- [x] `ask_user` / `get_answer` / `record_answer`; questions ride the project
+      DO and appear live in the editor, answerable there or relayed from chat
+
 ## Parallel track: desktop app → plans/004-desktop.md
 Evaluated, deliberately not started. Everything that breaks on the server
 (no H.264 encoder, no GPU, SwiftShader) is abundant on the desktop, and

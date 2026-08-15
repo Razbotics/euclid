@@ -99,6 +99,15 @@ async function forwardToDO(
   )
 }
 
+// Questions the agent puts to the human. Not document state — see
+// packages/dsl/src/decisions.ts — but they ride the project's DO so the
+// editor gets them live over the existing WebSocket.
+app.get('/api/projects/:id/decisions', (c) => forwardToDO(c, c.req.param('id'), '/decisions'))
+app.post('/api/projects/:id/decisions', (c) => forwardToDO(c, c.req.param('id'), '/decisions'))
+app.post('/api/projects/:id/decisions/:decisionId/answer', (c) =>
+  forwardToDO(c, c.req.param('id'), `/decisions/${c.req.param('decisionId')}`),
+)
+
 app.get('/api/projects/:id/doc', (c) => forwardToDO(c, c.req.param('id'), '/doc'))
 app.get('/api/projects/:id/events', (c) => forwardToDO(c, c.req.param('id'), '/events'))
 app.post('/api/projects/:id/ops', (c) => forwardToDO(c, c.req.param('id'), '/ops'))

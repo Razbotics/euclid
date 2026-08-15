@@ -342,11 +342,75 @@ playhead, the fitting scene shows no warning, the overrunning one is flagged
 with the right delta, and the fit button extended a 1s scene to 2.7s through
 the normal ops path.
 
-## Phase 5: The milestone  ← NEXT
-- [ ] Agent builds the full 60s narrated equation-morph video over MCP
+## Phase 5: The milestone  (status: in progress)
+- [x] Agent builds the full 60s narrated equation-morph video over MCP
 - [ ] Human tweak in the editor lands mid-build (live sync)
-- [ ] Export, download, watch — and record what the result actually looks
+- [x] Export, download, watch — and record what the result actually looks
       like, honestly
+
+### The run (2026-08-15)
+
+"The Quadratic Formula, Derived" (`daca6a6a`), built entirely over MCP:
+3 scenes (hook / derivation / finale), 112 words of narration, one latex
+node morphing through the whole completing-the-square chain. 64 credits
+total (9 TTS + 55 render). 55.0s h264+aac 1080p60, 2.1MB.
+
+The order that made it work: `set_narration` → `generate_narration` →
+read word timings → size scenes → choreograph. Every morph start was
+placed on a measured word onset (e.g. the completed-square morph starts
+at 15.8s, on "add it to both sides"). Verified before rendering by
+screenshotting the real doc through render.html; verified after by
+extracting frames from the downloaded MP4 and running `silencedetect`:
+every narration clip lands within ~40ms of its scene start.
+
+### What the result actually looks like (recorded honestly)
+
+Verdict: a *decent* explainer — coherent, correct, synced — at the level
+of "clean lecture slides with dissolve transitions", not yet 3b1b.
+
+Good: math legible and correct at every step; beat-accurate choreography
+(morphs land exactly on the spoken operation); exact captions; clean
+encode; A/V sync measured, not eyeballed.
+
+Wrong or weak, in rough order of impact:
+1. **texMorph is a cross-fade, not a glyph-correspondence morph.**
+   Mid-morph frames show both equations overlapped at partial opacity,
+   and unchanged terms drift/re-center instead of staying put (each form
+   is centered independently, so `=` jumps sideways between forms). This
+   is the single biggest gap to 3b1b-quality output; engine work, not
+   document work.
+2. **No emphasis primitive.** During "take half of the x coefficient,
+   square it" (11–16s) nothing moves for ~5s; a highlight/underline on
+   the `b/a` term is what the narration wants and no tool can produce.
+3. **write_on is a left-to-right wipe**, not a hand-drawn reveal — fine
+   for text, mechanical-looking on wide equations.
+4. ~~**Dead air is the cost of scene-sized narration.**~~ **addressed.**
+   3.5s of silent hold after the derivation, 4.5s on the end card (~15%
+   of runtime silent), and nothing in the pipeline reasoned about the
+   *gap* between narration and scene end. `scenePacing`/`pacingSummary`
+   (packages/dsl) now compute it and `outlineDoc` reports it, so
+   `get_project` shows `8.3s silent (15%)` and flags any tail over
+   `LONG_TAIL_SEC` as `(long)` — the numbers reproduce the milestone's
+   manual finding exactly. `fit_scene_to_narration(sceneId, tailSec)`
+   is the one-call fix; run on the finale it took the project from 15%
+   to 10% silent. Deliberately *visible, not enforced*: a held beat is
+   sometimes right, so the agent (or the human, via `ask_user`) decides.
+5. ~~Caption cues split mid-phrase at the 84-char limit~~ **fixed.**
+   Greedy filling produced "…add it to both / sides." — 79 characters
+   then 6. `balancedCuts` in `captions.ts` now splits a sentence into as
+   few even pieces as the limits require and nudges each cut to a nearby
+   clause boundary. On the milestone's own narration the two bad splits
+   became 49/36 and 42/52, both breaking at commas, and line-length
+   spread fell from 73 to 31. Both fidelities share the helper, so
+   estimated cues read the same way as word-timed ones.
+6. The scene-2→3 cut silently rewrites the two-fraction form into the
+   combined single-fraction formula; narration never mentions the step.
+   Cross-scene continuity is on the agent, and nothing checks it.
+
+None of 1–4 can be fixed by iterating on the document; they are engine
+and tool-surface work. That is the milestone's actual finding: the
+pipeline reliably produces a *correct, synced* video, and the ceiling on
+*beauty* is now the morph/reveal primitives, not the orchestration.
 
 ## Deferred on purpose
 - **Cloudflare Queues + Containers.** The flagged infra risk, and it's
@@ -357,6 +421,18 @@ the normal ops path.
   internal-key path works for first-party testing.
 
 ## Notes / gotchas
+- ~~`animate`'s `to` union rejects stringified numbers~~ **fixed.** At least
+  one real MCP client (Claude Code) serializes values for union-typed params
+  as strings — `to: 1.12` arrived as `"1.12"` and failed validation, forcing
+  the Phase 5 run to bypass its own tools and call the worker over raw
+  JSON-RPC. `to` now uses `NUMBERISH` (`apps/mcp/src/index.ts`), a
+  number-or-numeric-string union placed **first** so `"#ff0000"` still falls
+  through to `COLOR`. Deliberately a regex, not `z.coerce.number()`:
+  coercion accepts `""`, `true`, `null` and `[]` as 0/1, which would animate
+  to a silently wrong value rather than report a bad argument. Guarded by
+  `check-mcp-tools.ts`, which also asserts the *document* ends up holding
+  real numbers — a string reaching a keyframe would interpolate as NaN and
+  fail only at render time. `animate.to` was the only union in the surface.
 - Client-facing URLs must be built from `PUBLIC_API_ORIGIN`, not from the
   request. Service-binding calls (MCP worker → API) arrive with the internal
   hostname, so deriving the origin produced an unusable `https://api/...`

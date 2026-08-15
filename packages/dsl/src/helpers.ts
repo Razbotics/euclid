@@ -1,4 +1,5 @@
 import { SCHEMA_VERSION, type EuclidDoc, type EuclidNode, type Scene } from './document'
+import { LONG_TAIL_SEC, pacingSummary, scenePacing } from './narration'
 
 export function newId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID().slice(0, 8)}`
@@ -79,14 +80,27 @@ export function emptyDoc(id: string, name: string): EuclidDoc {
 
 /** Compact text outline of a doc — what MCP tools return so agents can iterate cheaply. */
 export function outlineDoc(doc: EuclidDoc): string {
+  const pace = pacingSummary(doc)
+  const byScene = new Map(scenePacing(doc).map((p) => [p.sceneId, p]))
   const lines: string[] = [
-    `project "${doc.name}" (${doc.id}) ${doc.canvas.width}x${doc.canvas.height}@${doc.canvas.fps}fps, ${docDuration(doc)}s total, ${doc.scenes.length} scene(s)`,
+    `project "${doc.name}" (${doc.id}) ${doc.canvas.width}x${doc.canvas.height}@${doc.canvas.fps}fps, ${docDuration(doc)}s total, ${doc.scenes.length} scene(s)` +
+      // Surfaced because nothing else made dead air visible: narration is
+      // scene-scoped, so silence accumulates in the gaps without any single
+      // scene looking wrong.
+      (pace.speechSec > 0 ? `, ${pace.silentSec.toFixed(1)}s silent (${pace.silentPct}%)` : ''),
   ]
   let start = 0
   for (const sc of doc.scenes) {
+    const p = byScene.get(sc.id)!
+    let narration = ''
+    if (sc.narration) {
+      narration = p.speechSec
+        ? ` speech=${p.speechSec.toFixed(2)}s tail=${p.tailSec.toFixed(2)}s${p.tailSec > LONG_TAIL_SEC ? ' (long)' : ''}`
+        : ' narration=text-only'
+      narration += ` "${truncate(sc.narration.text, 60)}"`
+    }
     lines.push(
-      `  scene ${sc.id} "${sc.name}" [${start}s → ${start + sc.duration}s] bg=${sc.background}` +
-        (sc.narration ? ` narration="${truncate(sc.narration.text, 60)}"` : ''),
+      `  scene ${sc.id} "${sc.name}" [${start}s → ${start + sc.duration}s] bg=${sc.background}${narration}`,
     )
     outlineNodes(sc.nodes, lines, '    ')
     start += sc.duration

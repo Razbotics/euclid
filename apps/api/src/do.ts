@@ -1,9 +1,12 @@
 import { DurableObject } from 'cloudflare:workers'
 import {
+  NewDecisionSchema,
   OpEnvelopeSchema,
   OpError,
+  SubmitAnswerSchema,
   applyEnvelope,
   emptyDoc,
+  type Decision,
   type EuclidDoc,
   type OpEnvelope,
 } from '@euclid/dsl'
@@ -71,7 +74,68 @@ export class ProjectDO extends DurableObject<Env> {
       return json({ version: this.version, events: [...events.values()] })
     }
 
+    // ---------- decisions ----------
+    // Kept out of the document on purpose (see packages/dsl/src/decisions.ts):
+    // workflow state, not video content. They ride the same WebSocket so the
+    // editor sees a question appear the moment the agent asks it.
+    if (url.pathname === '/decisions' && request.method === 'GET') {
+      const all = await this.listDecisions()
+      const open = url.searchParams.get('status') === 'open'
+      return json({ decisions: open ? all.filter((d) => d.status === 'open') : all })
+    }
+
+    if (url.pathname === '/decisions' && request.method === 'POST') {
+      const parsed = NewDecisionSchema.safeParse(await request.json())
+      if (!parsed.success) {
+        return json({ error: 'invalid_decision', detail: parsed.error.message }, 400)
+      }
+      const ids = new Set(parsed.data.options.map((o) => o.id))
+      if (ids.size !== parsed.data.options.length) {
+        return json({ error: 'duplicate_option_id' }, 400)
+      }
+      const decision: Decision = {
+        ...parsed.data,
+        id: crypto.randomUUID(),
+        createdAt: Date.now(),
+        status: 'open',
+      }
+      await this.ctx.storage.put(decisionKey(decision.id), decision)
+      this.broadcast({ type: 'decision', decision })
+      return json({ decision })
+    }
+
+    if (url.pathname.startsWith('/decisions/') && request.method === 'POST') {
+      const id = url.pathname.slice('/decisions/'.length)
+      const existing = await this.ctx.storage.get<Decision>(decisionKey(id))
+      if (!existing) return json({ error: 'decision_not_found' }, 404)
+      // First answer wins: two surfaces can answer (editor and agent), and a
+      // silently overwritten answer would be worse than a clear rejection.
+      if (existing.status === 'answered') {
+        return json({ error: 'already_answered', decision: existing }, 409)
+      }
+      const parsed = SubmitAnswerSchema.safeParse(await request.json())
+      if (!parsed.success) {
+        return json({ error: 'invalid_answer', detail: parsed.error.message }, 400)
+      }
+      if (parsed.data.optionId && !existing.options.some((o) => o.id === parsed.data.optionId)) {
+        return json({ error: 'unknown_option', optionId: parsed.data.optionId }, 400)
+      }
+      const decision: Decision = {
+        ...existing,
+        status: 'answered',
+        answer: { ...parsed.data, at: Date.now() },
+      }
+      await this.ctx.storage.put(decisionKey(id), decision)
+      this.broadcast({ type: 'decision', decision })
+      return json({ decision })
+    }
+
     return json({ error: 'not_found' }, 404)
+  }
+
+  private async listDecisions(): Promise<Decision[]> {
+    const rows = await this.ctx.storage.list<Decision>({ prefix: 'dec:' })
+    return [...rows.values()].sort((a, b) => a.createdAt - b.createdAt)
   }
 
   private async submit(envelope: OpEnvelope): Promise<Response> {
@@ -137,6 +201,10 @@ export class ProjectDO extends DurableObject<Env> {
       )
     }
   }
+}
+
+function decisionKey(id: string): string {
+  return `dec:${id}`
 }
 
 function eventKey(version: number): string {

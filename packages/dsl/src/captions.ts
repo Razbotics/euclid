@@ -64,30 +64,99 @@ function cuesFromWords(
   offset: number,
 ): Cue[] {
   const cues: Cue[] = []
-  let group: typeof words = []
 
-  const flush = () => {
-    if (group.length === 0) return
-    const start = group[0]!.start
-    const end = group[group.length - 1]!.end
-    cues.push({
-      start: offset + start,
-      end: offset + Math.max(end, start + MIN_CUE_SEC),
-      text: group.map((w) => w.word).join(' ').trim(),
-      estimated: false,
-    })
-    group = []
+  for (const sentence of groupSentences(words)) {
+    const chars = sentence.reduce((n, w) => n + w.word.length + 1, 0) - 1
+    const span = sentence[sentence.length - 1]!.end - sentence[0]!.start
+    // A sentence is split only as many times as it must be, then split evenly
+    // — never filled to the brim and left with a stub.
+    const pieces = Math.max(
+      Math.ceil(chars / MAX_CUE_CHARS),
+      Math.ceil(span / MAX_CUE_SEC),
+      1,
+    )
+    let from = 0
+    for (const cut of [...balancedCuts(sentence.map((w) => w.word), pieces), sentence.length]) {
+      const chunk = sentence.slice(from, cut)
+      from = cut
+      if (chunk.length === 0) continue
+      const start = chunk[0]!.start
+      const end = chunk[chunk.length - 1]!.end
+      cues.push({
+        start: offset + start,
+        end: offset + Math.max(end, start + MIN_CUE_SEC),
+        text: chunk.map((w) => w.word).join(' ').trim(),
+        estimated: false,
+      })
+    }
   }
-
-  for (const w of words) {
-    const wouldBeChars = group.reduce((n, g) => n + g.word.length + 1, 0) + w.word.length
-    const wouldBeSpan = group.length > 0 ? w.end - group[0]!.start : 0
-    if (group.length > 0 && (wouldBeChars > MAX_CUE_CHARS || wouldBeSpan > MAX_CUE_SEC)) flush()
-    group.push(w)
-    if (/[.!?]$/.test(w.word)) flush() // break on sentence end for readability
-  }
-  flush()
   return cues
+}
+
+/** Break a word stream after every sentence-final word. */
+function groupSentences<T extends { word: string }>(words: T[]): T[][] {
+  const groups: T[][] = []
+  let current: T[] = []
+  for (const w of words) {
+    current.push(w)
+    if (/[.!?]["')\]]?$/.test(w.word)) {
+      groups.push(current)
+      current = []
+    }
+  }
+  if (current.length) groups.push(current)
+  return groups
+}
+
+/** A comma, semicolon, colon or dash is a natural place to break a line. */
+const CLAUSE_END = /[,;:—–-]$/
+
+/**
+ * Word indices at which to cut a run into `pieces` balanced chunks.
+ *
+ * Greedy filling is what produced cues like "…add it to both / sides." — the
+ * first line takes everything it can and the second gets the crumbs. Cutting
+ * at even character positions, then nudging each cut to a nearby clause
+ * boundary, keeps lines similar in length and breaks where the sentence
+ * already pauses. That is the entire difference between subtitles that read
+ * and subtitles that merely fit.
+ */
+function balancedCuts(words: string[], pieces: number): number[] {
+  if (pieces < 2 || words.length < 2) return []
+  const prefix = [0]
+  for (const w of words) prefix.push(prefix[prefix.length - 1]! + w.length + 1)
+  const total = prefix[prefix.length - 1]!
+
+  const cuts: number[] = []
+  for (let p = 1; p < pieces; p++) {
+    const target = (total * p) / pieces
+    let best = 1
+    let bestDistance = Infinity
+    for (let i = 1; i < words.length; i++) {
+      const distance = Math.abs(prefix[i]! - target)
+      if (distance < bestDistance) {
+        bestDistance = distance
+        best = i
+      }
+    }
+    // Look for a clause boundary near the even cut, preferring the closest.
+    const window = Math.max(1, Math.round(words.length / (pieces * 3)))
+    let chosen = best
+    for (let d = 1; d <= window; d++) {
+      const before = best - d
+      const after = best + d
+      if (before > 0 && CLAUSE_END.test(words[before - 1]!)) {
+        chosen = before
+        break
+      }
+      if (after < words.length && CLAUSE_END.test(words[after - 1]!)) {
+        chosen = after
+        break
+      }
+    }
+    if (!cuts.includes(chosen)) cuts.push(chosen)
+  }
+  return cuts.sort((a, b) => a - b)
 }
 
 /**
@@ -127,20 +196,22 @@ function splitSentences(text: string): string[] {
     .filter(Boolean)
 }
 
-/** Split on word boundaries so a cue never cuts a word in half. */
+/**
+ * Split on word boundaries so a cue never cuts a word in half — and split
+ * evenly rather than greedily, using the same balancing as the word-timed
+ * path so both fidelities read the same way.
+ */
 function chunkText(text: string, maxChars: number): string[] {
-  if (text.length <= maxChars) return [text]
+  const words = text.split(/\s+/).filter(Boolean)
+  if (text.length <= maxChars || words.length < 2) return [text]
+
+  const pieces = Math.ceil(text.length / maxChars)
   const chunks: string[] = []
-  let current = ''
-  for (const word of text.split(/\s+/)) {
-    if (current && (current + ' ' + word).length > maxChars) {
-      chunks.push(current)
-      current = word
-    } else {
-      current = current ? `${current} ${word}` : word
-    }
+  let from = 0
+  for (const cut of [...balancedCuts(words, pieces), words.length]) {
+    if (cut > from) chunks.push(words.slice(from, cut).join(' '))
+    from = cut
   }
-  if (current) chunks.push(current)
   return chunks
 }
 

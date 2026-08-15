@@ -7,7 +7,16 @@
  * are right without spending 30 seconds and two TTS credits to find out.
  */
 import assert from 'node:assert'
-import { applyOps, emptyDoc, isTrimmed, op, planNarration } from '@euclid/dsl'
+import {
+  applyOps,
+  emptyDoc,
+  isTrimmed,
+  op,
+  outlineDoc,
+  pacingSummary,
+  planNarration,
+  scenePacing,
+} from '@euclid/dsl'
 import { buildFfmpegArgs } from './mux'
 
 const audio = (assetId: string, durationSec: number) => ({ assetId, durationSec })
@@ -55,6 +64,35 @@ for (let i = 1; i < plan.length; i++) {
     `clip ${i} starts before clip ${i - 1} finishes`,
   )
 }
+
+// ---------- pacing ----------
+// Same module, same document: how much of each scene is speech vs silence.
+// Nothing enforces a pace; this only makes dead air visible to the agent.
+const pacing = scenePacing(doc)
+assert.equal(pacing.length, 3, 'every scene is reported, narrated or not')
+assert.deepEqual(
+  pacing.map((p) => [p.sceneId, p.speechSec, p.tailSec]),
+  [
+    ['s1', 1.4, 1.6], // 1.4s of speech in a 3s scene
+    ['s2', 0, 2], // text-only narration is not speech yet
+    ['s3', 3, 0], // 4.5s of audio cut to the 3s scene leaves no tail
+  ],
+  'speech is capped at the scene, and the tail is what remains',
+)
+assert.equal(pacing[1]!.hasNarrationText, true, 's2 has a script but no audio')
+
+const summary = pacingSummary(doc)
+assert.equal(summary.totalSec, 8)
+assert.equal(summary.speechSec, 4.4)
+assert.equal(summary.silentSec, 3.6)
+assert.equal(summary.silentPct, 45, 'silence percentage is what surfaces dead air')
+
+// The outline is where the agent actually sees it.
+const outline = outlineDoc(doc)
+assert.match(outline, /3\.6s silent \(45%\)/, 'project line reports total silence')
+assert.match(outline, /speech=1\.40s tail=1\.60s/, 'per-scene speech and tail are shown')
+assert.match(outline, /narration=text-only/, 'a script with no audio is marked, not counted as speech')
+assert.ok(!/tail=1\.60s \(long\)/.test(outline), 'a short tail is not flagged')
 
 // ---------- ffmpeg arguments ----------
 const args = buildFfmpegArgs(60, plan.map((p) => ({ ...p, path: `/tmp/${p.assetId}.mp3` })), '/tmp/out.mp4')

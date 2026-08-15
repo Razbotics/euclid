@@ -5,10 +5,11 @@ import { Preview } from './Preview'
 import { Timeline } from './Timeline'
 import { Inspector } from './Inspector'
 import { CaptionOverlay, NarrationTrack } from './Narration'
+import { Decisions } from './Decisions'
 
 export function App() {
   const projectId = new URLSearchParams(window.location.search).get('project')
-  const { doc, offline, error, submit } = useProject(projectId)
+  const { doc, offline, error, submit, decisions, answerDecision } = useProject(projectId)
 
   const [time, setTime] = useState(0)
   const [playing, setPlaying] = useState(false)
@@ -61,13 +62,23 @@ export function App() {
           <Preview doc={doc} time={time} />
           {captions && <CaptionOverlay doc={doc} time={time} />}
         </div>
-        <Inspector
-          doc={doc}
-          currentScene={at?.scene ?? null}
-          selectedNodeId={selectedNodeId}
-          onSelect={setSelectedNodeId}
-          submit={submit}
-        />
+        <div className="side">
+          <Decisions
+            decisions={decisions}
+            onAnswer={answerDecision}
+            onSeek={(t) => {
+              setPlaying(false)
+              setTime(t)
+            }}
+          />
+          <Inspector
+            doc={doc}
+            currentScene={at?.scene ?? null}
+            selectedNodeId={selectedNodeId}
+            onSelect={setSelectedNodeId}
+            submit={submit}
+          />
+        </div>
       </main>
       <NarrationTrack doc={doc} time={time} playing={playing} muted={muted} />
       <Timeline

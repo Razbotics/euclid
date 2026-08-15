@@ -2,11 +2,13 @@ import { McpAgent } from 'agents/mcp'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import {
+  formatDecision,
   newId,
   op,
   outlineDoc,
   findNode,
   type Easing,
+  type Decision,
   type EuclidDoc,
   type EuclidNode,
   type Op,
@@ -27,6 +29,23 @@ type Props = { userId?: string }
 
 const EASING = z.enum(['linear', 'easeIn', 'easeOut', 'easeInOut', 'smooth']).default('smooth')
 const COLOR = z.string().regex(/^#[0-9a-fA-F]{6}$/)
+
+/**
+ * A number, or a string that is unambiguously one.
+ *
+ * Union-typed params become `anyOf` in the tool's JSON Schema, and at least one
+ * real MCP client (Claude Code) sends their values as strings — `1.12` arrives
+ * as `"1.12"` and fails a plain `z.number()`. Plain numeric params are
+ * unaffected, so this is needed only inside a union.
+ *
+ * Deliberately a regex rather than `z.coerce.number()`: coercion accepts `""`,
+ * `true`, `null` and `[]` as 0 or 1, which would animate to a silently wrong
+ * value instead of reporting a bad argument.
+ */
+const NUMBERISH = z.union([
+  z.number(),
+  z.string().regex(/^-?(\d+\.?\d*|\.\d+)$/).transform(Number),
+])
 
 /**
  * The agent-facing sugar layer. Tools speak in intents (animate, morph_latex,
@@ -307,7 +326,9 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
           'position', 'scale', 'rotation', 'opacity', 'fill', 'stroke', 'color',
           'width', 'height', 'radius', 'fontSize', 'strokeWidth',
         ]),
-        to: z.union([z.number(), z.object({ x: z.number(), y: z.number() }), COLOR]),
+        // NUMBERISH first: a colour like "#ff0000" fails it and falls through
+        // to COLOR, while "1.12" is accepted where a bare z.number() would not.
+        to: z.union([NUMBERISH, z.object({ x: NUMBERISH, y: NUMBERISH }), COLOR]),
         start: z.number().min(0).describe('scene-local seconds'),
         duration: z.number().positive(),
         easing: EASING,
@@ -408,6 +429,110 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
           { method: 'POST', body: JSON.stringify({ text: override, voiceId }) },
         )
         return text(await res.text())
+      },
+    )
+
+    this.server.tool(
+      'fit_scene_to_narration',
+      'Set a scene\'s duration from its generated speech plus a held tail. Free. Use it to close dead air (get_project flags a long tail) or to make room when speech overruns. The tail is deliberate breathing room — pass more for a beat you want to land, less to keep things tight.',
+      {
+        projectId: z.string(),
+        sceneId: z.string(),
+        tailSec: z
+          .number()
+          .min(0)
+          .max(10)
+          .default(0.8)
+          .describe('silence held after the last word'),
+      },
+      async ({ projectId, sceneId, tailSec }) => {
+        const { doc } = await this.getDoc(projectId)
+        const scene = doc.scenes.find((s) => s.id === sceneId)
+        if (!scene) throw new Error(`scene ${sceneId} not found`)
+        const audio = scene.narration?.audio
+        if (!audio) {
+          throw new Error(
+            `scene ${sceneId} has no generated narration — call generate_narration first`,
+          )
+        }
+        const duration = Math.round((audio.durationSec + tailSec) * 100) / 100
+        await this.submit(projectId, [op.updateScene(sceneId, { duration })])
+        return text(
+          `scene ${sceneId}: ${scene.duration}s → ${duration}s ` +
+            `(${audio.durationSec.toFixed(2)}s speech + ${tailSec}s tail)`,
+        )
+      },
+    )
+
+    this.server.tool(
+      'ask_user',
+      'Put a choice to the human instead of deciding alone. Free. Use when a decision is genuinely theirs — pacing, style, how to resolve a narration overrun, whether a scene change needs explaining — not for things you can determine yourself. The question appears live in their editor, where they can scrub to the relevant moment before answering. Returns immediately with a decision id; poll get_answer. If they answer in chat instead, record it with record_answer.',
+      {
+        projectId: z.string(),
+        question: z.string().min(1).describe('one clear question'),
+        options: z
+          .array(z.object({ label: z.string(), detail: z.string().optional() }))
+          .min(2)
+          .max(6)
+          .describe('2-6 mutually exclusive choices; say what each one does'),
+        detail: z.string().optional().describe('context they need to choose well'),
+        sceneId: z.string().optional(),
+        atSec: z.number().min(0).optional().describe('global seconds; the editor seeks here'),
+      },
+      async ({ projectId, question, options, detail, sceneId, atSec }) => {
+        const res = await this.api(`/api/projects/${projectId}/decisions`, {
+          method: 'POST',
+          body: JSON.stringify({
+            question,
+            detail,
+            // Stable, readable ids so the agent can refer to a choice later.
+            options: options.map((o, i) => ({ id: `opt${i + 1}`, ...o })),
+            context: sceneId || atSec !== undefined ? { sceneId, atSec } : undefined,
+          }),
+        })
+        if (!res.ok) throw new Error(`ask_user failed (${res.status}): ${await res.text()}`)
+        const { decision } = (await res.json()) as { decision: Decision }
+        return text(
+          `asked (${decision.id}) — waiting on the human. Show them this question and either ` +
+            `poll get_answer or call record_answer if they reply to you directly.\n` +
+            formatDecision(decision),
+        )
+      },
+    )
+
+    this.server.tool(
+      'get_answer',
+      'Check whether the human has answered. Free — poll it. With no decisionId, lists every question and its status, so you can see what is still blocking.',
+      { projectId: z.string(), decisionId: z.string().optional() },
+      async ({ projectId, decisionId }) => {
+        const res = await this.api(`/api/projects/${projectId}/decisions`)
+        if (!res.ok) throw new Error(`get_answer failed (${res.status}): ${await res.text()}`)
+        const { decisions } = (await res.json()) as { decisions: Decision[] }
+        const wanted = decisionId ? decisions.filter((d) => d.id === decisionId) : decisions
+        if (wanted.length === 0) {
+          return text(decisionId ? `no decision ${decisionId}` : 'no questions asked yet')
+        }
+        return text(wanted.map(formatDecision).join('\n'))
+      },
+    )
+
+    this.server.tool(
+      'record_answer',
+      "Record an answer the human gave you in conversation rather than in the editor. Free. Only for what they actually said — never guess on their behalf; if they haven't answered, keep waiting.",
+      {
+        projectId: z.string(),
+        decisionId: z.string(),
+        optionId: z.string().optional().describe('the id of the option they chose'),
+        note: z.string().optional().describe('their answer verbatim, if they did not pick an option'),
+      },
+      async ({ projectId, decisionId, optionId, note }) => {
+        const res = await this.api(
+          `/api/projects/${projectId}/decisions/${decisionId}/answer`,
+          { method: 'POST', body: JSON.stringify({ optionId, note, via: 'agent' }) },
+        )
+        if (!res.ok) throw new Error(`record_answer failed (${res.status}): ${await res.text()}`)
+        const { decision } = (await res.json()) as { decision: Decision }
+        return text(formatDecision(decision))
       },
     )
 
