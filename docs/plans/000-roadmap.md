@@ -36,7 +36,9 @@ after the milestone — see plans/002 for the reasoning.
 ## Phase 3: Real users
 - [ ] MCP OAuth (workers-oauth-provider + Better Auth) — claude.ai connects
 - [ ] Auth UI (sign up / sign in), remove DEV_ALLOW_ANON path from prod builds
-- [ ] Dashboard: project list, create/delete, credits page + Stripe checkout flow
+- [~] Dashboard: project **list** done (`/` in the editor — agent-created
+      projects were otherwise invisible, since the id only appears in a tool
+      response); create/delete and the credits page still to do
 - [ ] Deploy: workers, D1, R2, Containers; production secrets
 
 ## Phase 4: General video → plans/003-general-video.md

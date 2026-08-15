@@ -155,6 +155,15 @@ agent can read the real duration before choreographing against it and the
 editor sees narration appear live. See
 [plans/002](plans/002-render-pipeline.md) for the wiring.
 
+## Editor entry points
+
+`/` lists every project, newest first; `?project=<id>` opens the editor on
+one; `?demo=1` opens a bundled offline document. The list matters more than
+it looks: an agent creates projects over MCP and the id only ever appears in
+a tool response, so without it the work is invisible unless someone copies a
+UUID by hand. Bare `/` used to show the demo, which is indistinguishable
+from "connected but not syncing" — the demo now says so on its badge.
+
 ## Agent questions
 
 The agent can put a choice to the human rather than deciding alone —

@@ -6,9 +6,23 @@ import { Timeline } from './Timeline'
 import { Inspector } from './Inspector'
 import { CaptionOverlay, NarrationTrack } from './Narration'
 import { Decisions } from './Decisions'
+import { ProjectList } from './ProjectList'
 
+/**
+ * Routing, such as it is: `?project=<id>` opens the editor on that project,
+ * `?demo=1` opens the offline demo, and bare `/` lists the projects. The
+ * split into two components is structural, not stylistic — hooks can't be
+ * called conditionally, so the editor's state can't live behind an early
+ * return.
+ */
 export function App() {
-  const projectId = new URLSearchParams(window.location.search).get('project')
+  const params = new URLSearchParams(window.location.search)
+  const projectId = params.get('project')
+  if (!projectId && !params.has('demo')) return <ProjectList />
+  return <Editor projectId={projectId} />
+}
+
+function Editor({ projectId }: { projectId: string | null }) {
   const { doc, offline, error, submit, decisions, answerDecision } = useProject(projectId)
 
   const [time, setTime] = useState(0)
@@ -52,9 +66,11 @@ export function App() {
   return (
     <div className="app">
       <header>
-        <h1>Euclid</h1>
+        <a className="back" href="?" title="all projects">
+          ← <h1>Euclid</h1>
+        </a>
         <span className="project-name">{doc.name}</span>
-        {offline && <span className="badge offline">offline demo</span>}
+        {offline && <span className="badge offline">offline demo — not a real project</span>}
         {error && <span className="badge error">{error}</span>}
       </header>
       <main>

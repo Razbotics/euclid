@@ -67,7 +67,7 @@ an existing local DB won't pick up a new table on its own.
 ```sh
 pnpm dev:api    # :8787 — API + Durable Objects + D1; also starts the public tunnel
 pnpm dev:mcp    # :8788 — MCP worker (service-binds to api; start api first)
-pnpm dev:web    # :5173 — editor; ?project=<id> connects, no param = offline demo
+pnpm dev:web    # :5173 — `/` lists projects; ?project=<id> opens one; ?demo=1 = offline demo
 ```
 
 `dev:api` prints the tunnel URL before wrangler takes over the console (also
@@ -108,7 +108,7 @@ every run** — re-run and re-paste after restarting.
 | `check-decisions.ts` | agent → human → agent question loop: asked over MCP, arrives live in the editor, answered by click (free; needs all three servers) |
 | `check-assets.ts` | asset upload → download is byte-identical; tenancy enforced (needs `dev:api`) |
 | `check-narration.ts [--refund]` | TTS generation end-to-end: pricing, debit, op reaches the doc, overflow warning (**spends credits**; `--refund` needs a broken key, costs nothing) |
-| `check-app.ts` | editor loads with zero console/page errors |
+| `check-app.ts` | project list renders and opens a project; demo editor loads; zero console/page errors |
 | `check-narration-ui.ts` | editor narration preview: audio loads cross-origin, exact captions render, overrun panel fixes the scene (**spends credits**; needs `dev:api` + `dev:web`) |
 | `check-live.ts <projectId>` | external op appears in the open editor via WebSocket |
 | `render.ts --project <id>` | full MP4 export with narration audio (needs ffmpeg) |
