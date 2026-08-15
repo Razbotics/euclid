@@ -1,7 +1,16 @@
-# 006 — Complex animation and depth (status: planned)
+# 006 — Complex animation and depth (status: deferred)
+
+> **Superseded as the active direction on 2026-08-15** by
+> [plans/007](007-agent-sight.md), which returns the product direction to
+> [plans/003](003-general-video.md). Deferred, not abandoned: the analysis
+> below stands unchanged, and the pseudo-3D-by-projection argument is still
+> the right answer whenever depth is picked up. The reason for the switch is
+> that this plan's own verification step ("verify by screenshot at several
+> camera angles") assumes a capability the agent does not have — see 007
+> under "What this replaces, and why".
 
 Direction decided 2026-08-15: go deep on the vertical rather than wide across
-video. This **supersedes** [plans/003](003-general-video.md) as the active
+video. This superseded [plans/003](003-general-video.md) as the active
 direction — see "What this replaces, and why" below.
 
 Target: the visual vocabulary of 3Blue1Brown's *Attention in transformers,

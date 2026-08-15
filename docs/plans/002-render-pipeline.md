@@ -508,6 +508,104 @@ The pipeline now makes a good sixty-second video. The distance to
 *beautiful* is: per-glyph motion paths in the morph, visual weight
 options for emphasis, and labeled callouts.
 
+### The third run (2026-08-15)
+
+"Bayes' Theorem, in One Minute" (`9843f817`) — a third topic on purpose, and
+conditional probability rather than an algebra chain, so the judgment isn't
+anchored on either earlier video. 3 scenes (hook / derivation / four names),
+170 words, one latex node carrying `P(A \cap B)` through the two-way count
+into Bayes' theorem. 76 credits (15 TTS + 61 render), against a ~930 budget.
+60.9s h264+aac 1080p60, 2.6MB. `pnpm -r typecheck` green.
+
+New-tool usage, and what it changed about the build:
+- `ask_user` carried a real fork rather than a detail: derive symbolically, or
+  teach it through a concrete disease-test number. Asked **before any scene
+  existed**, blocked, answered in chat, `record_answer` stored it `via: agent`.
+  First run where the loop actually closed with a human — the Euler question
+  shipped unanswered. Asking early is the right shape: the answer decided
+  scene 2 entirely, so guessing would have thrown away real work.
+- `fit_scene_to_narration` sized all three scenes (0.5 / 0.9 / 2.2s tails) and
+  cleared scene 3's 1.85s overrun with the same call. `get_project` reported
+  **6% silence** (15% → 8% → 6% across the three runs); its one `(long)` flag
+  is the deliberate end-card hold.
+- 8 highlights, 5 of them accumulating on the finale's single node, every one
+  located by LaTeX fragment (`P(B \mid A)`, `P(A)`, `P(B)`). The re-run's
+  multi-highlight fix holds under a longer sequence.
+- **Labeled callouts** — the primitive the re-run listed as missing — were
+  composed by hand from four text nodes cross-fading under the boxed term.
+  They read well (see below), but only because each term's x-position was
+  measured off a screenshot and hardcoded, which is exactly the
+  coordinate-hunting `highlight` exists to avoid.
+
+The milestone's second task (**human tweak in the editor lands mid-build**) is
+still unproven: the human answered in chat, not by editing, so live sync was
+not exercised. It stays `[ ]`.
+
+**Two tool-surface defects found; neither blocked the run.**
+1. **`update_node` silently drops unknown patch keys and reports success.**
+   Position is stored as `{position:{x,y}}`, but `add_text`/`add_latex` *take*
+   `x`/`y` — so the natural patch `{"x":1190}` merges, gets stripped by Zod's
+   default unknown-key stripping in `NodeSchema.safeParse`
+   (`packages/dsl/src/reducer.ts:116-125`), writes the node back unchanged,
+   and returns `updated`. Seven position edits did nothing and only a
+   screenshot caught it. This is a genuine trap, not a doc gap: the tool that
+   *creates* a node and the tool that *moves* it disagree about the shape.
+2. **`morph_latex` is append-only.** No way to revise or delete a queued
+   morph, unlike `highlight` (replaces an overlapping window) and `animate`
+   (replaces later keyframes). Restructuring the final morph meant rewriting
+   the node's whole `transitions` array through `update_node`.
+
+### What the third run actually looks like (recorded honestly)
+
+Verdict: **good — better than the Euler run in the finale, worse in one
+morph.** The finale is the strongest thing the pipeline has produced: the
+formula carries across the scene cut unchanged, rises and scales as it is
+named, and then each of the four terms is boxed with its technical name
+fading in directly beneath it, on the word that describes it. That sequence
+reads as deliberate teaching, not as slides.
+
+Flaws, in rough order of impact:
+1. **Morph quality depends on whether the layout is rearranged, not on the
+   morph.** *Additive* morphs are excellent: at the midpoint of
+   `P(A \cap B)` → `P(A \cap B) = P(A)P(B \mid A)`, the left side is fully
+   opaque and perfectly still while the new right side staggers in — nothing
+   overlaps, nothing is missing. But collapsing the equality into a fraction
+   re-lays-out every glyph, and for ~0.6s the frame is genuinely illegible:
+   two `P(` forms overlapping each other at partial opacity, no `=`, no
+   fraction bar. Splitting it into two morphs (chain → two-way equality →
+   fraction) bought a clean legible resting state in between and roughly
+   halved the mess, but did not remove it. This sharpens the re-run's finding
+   1: not "briefly incomplete" but **briefly overlapping** — the
+   double-exposure the matched-glyph morph was built to kill returns whenever
+   source and target layouts don't correspond. Per-glyph motion paths are
+   still the fix; the LCS pairing is what needs the work, not the fade.
+2. **Nothing connects a highlight to a label except arithmetic the agent does
+   by hand.** The callouts land correctly only because positions were read
+   off a rendered frame. A `label` option on `highlight` — same glyph lookup,
+   text anchored under the located run — would make this a one-call move and
+   remove the only place in the run where the agent needed screen
+   coordinates.
+3. **Whole-node `underline` is blunt.** A thick, saturated bar set well below
+   the equation; it reads as a divider rule rather than emphasis. The re-run
+   complained that boxes were too *small* on exponents; the underline has the
+   opposite problem.
+4. In numerator highlights the box's bottom edge lands on the fraction rule —
+   a few pixels of collision. Cosmetic.
+5. Captions: 18 cues, every one a complete sentence, none split mid-phrase.
+   Honest caveat — **no sentence exceeded the 84-char limit**, so
+   `balancedCuts` never had to split anything. The re-run's caption flaw did
+   not recur, but it also was not tested.
+
+Measured, not eyeballed: `silencedetect` on the downloaded MP4 puts scene 2's
+audio 19ms after its scene boundary and scene 3's 38ms after; every other
+detected silence matches a sentence gap in the stored word timings. The
+download URL returned by `get_render_status` was fetched as an agent would
+and served the 2.6MB file.
+
+The distance to *beautiful* is unchanged from the re-run and now better
+localised: **glyph correspondence through a layout change** is the one piece
+of engine work that would lift every derivation video at once.
+
 ## Deferred on purpose
 - **Cloudflare Queues + Containers.** The flagged infra risk, and it's
   orchestration for a pipeline that hasn't yet proven it makes a *good*
@@ -517,6 +615,31 @@ options for emphasis, and labeled callouts.
   internal-key path works for first-party testing.
 
 ## Notes / gotchas
+- ~~**`update_node` reports success for a patch it silently discarded.**~~
+  **fixed.** The reducer merged every patch key, then `NodeSchema.safeParse`
+  stripped the ones the schema doesn't know (Zod's default) and wrote the
+  stripped result back. So `{"x":1190}` — the shape `add_text`/`add_latex`
+  themselves accept — was a no-op that returned `updated`. Found in the third
+  milestone run after seven position edits appeared to work and changed
+  nothing; only a screenshot caught it. `node.update` now records which keys
+  it assigned and compares them against what survived the parse, so a key the
+  node has no property for is an `invalid_patch` error naming the key and the
+  right shape, rather than a silent success. Comparing assigned-vs-survived
+  rather than hardcoding a key list per node type means it stays correct as
+  the schema grows. Verified over MCP: `{"x":700}` on a latex node is
+  rejected with *"has no property x — nothing would have changed. Position is
+  {"position":{"x":…,"y":…}}"*, while `{"position":{…},"color":…}` applies.
+- ~~**`morph_latex` can only append.**~~ **fixed.** `highlight` replaced an
+  overlapping window and `animate` replaced later keyframes, but a queued
+  `texMorph` had no revise or delete path — a second call at the same `start`
+  stacked a second morph, and reworking one meant rewriting the node's whole
+  `transitions` array through `update_node` (which is what the third run
+  did). `morph_latex` now replaces morphs whose window overlaps the new one
+  and says so in its result, matching `highlight`. Two morphs overlapping in
+  time were never meaningful anyway: the later one's source would be a
+  half-finished equation. Verified over MCP — a morph at `[2.5, 3.7]`
+  reported `(replaced 1 overlapping morph)` over one at `[2, 3.5]`, while a
+  later non-overlapping morph still chained.
 - ~~`animate`'s `to` union rejects stringified numbers~~ **fixed.** At least
   one real MCP client (Claude Code) serializes values for union-typed params
   as strings — `to: 1.12` arrived as `"1.12"` and failed validation, forcing
@@ -537,6 +660,17 @@ options for emphasis, and labeled callouts.
 - Refund idempotency comes from the SQL, not application logic: the UPDATE
   matches only non-terminal rows and the refund is gated on `meta.changes`,
   so duplicate or retried callbacks can't pay a user twice.
+
+- `update_node` had two ways to report success and change nothing on screen,
+  both found in real runs and both now fixed. **Unknown keys**: Zod strips
+  properties the node type doesn't have, so `{x, y}` — the top-level form
+  `add_latex`/`add_text` accept — parsed cleanly and did nothing; the reducer
+  now compares what it assigned against what survived validation and rejects
+  the patch by name. **Shadowed by a track**: patching a property that an
+  animation keyframes *does* change the document, so `get_scene` confirms the
+  new value, but `resolveNode` lets tracks override base values, so the render
+  ignores it; the MCP tool now warns and names the property. The second is the
+  nastier of the two precisely because inspecting the document agrees with you.
 
 ## Known issues
 - Capture speed is bounded by one `page.screenshot()` round-trip per frame.

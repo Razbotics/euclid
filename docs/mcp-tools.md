@@ -19,10 +19,10 @@ The agent-facing API (`apps/mcp/src/index.ts`). Design rules:
 | `add_scene` | appends a scene (name, duration, background) |
 | `update_scene` | patch a scene's name/duration/background; extending `duration` is the fix when narration overruns |
 | `add_latex` / `add_text` / `add_shape` | create nodes with sensible defaults, return the node id |
-| `update_node` | shallow patch; `id`/`type` immutable; invalid patches rejected atomically |
+| `update_node` | shallow patch; `id`/`type` immutable. Invalid patches are rejected atomically, **and so is a key the node has no property for** — it errors naming the key instead of silently changing nothing. Position is `{"position":{"x":…,"y":…}}`, not the top-level `x`/`y` that `add_text`/`add_latex` accept |
 | `remove_node` | delete |
 | `animate` | keyframes one property from its **current value sampled at `start`** to `to` over `duration` — animations always chain continuously; replaces that property's keyframes after `start` |
-| `morph_latex` | queues a `texMorph` transition; multiple morphs chain in start-time order |
+| `morph_latex` | queues a `texMorph` transition; multiple morphs chain in start-time order, and a call whose window **overlaps** an existing morph replaces it (as `highlight` does), so re-calling revises rather than stacks. Clean for *additive* changes — appending terms holds the existing glyphs still; a change that re-lays-out the equation, such as collapsing into a fraction, is briefly illegible mid-morph, so prefer several small morphs over one structural leap |
 | `write_on` | draw-on reveal; node invisible before `start` |
 | `highlight` | emphasise a node, or one term inside an equation named by its LaTeX (`tex: "\\frac{b}{a}"`) — located by glyph codes, so no coordinates are needed. Styles: `color` recolours the term (default), `spotlight` dims everything else, `box`/`underline` draw a marker. Sequential highlights on one node accumulate; a call overlapping an existing window replaces it. Free |
 | `set_narration` | per-scene narration script. Free — writes text only |

@@ -375,11 +375,27 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
 
     this.server.tool(
       'update_node',
-      'Shallow-patch node properties (position, opacity, fill, tex, text, fontSize...). id/type are immutable.',
+      'Shallow-patch node properties. id/type are immutable, and a property the node does not have is rejected rather than ignored. Position is {"position":{"x":…,"y":…}} — not the top-level x/y that add_text/add_latex take. Patching a property that an animation already keyframes changes the base value but not what renders: the track wins. Use animate for those, or remove the track first.',
       { projectId: z.string(), sceneId: z.string(), nodeId: z.string(), patch: z.record(z.any()) },
       async ({ projectId, sceneId, nodeId, patch }) => {
+        // Warn before the write, so the message is about the node as the
+        // caller found it.
+        const { doc } = await this.getDoc(projectId)
+        const node = this.findNodeOrThrow(doc, sceneId, nodeId)
+        const shadowed = Object.keys(patch).filter((k) =>
+          node.tracks.some((t) => t.property === k),
+        )
+
         await this.submit(projectId, [op.updateNode(sceneId, nodeId, patch)])
-        return text(`updated ${nodeId}`)
+        if (shadowed.length === 0) return text(`updated ${nodeId}`)
+        // The document really did change — which is why this is easy to miss:
+        // get_scene confirms the new value while the render ignores it.
+        return text(
+          `updated ${nodeId}, but ${shadowed.join(', ')} ${shadowed.length > 1 ? 'are' : 'is'} ` +
+            `animated on this node, so the keyframes override the value you just set and ` +
+            `nothing will look different. get_scene will show your value; the render will ` +
+            `not use it. Animate ${shadowed.join('/')} instead, or clear the track first.`,
+        )
       },
     )
 
@@ -449,12 +465,31 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
         const { doc } = await this.getDoc(projectId)
         const node = this.findNodeOrThrow(doc, sceneId, nodeId)
         if (node.type !== 'latex') throw new Error(`${nodeId} is a ${node.type}, not latex`)
+        // Morphs chain, so sequential ones accumulate — but a morph
+        // overlapping the new window is *replaced*, matching `highlight`, so
+        // re-calling to adjust one revises it instead of stacking a second
+        // morph on top. Two morphs overlapping in time are ambiguous anyway:
+        // the later one's source would be a half-finished equation.
+        const replaced = node.transitions.filter(
+          (t) =>
+            t.type === 'texMorph' &&
+            t.start < start + duration &&
+            start < t.start + t.duration,
+        ).length
         const transitions: Transition[] = [
-          ...node.transitions,
+          ...node.transitions.filter(
+            (t) =>
+              t.type !== 'texMorph' ||
+              t.start + t.duration <= start ||
+              start + duration <= t.start,
+          ),
           { type: 'texMorph', start, duration, toTex, easing: easing as Easing },
         ]
         await this.submit(projectId, [op.updateNode(sceneId, nodeId, { transitions })])
-        return text(`morphing ${nodeId} → "${toTex}" over [${start}s, ${start + duration}s]`)
+        return text(
+          `morphing ${nodeId} → "${toTex}" over [${start}s, ${start + duration}s]` +
+            (replaced ? ` (replaced ${replaced} overlapping morph${replaced > 1 ? 's' : ''})` : ''),
+        )
       },
     )
 

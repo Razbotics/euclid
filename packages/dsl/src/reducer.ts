@@ -113,14 +113,32 @@ function applyOp(doc: EuclidDoc, op: Op): void {
       const hit = findNode(scene.nodes, op.nodeId)
       if (!hit) throw new OpError('node_not_found', `node ${op.nodeId} not found`)
       const merged: Record<string, unknown> = { ...hit.node }
+      const assigned: string[] = []
       for (const [k, v] of Object.entries(op.patch)) {
         if (IMMUTABLE_NODE_KEYS.has(k)) continue
         if (v === null) delete merged[k]
-        else merged[k] = v
+        else {
+          merged[k] = v
+          assigned.push(k)
+        }
       }
       const parsed = NodeSchema.safeParse(merged)
       if (!parsed.success) {
         throw new OpError('invalid_patch', `patch on ${op.nodeId}: ${parsed.error.message}`)
+      }
+      // Zod strips keys the schema doesn't know, so a patch of `{x, y}` — the
+      // top-level form add_text/add_latex accept — used to parse cleanly,
+      // change nothing, and report success. Comparing what we assigned against
+      // what survived catches that without hardcoding a key list per node type.
+      const result = parsed.data as unknown as Record<string, unknown>
+      const unknown = assigned.filter((k) => !(k in result))
+      if (unknown.length > 0) {
+        throw new OpError(
+          'invalid_patch',
+          `${hit.node.type} node ${op.nodeId} has no propert${unknown.length > 1 ? 'ies' : 'y'} ` +
+            `${unknown.join(', ')} — nothing would have changed. ` +
+            `Position is {"position":{"x":…,"y":…}}, not top-level x/y.`,
+        )
       }
       hit.siblings[hit.index] = parsed.data as EuclidNode
       return

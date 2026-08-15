@@ -1,11 +1,13 @@
-# 003 — General video: assets, clips, reels (status: deferred)
+# 003 — General video: assets, clips, reels (status: active)
 
-> **Superseded as the active direction on 2026-08-15** by
-> [plans/006](006-animation-depth.md) — depth in the math vertical first,
-> one problem at a time. Deferred, not abandoned: the analysis below stands
-> unchanged, and the WebCodecs and container-codec findings in it are
-> prerequisites for general video whenever it resumes. The reasoning for the
-> switch is in 006 under "What this replaces, and why".
+> **Reinstated as the product direction on 2026-08-15.** It was superseded
+> briefly by [plans/006](006-animation-depth.md) (depth in the math vertical
+> first); the third milestone run showed the binding constraint is not the
+> visual vocabulary but that the agent cannot see its own output, which is
+> platform work rather than vertical work. [plans/007](007-agent-sight.md)
+> carries that reasoning and is the immediate prerequisite — its frame
+> capture rides on the WebCodecs rework in §4 below, and its contact sheet is
+> the same capability as the asset proxies/thumbnails in §1.
 
 Direction change (decided 2026-08-14): Euclid is **not** limited to
 educational math animation. The target is a general agentic video editor —

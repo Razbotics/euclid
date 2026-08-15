@@ -112,6 +112,7 @@ every run** — re-run and re-paste after restarting.
 | `smoke-texmorph.ts` | glyph matching + morph interpolation, on real MathJax coordinates (free) |
 | `smoke-mux.ts` | narration placement + ffmpeg args: offsets, trims, silent path (free) |
 | `shot.ts <t...>` | pixel-accurate frames of the demo doc through the export surface |
+| `shot-project.ts <projectId> <t...>` | the same, for a **real project** at global seconds — how every milestone run has actually found its visual bugs (`OUT_DIR=` to choose where; needs `dev:api` + `dev:web`). Superseded once `preview_frames` lands (plans/007) |
 | `check-mcp-tools.ts` | MCP surface driven as a real client does: `animate` arg coercion, tool registration (free; needs `dev:api` + `dev:mcp`) |
 | `check-decisions.ts` | agent → human → agent question loop: asked over MCP, arrives live in the editor, answered by click (free; needs all three servers) |
 | `check-assets.ts` | asset upload → download is byte-identical; tenancy enforced (needs `dev:api`) |

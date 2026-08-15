@@ -1,6 +1,6 @@
 /** Runtime smoke test for the doc → ops → sample pipeline. Run: pnpm --filter @euclid/renderer exec tsx src/smoke.ts */
 import assert from 'node:assert'
-import { applyOps, emptyDoc, op, type Track } from '@euclid/dsl'
+import { applyOps, emptyDoc, op, OpError, type Track } from '@euclid/dsl'
 import { resolveNode, sampleKeyframes } from '../../../packages/engine/src/index'
 
 let doc = emptyDoc('p1', 'smoke')
@@ -53,5 +53,54 @@ const during = resolveNode(eq, 2.5).texMorph
 assert.ok(during && during.progress > 0.4 && during.progress < 0.6)
 const after = resolveNode(eq, 4).texMorph
 assert.ok(after && after.fromTex === 'c=\\sqrt{a^2+b^2}' && after.progress === 1)
+
+// ---------- update_node: two ways a move can silently do nothing ----------
+// Both were found in real runs. Each reports success and leaves the video
+// unchanged, which is the worst combination a tool can manage.
+const movable = () =>
+  applyOps(emptyDoc('p2', 'move'), [
+    op.addScene({ id: 'm1', name: 'S', duration: 5, background: '#101418', nodes: [] }),
+    op.addNode('m1', {
+      id: 'n', type: 'latex', tex: 'x', color: '#ffffff', fontSize: 64,
+      position: { x: 100, y: 100 }, scale: 1, rotation: 0, opacity: 1,
+      tracks: [], transitions: [],
+    }),
+  ])
+
+// 1. Unknown keys. `{x, y}` is the top-level form add_latex/add_text accept,
+// so it is the natural guess — and Zod used to strip it and report success.
+assert.throws(
+  () => applyOps(movable(), [op.updateNode('m1', 'n', { x: 960, y: 540 })]),
+  (e: unknown) => e instanceof OpError && /no properties x, y/.test(e.message),
+  'a patch naming properties the node does not have must be rejected, not ignored',
+)
+assert.deepEqual(
+  (applyOps(movable(), [op.updateNode('m1', 'n', { position: { x: 960, y: 540 } })])
+    .scenes[0]!.nodes[0]! as { position: unknown }).position,
+  { x: 960, y: 540 },
+  'the correct form still applies',
+)
+// Deleting an optional key with null is not an unknown key.
+const named = applyOps(movable(), [op.updateNode('m1', 'n', { name: 'eq' })])
+assert.doesNotThrow(() => applyOps(named, [op.updateNode('m1', 'n', { name: null })]))
+
+// 2. A track shadows the base value. This one *does* change the document —
+// get_scene shows the new position — but the keyframes win at render time,
+// so nothing moves. The MCP layer warns; the reducer allows it, since
+// updating the base of a tracked property is legitimate.
+let tracked = applyOps(movable(), [
+  op.setTrack('m1', 'n', {
+    property: 'position',
+    keyframes: [
+      { t: 0, value: { x: 100, y: 100 }, easing: 'linear' },
+      { t: 1, value: { x: 500, y: 100 }, easing: 'smooth' },
+    ],
+  }),
+])
+tracked = applyOps(tracked, [op.updateNode('m1', 'n', { position: { x: 960, y: 540 } })])
+const shadowed = tracked.scenes[0]!.nodes[0]!
+assert.deepEqual((shadowed as { position: unknown }).position, { x: 960, y: 540 }, 'document changed')
+assert.deepEqual(resolveNode(shadowed, 0).props.position, { x: 100, y: 100 }, 'track wins at t=0')
+assert.deepEqual(resolveNode(shadowed, 2).props.position, { x: 500, y: 100 }, 'track wins at t=2')
 
 console.log('smoke OK — reducer, sampler, morph resolution all behave')
