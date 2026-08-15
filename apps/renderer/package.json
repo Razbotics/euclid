@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@euclid/dsl": "workspace:*",
+    "@euclid/engine": "workspace:*",
     "playwright": "^1.49.1"
   },
   "devDependencies": {

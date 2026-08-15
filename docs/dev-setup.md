@@ -86,7 +86,7 @@ A healthy running tunnel is **reused**, so restarting the backend keeps the
 same URL — quick-tunnel URLs are pasted into external dashboards by hand and
 shouldn't churn. Force a fresh one with `scripts/tunnel.sh --force`.
 To restart only the worker and keep the tunnel:
-`pkill -f "wrangler dev" && (cd apps/api && pnpm dev)`.
+`pkill -f wrangler && (cd apps/api && pnpm dev)`.
 
 Use it whenever something on the internet must reach local dev: the Better
 Auth cloud dashboard (Base URL = tunnel URL, base path `/api/auth`), Stripe
@@ -101,6 +101,7 @@ every run** — re-run and re-paste after restarting.
 | `smoke.ts` | reducer + sampler math, no browser |
 | `smoke-captions.ts` | cue generation at both fidelities, SRT/VTT formatting |
 | `smoke-tts.ts [--live]` | TTS alignment → word timings (free; `--live` makes one real call) |
+| `smoke-texmorph.ts` | glyph matching + morph interpolation, on real MathJax coordinates (free) |
 | `smoke-mux.ts` | narration placement + ffmpeg args: offsets, trims, silent path (free) |
 | `shot.ts <t...>` | pixel-accurate frames of the demo doc through the export surface |
 | `check-mcp-tools.ts` | MCP surface driven as a real client does: `animate` arg coercion, tool registration (free; needs `dev:api` + `dev:mcp`) |

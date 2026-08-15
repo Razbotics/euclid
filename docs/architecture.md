@@ -25,8 +25,7 @@ the global timeline) → nodes (rect/circle/line/text/latex/group). Animation:
 - **Tracks** — per-property keyframes (`position`, `opacity`, `fill`, …),
   eased per-segment (`smooth` = 3b1b smootherstep). The generic mechanism.
 - **Transitions** — effects not expressible as property keyframes: `write`
-  (draw-on reveal) and `texMorph` (equation morph; currently a crossfade,
-  planned upgrade to matched-glyph inside the same seam).
+  (draw-on reveal) and `texMorph` (matched-glyph equation morph — see below).
 
 Agent-facing sugar (`animate`, `write_on`, …) lives in the MCP layer and
 compiles to tracks/transitions; the document stays low-level and uniform so
@@ -51,6 +50,36 @@ imperceptible and guarantees convergence.
 Validation is layered: Zod schema on the envelope (bad shape → 400), reducer
 invariants (missing node, duplicate id → 422), and a full-document re-parse
 after each envelope so no op sequence can persist an invalid document.
+
+## Equation morphing
+
+`texMorph` pairs glyphs between the two equations and moves the shared ones;
+only genuinely new or removed glyphs fade. The earlier cross-fade of two
+whole-equation textures put both forms on screen at partial opacity through
+the middle, and because each form was centred independently, terms that never
+changed still drifted — the `=` visibly slid sideways.
+
+Three pieces:
+
+- **Matching** (`packages/engine/src/texmorph.ts`) — longest common
+  subsequence over glyph codes. LCS rather than nearest-match because it
+  preserves reading order: matched glyphs can never cross, which is what
+  keeps the motion legible. Pure, so it is tested without a browser.
+- **Glyph extraction** (`apps/web/src/tex.ts`) — MathJax tags each `<use>`
+  with `data-c`, the glyph's codepoint, which is its identity. Positions come
+  from measuring the live SVG in a hidden element, because MathJax nests
+  transforms and the browser already composes them. The SVG is rasterized
+  **once** and each glyph is a sub-texture frame of that bitmap. `<rect>`
+  rules (fraction bars, the radical's vinculum) are carried across as glyphs
+  too, or they would disappear mid-morph.
+- **Rendering** (`pixi/stage.ts`) — a pooled sprite per glyph; a matched
+  glyph keeps the same sprite across frames, so an unchanged term is
+  genuinely still rather than redrawn.
+
+Fades are staggered — what leaves goes before what arrives — since a
+simultaneous cross-fade is the muddy look being replaced. The provider seam
+keeps `getGlyphs` optional: a provider without it still renders correctly via
+the original cross-fade.
 
 ## Captions
 

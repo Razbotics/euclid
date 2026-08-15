@@ -63,6 +63,6 @@ direction is confirmed, container render cost becomes a constraint, or users
 prove unwilling to upload source footage.
 
 ## Phase 5: Vertical depth (deprioritized by the Phase 4 change)
-- [ ] Matched-glyph LaTeX morphing (upgrade inside texMorph seam)
+- [x] Matched-glyph LaTeX morphing (upgrade inside texMorph seam)
 - [ ] Graphs/axes/function-plot primitives
 - [ ] Code-block primitive with line-highlight animations

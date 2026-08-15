@@ -373,12 +373,17 @@ Good: math legible and correct at every step; beat-accurate choreography
 encode; A/V sync measured, not eyeballed.
 
 Wrong or weak, in rough order of impact:
-1. **texMorph is a cross-fade, not a glyph-correspondence morph.**
-   Mid-morph frames show both equations overlapped at partial opacity,
-   and unchanged terms drift/re-center instead of staying put (each form
-   is centered independently, so `=` jumps sideways between forms). This
-   is the single biggest gap to 3b1b-quality output; engine work, not
-   document work.
+1. ~~**texMorph is a cross-fade, not a glyph-correspondence morph.**~~
+   **fixed.** Mid-morph frames showed both equations overlapped at
+   partial opacity, and unchanged terms drifted because each form was
+   centred independently. Glyphs are now paired by longest common
+   subsequence of their MathJax `data-c` codes and the shared ones move;
+   only new or removed glyphs fade, staggered so nothing arrives while
+   something is still leaving. Verified by screenshot through the export
+   surface: at the midpoint of the demo's `a²+b²=c²` → `c=√(a²+b²)`
+   morph, `a² + b²` is fully opaque and moving while `= c²` has gone and
+   `c = √` has not yet appeared — no muddy overlap. See
+   [architecture.md](../architecture.md#equation-morphing).
 2. **No emphasis primitive.** During "take half of the x coefficient,
    square it" (11–16s) nothing moves for ~5s; a highlight/underline on
    the `b/a` term is what the narration wants and no tool can produce.

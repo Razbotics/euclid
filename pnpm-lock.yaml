@@ -75,6 +75,9 @@ importers:
       '@euclid/dsl':
         specifier: workspace:*
         version: link:../../packages/dsl
+      '@euclid/engine':
+        specifier: workspace:*
+        version: link:../../packages/engine
       playwright:
         specifier: ^1.49.1
         version: 1.62.1
