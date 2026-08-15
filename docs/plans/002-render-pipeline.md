@@ -384,9 +384,15 @@ Wrong or weak, in rough order of impact:
    morph, `a² + b²` is fully opaque and moving while `= c²` has gone and
    `c = √` has not yet appeared — no muddy overlap. See
    [architecture.md](../architecture.md#equation-morphing).
-2. **No emphasis primitive.** During "take half of the x coefficient,
-   square it" (11–16s) nothing moves for ~5s; a highlight/underline on
-   the `b/a` term is what the narration wants and no tool can produce.
+2. ~~**No emphasis primitive.**~~ **fixed.** ~5s of static screen while
+   the narration dwelt on one term, and nothing could mark it. A
+   `highlight` transition now boxes or underlines a node — or one term
+   inside an equation, named by its LaTeX: `highlight(tex: "b^2")`
+   renders the fragment, finds its glyph-code run in the equation, and
+   marks exactly those glyphs. The agent never needs screen
+   coordinates, which is why no existing tool could do this. The pulse
+   ramps in, holds, and ramps out rather than wiping. Verified by
+   screenshot: a gold box around `b²` alone in `a² + b² = c²`.
 3. **write_on is a left-to-right wipe**, not a hand-drawn reveal — fine
    for text, mechanical-looking on wide equations.
 4. ~~**Dead air is the cost of scene-sized narration.**~~ **addressed.**

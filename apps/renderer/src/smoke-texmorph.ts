@@ -7,7 +7,14 @@
  * rather than a convenient fiction.
  */
 import assert from 'node:assert'
-import { matchGlyphs, morphGlyphs, type TexGlyph } from '@euclid/engine'
+import {
+  findGlyphRun,
+  glyphBounds,
+  matchGlyphs,
+  morphGlyphs,
+  resolveNode,
+  type TexGlyph,
+} from '@euclid/engine'
 
 /** Build glyphs from MathJax `data-c` codes and x positions (em units). */
 const glyphs = (spec: [string, number, number?][]): TexGlyph[] =>
@@ -117,7 +124,64 @@ for (const g of morphGlyphs(FROM, FROM, same, 0.5)) {
   assert.equal(g.x, FROM[g.index]!.x, 'morphing an equation into itself is perfectly still')
 }
 
+// ---------- highlight: locating a term by its glyphs ----------
+// This is how `highlight` targets \frac{b}{a} without knowing coordinates:
+// render the fragment, take its codes, find that run in the equation.
+
+// "b x" inside x^2 + b x = c — codes [1D44F, 1D465] at indices 3..5.
+const run = findGlyphRun(FROM, ['1D44F', '1D465'])
+assert.deepEqual(run, [3, 5], 'a two-glyph fragment is found at the right offset')
+
+// The match must be contiguous, not a scattered subsequence: 'x' then 'c'
+// appear in that order but are not adjacent, so this is not a hit.
+assert.equal(findGlyphRun(FROM, ['1D465', '1D450']), null, 'non-adjacent codes are not a run')
+assert.equal(findGlyphRun(FROM, ['9999']), null, 'a fragment that is not present returns null')
+assert.equal(findGlyphRun(FROM, []), null, 'an empty fragment matches nothing')
+assert.equal(findGlyphRun([], ['1D465']), null, 'no glyphs, no match')
+
+// The first occurrence wins — 'x' appears twice.
+assert.deepEqual(findGlyphRun(FROM, ['1D465']), [0, 1], 'the first occurrence is returned')
+
+const bounds = glyphBounds(FROM, 3, 5)!
+assert.ok(bounds, 'bounds exist for a valid range')
+// Spans from the left edge of 'b' to the right edge of 'x'.
+assert.equal(bounds.x, (2231 - 25 + 2660 + 25) / 2, 'bounds are centred on the run')
+assert.equal(bounds.width, 2660 + 25 - (2231 - 25), 'bounds span the whole run')
+assert.equal(glyphBounds(FROM, 2, 2), null, 'an empty range has no bounds')
+assert.equal(glyphBounds(FROM, 0, 99), null, 'an out-of-range request is refused, not clamped')
+
+// ---------- highlight: the pulse envelope ----------
+// An emphasis appears, holds while the narration talks, then leaves. A
+// monotonic 0→1 would read as a wipe.
+const node = {
+  id: 'eq',
+  type: 'latex' as const,
+  tex: 'a^2',
+  color: '#ffffff',
+  fontSize: 64,
+  position: { x: 0, y: 0 },
+  scale: 1,
+  rotation: 0,
+  opacity: 1,
+  tracks: [],
+  transitions: [
+    { type: 'highlight' as const, start: 2, duration: 1, tex: 'a', style: 'box' as const, color: '#e8c74a' },
+  ],
+}
+const strengthAt = (t: number) => resolveNode(node, t).highlight?.strength ?? null
+assert.equal(strengthAt(1.9), null, 'no highlight before it starts')
+assert.equal(strengthAt(3.1), null, 'no highlight after it ends')
+assert.equal(strengthAt(2.0), 0, 'starts from nothing')
+assert.equal(strengthAt(3.0), 0, 'ends at nothing')
+assert.equal(strengthAt(2.5), 1, 'holds at full strength through the middle')
+const rising = strengthAt(2.09)!
+assert.ok(rising > 0 && rising < 1, `ramps in rather than snapping (got ${rising})`)
+assert.ok(strengthAt(2.12)! > rising, 'strength increases while ramping in')
+assert.ok(strengthAt(2.95)! < strengthAt(2.9)!, 'strength decreases while ramping out')
+assert.equal(resolveNode(node, 2.5).highlight?.tex, 'a', 'the target survives resolution')
+
 console.log(
   `texmorph OK — ${match.pairs.length}/${FROM.length} glyphs matched and stationary, ` +
-    `${match.removed.length} fade out before ${match.added.length} fade in; order preserved`,
+    `${match.removed.length} fade out before ${match.added.length} fade in; order preserved. ` +
+    `highlight: run located at [${run![0]},${run![1]}), pulse ramps 0→1→0`,
 )

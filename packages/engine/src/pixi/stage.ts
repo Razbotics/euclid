@@ -1,7 +1,15 @@
 import { Container, Graphics, Sprite, Text, Texture, type Renderer } from 'pixi.js'
 import { globalToScene, type Color, type EuclidDoc, type LatexNode, type Vec2 } from '@euclid/dsl'
 import { resolveScene, type ResolvedNode } from '../sampler'
-import { matchGlyphs, morphGlyphs, type GlyphMatch, type TexGlyph } from '../texmorph'
+import {
+  findGlyphRun,
+  glyphBounds,
+  matchGlyphs,
+  morphGlyphs,
+  type GlyphBounds,
+  type GlyphMatch,
+  type TexGlyph,
+} from '../texmorph'
 
 /**
  * Renders LaTeX source to a Pixi Texture. Implementations:
@@ -50,6 +58,8 @@ interface Item {
   /** latex only: sprite pool for matched-glyph morphing, reused across frames */
   glyphSprites?: Sprite[]
   glyphLayer?: Container
+  /** emphasis marker, drawn behind the node's content */
+  highlight?: Graphics
 }
 
 /**
@@ -155,8 +165,79 @@ export class EuclidStage {
     item.view.alpha = p.opacity as number
 
     this.updateContent(item, res)
+    this.updateHighlight(item, res)
     this.applyWrite(item, res)
     return item
+  }
+
+  /**
+   * Mark a node, or one term inside an equation, while the narration talks
+   * about it. The term is found by glyph codes rather than coordinates —
+   * see findGlyphRun — because the agent knows it means `\frac{b}{a}` but has
+   * no way to know where that lands on screen.
+   */
+  private updateHighlight(item: Item, res: ResolvedNode): void {
+    const hl = res.highlight
+    if (!hl || hl.strength <= 0) {
+      if (item.highlight) item.highlight.visible = false
+      return
+    }
+
+    if (!item.highlight) {
+      item.highlight = new Graphics()
+      // Behind the content, so a box reads as a marker rather than a veil.
+      item.content.addChildAt(item.highlight, 0)
+    }
+    const g = item.highlight
+    g.visible = true
+    g.clear()
+
+    const bounds = this.highlightBounds(item, res, hl.tex)
+    if (!bounds) {
+      g.visible = false
+      return
+    }
+
+    const pad = Math.max(6, bounds.height * 0.15)
+    if (hl.style === 'underline') {
+      const thickness = Math.max(3, bounds.height * 0.07)
+      g.rect(
+        bounds.x - bounds.width / 2 - pad / 2,
+        bounds.y + bounds.height / 2 + pad,
+        bounds.width + pad,
+        thickness,
+      ).fill({ color: hl.color, alpha: hl.strength })
+    } else {
+      g.roundRect(
+        bounds.x - bounds.width / 2 - pad,
+        bounds.y - bounds.height / 2 - pad,
+        bounds.width + pad * 2,
+        bounds.height + pad * 2,
+        pad * 0.6,
+      ).fill({ color: hl.color, alpha: hl.strength * 0.25 })
+      g.stroke({ width: 2, color: hl.color, alpha: hl.strength })
+    }
+  }
+
+  /** Glyph-run bounds for a targeted term, else the node's own bounds. */
+  private highlightBounds(item: Item, res: ResolvedNode, tex?: string): GlyphBounds | null {
+    const node = res.source
+    if (tex && node.type === 'latex' && this.texProvider?.getGlyphs) {
+      const color = res.props.color as string
+      const fontSize = res.props.fontSize as number
+      const morph = res.texMorph
+      const shown = morph ? (morph.progress >= 1 ? morph.toTex : morph.fromTex) : node.tex
+      const glyphs = this.requestGlyphs(shown, color, fontSize)
+      const fragment = this.requestGlyphs(tex, color, fontSize)
+      if (!glyphs || !fragment) return null // still rasterizing
+      const run = findGlyphRun(glyphs, fragment.map((f) => f.code))
+      // No match means the fragment isn't in this equation; fall through to
+      // the whole node rather than silently drawing nothing.
+      if (run) return glyphBounds(glyphs, run[0], run[1])
+    }
+    const b = item.content.getLocalBounds()
+    if (b.width <= 0 || b.height <= 0) return null
+    return { x: b.x + b.width / 2, y: b.y + b.height / 2, width: b.width, height: b.height }
   }
 
   private createItem(node: ResolvedNode['source'], staticKey: string): Item {

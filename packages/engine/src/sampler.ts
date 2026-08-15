@@ -21,6 +21,18 @@ export interface TexMorphState {
   progress: number
 }
 
+/** Fraction of the highlight spent ramping in, and again ramping out. */
+const HIGHLIGHT_RAMP = 0.18
+
+export interface HighlightState {
+  /** LaTeX of the sub-expression to mark; whole node when absent. */
+  tex?: string
+  style: 'box' | 'underline'
+  color: string
+  /** 0 → invisible, 1 → fully drawn. Ramps up, holds, ramps down. */
+  strength: number
+}
+
 export interface ResolvedNode {
   source: EuclidNode
   /** Animatable properties, resolved at t (base value unless a track overrides it). */
@@ -28,6 +40,7 @@ export interface ResolvedNode {
   /** null = no write transition on this node. 0 = not yet drawn (invisible). */
   writeProgress: number | null
   texMorph: TexMorphState | null
+  highlight: HighlightState | null
   children: ResolvedNode[]
 }
 
@@ -49,6 +62,18 @@ export function resolveNode(node: EuclidNode, t: number): ResolvedNode {
 
   let writeProgress: number | null = null
   let texMorph: TexMorphState | null = null
+
+  // An emphasis is a pulse, not a ramp: it appears, holds while the narration
+  // talks about the thing, then leaves. A monotonic 0→1 would be a wipe.
+  let highlight: HighlightState | null = null
+  const hl = node.transitions.find((tr) => tr.type === 'highlight')
+  if (hl && hl.type === 'highlight' && t >= hl.start && t <= hl.start + hl.duration) {
+    const u = clamp01((t - hl.start) / hl.duration)
+    const ramp = Math.min(HIGHLIGHT_RAMP, 0.5)
+    const strength =
+      u < ramp ? u / ramp : u > 1 - ramp ? (1 - u) / ramp : 1
+    highlight = { tex: hl.tex, style: hl.style, color: hl.color, strength }
+  }
 
   const morphs = node.transitions
     .filter((tr): tr is Extract<typeof tr, { type: 'texMorph' }> => tr.type === 'texMorph')
@@ -82,6 +107,7 @@ export function resolveNode(node: EuclidNode, t: number): ResolvedNode {
     props,
     writeProgress,
     texMorph,
+    highlight,
     children: node.type === 'group' ? node.children.map((c) => resolveNode(c, t)) : [],
   }
 }

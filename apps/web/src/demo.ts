@@ -80,6 +80,8 @@ export const demoDoc: EuclidDoc = {
           tracks: [],
           transitions: [
             { type: 'write', start: 0.2, duration: 1.2 },
+            // Emphasis primitive: marks just the b^2 term, located by its glyphs.
+            { type: 'highlight', start: 1.6, duration: 0.9, tex: 'b^2', style: 'box', color: '#e8c74a' },
             { type: 'texMorph', start: 2.5, duration: 1.2, toTex: 'c = \\sqrt{a^2 + b^2}', easing: 'smooth' },
           ],
         },

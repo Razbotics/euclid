@@ -84,7 +84,24 @@ export interface TexMorphTransition {
   toTex: string
   easing: Easing
 }
-export type Transition = WriteTransition | TexMorphTransition
+/**
+ * Draw attention to a node, or to one term inside an equation, for a while.
+ *
+ * `tex` names the part to mark by its LaTeX rather than by coordinates: the
+ * agent knows it wants to point at `\frac{b}{a}`, but has no way to know where
+ * that lands on screen. The engine renders the fragment, finds its glyph
+ * sequence inside the node's, and marks exactly those glyphs.
+ */
+export interface HighlightTransition {
+  type: 'highlight'
+  start: number
+  duration: number
+  /** LaTeX of the sub-expression to mark; the whole node when absent. */
+  tex?: string
+  style: 'box' | 'underline'
+  color: Color
+}
+export type Transition = WriteTransition | TexMorphTransition | HighlightTransition
 export const TransitionSchema: z.ZodType<Transition> = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('write'),
@@ -97,6 +114,14 @@ export const TransitionSchema: z.ZodType<Transition> = z.discriminatedUnion('typ
     duration: z.number().positive(),
     toTex: z.string().min(1),
     easing: EasingSchema,
+  }),
+  z.object({
+    type: z.literal('highlight'),
+    start: z.number().min(0),
+    duration: z.number().positive(),
+    tex: z.string().min(1).optional(),
+    style: z.enum(['box', 'underline']),
+    color: ColorSchema,
   }),
 ])
 

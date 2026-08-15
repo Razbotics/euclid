@@ -25,7 +25,8 @@ the global timeline) → nodes (rect/circle/line/text/latex/group). Animation:
 - **Tracks** — per-property keyframes (`position`, `opacity`, `fill`, …),
   eased per-segment (`smooth` = 3b1b smootherstep). The generic mechanism.
 - **Transitions** — effects not expressible as property keyframes: `write`
-  (draw-on reveal) and `texMorph` (matched-glyph equation morph — see below).
+  (draw-on reveal), `texMorph` (matched-glyph equation morph — see below) and
+  `highlight` (emphasis, optionally on one term inside an equation).
 
 Agent-facing sugar (`animate`, `write_on`, …) lives in the MCP layer and
 compiles to tracks/transitions; the document stays low-level and uniform so
@@ -75,6 +76,12 @@ Three pieces:
 - **Rendering** (`pixi/stage.ts`) — a pooled sprite per glyph; a matched
   glyph keeps the same sprite across frames, so an unchanged term is
   genuinely still rather than redrawn.
+
+The same glyph data powers `highlight`: `findGlyphRun` locates a
+sub-expression by rendering the fragment and finding its code sequence inside
+the equation, so an agent can say "mark `\frac{b}{a}`" without knowing where
+that lands on screen. Its strength ramps in, holds and ramps out — an
+emphasis is a pulse, not a wipe.
 
 Fades are staggered — what leaves goes before what arrives — since a
 simultaneous cross-fade is the muddy look being replaced. The provider seam

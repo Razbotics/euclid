@@ -25,6 +25,62 @@ export interface TexGlyph {
   height: number
 }
 
+export interface GlyphBounds {
+  /** centre of the run, in the same centre-relative space as the glyphs */
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/**
+ * Locate a sub-expression inside an equation by its glyph codes.
+ *
+ * This is how `highlight` targets `\frac{b}{a}` without anyone knowing screen
+ * coordinates: render the fragment on its own, take its code sequence, and
+ * find that run in the full equation. Codes are size-independent, so a
+ * fragment rendered standalone still matches the same term set in a
+ * superscript or a fraction.
+ *
+ * Returns the first match as `[start, end)`, or null.
+ */
+export function findGlyphRun(glyphs: TexGlyph[], codes: string[]): [number, number] | null {
+  if (codes.length === 0 || codes.length > glyphs.length) return null
+  for (let i = 0; i + codes.length <= glyphs.length; i++) {
+    let hit = true
+    for (let j = 0; j < codes.length; j++) {
+      if (glyphs[i + j]!.code !== codes[j]) {
+        hit = false
+        break
+      }
+    }
+    if (hit) return [i, i + codes.length]
+  }
+  return null
+}
+
+/** Bounding box of `glyphs[from..to)`, or null when the range is empty. */
+export function glyphBounds(glyphs: TexGlyph[], from: number, to: number): GlyphBounds | null {
+  if (to <= from || from < 0 || to > glyphs.length) return null
+  let left = Infinity
+  let right = -Infinity
+  let top = Infinity
+  let bottom = -Infinity
+  for (let i = from; i < to; i++) {
+    const g = glyphs[i]!
+    left = Math.min(left, g.x - g.width / 2)
+    right = Math.max(right, g.x + g.width / 2)
+    top = Math.min(top, g.y - g.height / 2)
+    bottom = Math.max(bottom, g.y + g.height / 2)
+  }
+  return {
+    x: (left + right) / 2,
+    y: (top + bottom) / 2,
+    width: right - left,
+    height: bottom - top,
+  }
+}
+
 export interface GlyphPair {
   fromIndex: number
   toIndex: number

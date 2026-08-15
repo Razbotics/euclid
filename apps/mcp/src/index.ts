@@ -403,6 +403,36 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
     )
 
     this.server.tool(
+      'highlight',
+      'Draw attention to a node, or to one term inside an equation, for a stretch of time. Free. Give `tex` to mark a sub-expression — e.g. tex="\\\\frac{b}{a}" boxes just that term, located by its glyphs, so you never need screen coordinates. Use it when the narration dwells on something and nothing else is moving.',
+      {
+        projectId: z.string(),
+        sceneId: z.string(),
+        nodeId: z.string(),
+        start: z.number().min(0).describe('scene-local seconds'),
+        duration: z.number().positive(),
+        tex: z.string().optional().describe('sub-expression to mark; whole node if omitted'),
+        style: z.enum(['box', 'underline']).default('box'),
+        color: COLOR.default('#e8c74a'),
+      },
+      async ({ projectId, sceneId, nodeId, start, duration, tex, style, color }) => {
+        const { doc } = await this.getDoc(projectId)
+        const node = this.findNodeOrThrow(doc, sceneId, nodeId)
+        if (tex && node.type !== 'latex') {
+          throw new Error(`tex targeting only works on latex nodes; ${nodeId} is a ${node.type}`)
+        }
+        const transitions: Transition[] = [
+          ...node.transitions.filter((t) => t.type !== 'highlight'),
+          { type: 'highlight', start, duration, tex, style, color },
+        ]
+        await this.submit(projectId, [op.updateNode(sceneId, nodeId, { transitions })])
+        return text(
+          `highlighting ${tex ? `"${tex}" in ` : ''}${nodeId} over [${start}s, ${start + duration}s] (${style})`,
+        )
+      },
+    )
+
+    this.server.tool(
       'set_narration',
       'Set the narration script for a scene. Free — writes text only. Call generate_narration afterwards to synthesize the audio.',
       { projectId: z.string(), sceneId: z.string(), narrationText: z.string(), voiceId: z.string().optional() },
