@@ -30,12 +30,22 @@ export interface DecisionContext {
   atSec?: number
 }
 
+/**
+ * Which surface produced the answer, in descending order of trust:
+ *  - `chat`   — the human answered a protocol elicitation directly in their
+ *               client. Nothing interpreted it.
+ *  - `editor` — the human clicked an option in the editor.
+ *  - `agent`  — the agent relayed what it understood the human to say. The
+ *               only path where the answer is an interpretation, which is
+ *               exactly why it is recorded distinctly.
+ */
+export type AnswerVia = 'chat' | 'editor' | 'agent'
+
 export interface DecisionAnswer {
   /** Absent when the human wrote a free-text answer instead of picking. */
   optionId?: string
   note?: string
-  /** Which surface answered: the editor UI, or the agent relaying chat. */
-  via: 'editor' | 'agent'
+  via: AnswerVia
   at: number
 }
 
@@ -77,7 +87,7 @@ export const SubmitAnswerSchema = z
   .object({
     optionId: z.string().optional(),
     note: z.string().max(2000).optional(),
-    via: z.enum(['editor', 'agent']),
+    via: z.enum(['chat', 'editor', 'agent']),
   })
   // An answer with neither a choice nor a note says nothing.
   .refine((a) => !!a.optionId || !!a.note?.trim(), {
@@ -97,7 +107,7 @@ export const DecisionSchema: z.ZodType<Decision> = z.object({
     .object({
       optionId: z.string().optional(),
       note: z.string().optional(),
-      via: z.enum(['editor', 'agent']),
+      via: z.enum(['chat', 'editor', 'agent']),
       at: z.number().int(),
     })
     .optional(),

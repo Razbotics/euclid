@@ -106,6 +106,8 @@ const asked = await call('ask_user', {
   ],
   atSec: 4.2,
 })
+// This client does not advertise the elicitation capability, so it must get
+// the fallback — which is the path that has to keep working everywhere.
 // The return value is the mechanism that makes the agent wait, so assert it.
 assert.match(asked, /STOP — WAITING ON THE HUMAN/, 'the result instructs, it does not just receipt')
 assert.match(asked, /NEXT reply/, 'it says to relay the question immediately')

@@ -43,6 +43,9 @@ const COLOR = z.string().regex(/^#[0-9a-fA-F]{6}$/)
  * `true`, `null` and `[]` as 0 or 1, which would animate to a silently wrong
  * value instead of reporting a bad argument.
  */
+/** How long to wait for a client to collect an answer before falling back. */
+const ELICIT_TIMEOUT_MS = 30_000
+
 const NUMBERISH = z.union([
   z.number(),
   z.string().regex(/^-?(\d+\.?\d*|\.\d+)$/).transform(Number),
@@ -101,6 +104,80 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
       if (res.status !== 409) break
     }
     throw new Error(`ops rejected: ${lastError}`)
+  }
+
+  /**
+   * Ask the client to collect the answer, via MCP's elicitation capability.
+   *
+   * This is the honest path: the human answers in their own client's UI and
+   * the result comes straight back here, so the agent learns the answer but
+   * cannot author it. The fallback — return a block, have the agent relay
+   * what the human said — works everywhere but makes the agent an
+   * interpreter, which is why that provenance is recorded as `agent`.
+   *
+   * Returns the text to hand the agent, or null when the client can't elicit
+   * and the caller should fall back.
+   */
+  private async elicit(projectId: string, decision: Decision): Promise<string | null> {
+    if (!this.server.server.getClientCapabilities()?.elicitation) return null
+    try {
+      const result = await this.server.server.elicitInput({
+        mode: 'form',
+        message: formatQuestionForChat(decision),
+        requestedSchema: {
+          type: 'object',
+          properties: {
+            choice: {
+              type: 'string',
+              title: 'Choice',
+              description: decision.question,
+              enum: decision.options.map((o) => o.id),
+              enumNames: decision.options.map((o) => o.label),
+            },
+            note: {
+              type: 'string',
+              title: 'Or in your own words',
+              description: 'optional — overrides the choice above',
+            },
+          },
+          required: ['choice'],
+        },
+      },
+      // Bounded on purpose. A client can advertise the capability and still
+      // never deliver the request — observed with a Streamable-HTTP client
+      // that wasn't reading the stream server-initiated requests arrive on.
+      // Without a cap, every question would stall for the default timeout
+      // before falling back. Long enough for a human to pick from a short
+      // list; short enough that a silent client costs seconds, not minutes.
+      { timeout: ELICIT_TIMEOUT_MS },
+      )
+
+      if (result.action !== 'accept') {
+        // Declined or dismissed is not an answer; leave the question open so
+        // the editor still shows it and the agent still knows it is blocked.
+        return (
+          `The human ${result.action === 'decline' ? 'declined' : 'dismissed'} the question ` +
+          `(${decision.id}). It is still open. Ask them in your reply instead:\n\n` +
+          formatQuestionForChat(decision)
+        )
+      }
+
+      const content = (result.content ?? {}) as { choice?: string; note?: string }
+      const answered = await this.api(
+        `/api/projects/${projectId}/decisions/${decision.id}/answer`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ optionId: content.choice, note: content.note, via: 'chat' }),
+        },
+      )
+      if (!answered.ok) return null // e.g. already answered in the editor
+      const { decision: settled } = (await answered.json()) as { decision: Decision }
+      return `ANSWERED by the human — continue.\n${formatDecision(settled)}`
+    } catch {
+      // Capability advertised but the request failed or timed out; the
+      // pasteable block still works, so degrade rather than fail the tool.
+      return null
+    }
   }
 
   private findNodeOrThrow(doc: EuclidDoc, sceneId: string, nodeId: string): EuclidNode {
@@ -506,7 +583,7 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
 
     this.server.tool(
       'ask_user',
-      'Put a choice to the human IN CHAT and wait for their reply. Free. Use when a decision is genuinely theirs — pacing, style, how to resolve a narration overrun, whether a scene change needs explaining — not for things you can determine yourself. This is blocking by intention: it returns a ready-to-paste block — put it in your very next reply and stop. Do not keep building against a guess, and do not defer the question to a summary at the end — an unanswered question that you worked around was not a question. Chat is the surface that always exists — the system may run headless with no editor open, so never wait on the browser. The question is also mirrored into the editor for anyone who does have it open, and get_answer reports that; the normal path is that they reply to you and you call record_answer.',
+      'Put a choice to the human IN CHAT and wait for their reply. Free. Use when a decision is genuinely theirs — pacing, style, how to resolve a narration overrun, whether a scene change needs explaining — not for things you can determine yourself. This is blocking by intention. If your client supports MCP elicitation you will be shown the answer directly; otherwise it returns a ready-to-paste block — put it in your very next reply and stop. Do not keep building against a guess, and do not defer the question to a summary at the end — an unanswered question that you worked around was not a question. Chat is the surface that always exists — the system may run headless with no editor open, so never wait on the browser. The question is also mirrored into the editor for anyone who does have it open, and get_answer reports that; the normal path is that they reply to you and you call record_answer.',
       {
         projectId: z.string(),
         question: z.string().min(1).describe('one clear question'),
@@ -532,11 +609,18 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
         })
         if (!res.ok) throw new Error(`ask_user failed (${res.status}): ${await res.text()}`)
         const { decision } = (await res.json()) as { decision: Decision }
-        // The return value is the strongest prompt surface there is — the
-        // agent reads it the instant it lands. A receipt ("asked (id)") gets
-        // filed and worked around; an instruction gets followed. This wording
-        // exists because a real run asked a good question, scheduled a wakeup,
-        // built the rest of the video against its own guess, and only
+        // Preferred path: have the client collect the answer itself, so the
+        // human gets their own native picker and the answer travels
+        // client → server with the agent never in the middle. Clients that
+        // don't advertise the capability fall through to the block below.
+        const elicited = await this.elicit(projectId, decision)
+        if (elicited) return text(elicited)
+
+        // Fallback. The return value is the strongest prompt surface there is
+        // — the agent reads it the instant it lands. A receipt ("asked (id)")
+        // gets filed and worked around; an instruction gets followed. This
+        // wording exists because a real run asked a good question, scheduled a
+        // wakeup, built the rest of the video against its own guess, and only
         // mentioned the unanswered question in its closing summary.
         return text(
           `STOP — WAITING ON THE HUMAN (${decision.id})\n` +

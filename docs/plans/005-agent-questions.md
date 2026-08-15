@@ -29,9 +29,19 @@ what gives it persistence, an audit trail, and a **second** surface for
 whoever does have the editor open, where the `atSec` seek button still adds
 the context chat can't.
 
-MCP's `elicitation` capability would be the native way to ask through the
-client, and is worth revisiting; it was passed over because it depends on
-client support, whereas a returned string works with every client.
+MCP's `elicitation` capability is now the **preferred** path: `ask_user`
+calls `server.elicitInput()` when the client advertises support, so the human
+answers in their client's own picker and the result travels client → server
+with the agent never in the middle. That matters for correctness, not just
+looks — on the fallback path the agent *interprets* the reply and calls
+`record_answer`, which is why that provenance is recorded as `agent` while an
+elicited answer is `chat`.
+
+The attempt is bounded (`ELICIT_TIMEOUT_MS`, 30s) and falls back to the
+pasteable block on decline, dismissal, timeout or any error. A client can
+advertise the capability and still never deliver the request — observed with
+a Streamable-HTTP client that wasn't reading the stream server-initiated
+requests arrive on — so an unbounded wait would stall every question.
 
 Consequences of the DO copy: questions broadcast over the **existing**
 WebSocket, so the editor shows them live with no new transport, and they
