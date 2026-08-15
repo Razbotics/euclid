@@ -1,4 +1,4 @@
-# 003 — General video: assets, clips, reels (status: active)
+# 003 — General video: assets, clips, reels (status: next — Phase 4)
 
 > **Reinstated as the product direction on 2026-08-15.** It was superseded
 > briefly by [plans/006](006-animation-depth.md) (depth in the math vertical
@@ -8,6 +8,11 @@
 > carries that reasoning and is the immediate prerequisite — its frame
 > capture rides on the WebCodecs rework in §4 below, and its contact sheet is
 > the same capability as the asset proxies/thumbnails in §1.
+>
+> So this is the **product direction** and the next phase, not the phase in
+> flight: [Phase 3](000-roadmap.md) is 007. The asset filesystem in §1 landed
+> early because agent blindness to files is the same problem 007 names for
+> frames.
 
 Direction change (decided 2026-08-14): Euclid is **not** limited to
 educational math animation. The target is a general agentic video editor —

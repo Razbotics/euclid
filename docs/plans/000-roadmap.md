@@ -73,6 +73,27 @@ capability as a document contact sheet.
 - [ ] Decide the rights/ToS model **before** building the ingest fetcher
 - [ ] Narration-anchored animation (sync to word timestamps)
 
+## Phase 5: Real users — launch, and deliberately last
+Moved to the end 2026-08-15. Auth, billing UI and a production deploy are
+the work that only pays off once there is something worth signing up for,
+and every hour spent on them is an hour not spent on the thing being sold.
+Everything above is buildable against `DEV_ALLOW_ANON` and the internal
+service key.
+
+One consequence worth naming: plans/007 argues for agent sight partly
+*because* this phase connects claude.ai over MCP OAuth, and that agent has
+no shell. Deferring OAuth does not weaken the case — it means the shell-less
+client arrives later, but the underlying problem is that looking at output
+currently costs a 3-minute render and ~61 credits, which is true for an
+agent holding a terminal too.
+
+- [ ] MCP OAuth (workers-oauth-provider + Better Auth) — claude.ai connects
+- [ ] Auth UI (sign up / sign in), remove DEV_ALLOW_ANON path from prod builds
+- [~] Dashboard: project **list** done (`/` in the editor — agent-created
+      projects were otherwise invisible, since the id only appears in a tool
+      response); create/delete and the credits page still to do
+- [ ] Deploy: workers, D1, R2, Containers; production secrets
+
 ## Parallel track: agent asks the human → plans/005-agent-questions.md
 - [x] `ask_user` / `get_answer` / `record_answer`; questions ride the project
       DO and appear live in the editor, answerable there or relayed from chat
@@ -102,24 +123,3 @@ check its own output.
 - [x] Matched-glyph LaTeX morphing (upgrade inside texMorph seam)
 - [ ] Graphs/axes/function-plot primitives
 - [ ] Code-block primitive with line-highlight animations
-
-## Phase 5: Real users — launch, and deliberately last
-Moved to the end 2026-08-15. Auth, billing UI and a production deploy are
-the work that only pays off once there is something worth signing up for,
-and every hour spent on them is an hour not spent on the thing being sold.
-Everything above is buildable against `DEV_ALLOW_ANON` and the internal
-service key.
-
-One consequence worth naming: plans/007 argues for agent sight partly
-*because* this phase connects claude.ai over MCP OAuth, and that agent has
-no shell. Deferring OAuth does not weaken the case — it means the shell-less
-client arrives later, but the underlying problem is that looking at output
-currently costs a 3-minute render and ~61 credits, which is true for an
-agent holding a terminal too.
-
-- [ ] MCP OAuth (workers-oauth-provider + Better Auth) — claude.ai connects
-- [ ] Auth UI (sign up / sign in), remove DEV_ALLOW_ANON path from prod builds
-- [~] Dashboard: project **list** done (`/` in the editor — agent-created
-      projects were otherwise invisible, since the id only appears in a tool
-      response); create/delete and the credits page still to do
-- [ ] Deploy: workers, D1, R2, Containers; production secrets

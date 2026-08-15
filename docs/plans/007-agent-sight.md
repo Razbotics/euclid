@@ -1,4 +1,4 @@
-# 007 — Agent sight: preview frames over MCP (status: planned)
+# 007 — Agent sight: preview frames over MCP (status: active — Phase 3)
 
 Direction decided 2026-08-15 (after the third milestone run): the agent
 cannot see what it makes. This **supersedes**
@@ -15,7 +15,7 @@ from a tool:
 |---|---|---|
 | 1 (quadratic) | texMorph was a cross-fade; no emphasis primitive; `write_on` sliced glyphs | `shot.ts`, reading PNGs |
 | 2 (Euler) | only one highlight per node survived | screenshot of a five-box sequence |
-| 3 (Bayes) | arrow overlapping `P(A∣B)`; fraction morph illegible for ~0.6s; **`update_node` silently discarding position patches** | a one-off script + `ffmpeg` (since promoted to `shot-project.ts`) |
+| 3 (Bayes) | arrow overlapping `P(A∣B)`; fraction morph illegible for ~0.6s; **`update_node` position patches doing nothing** | a one-off script + `ffmpeg` (since promoted to `shot-project.ts`) |
 
 None of those are visible in `get_project`. The outline confirms a highlight
 *exists*; it cannot show that the box landed on the right glyph, that two
@@ -23,7 +23,17 @@ nodes overlap, or that a patch which returned `updated` changed nothing.
 
 The third run's position bug is the sharpest case. Seven `update_node` calls
 returned success and did nothing. The only thing that caught it was looking
-at a picture. An agent without a shell would have shipped it.
+at a picture — an agent without a shell would have shipped it.
+
+It has since been fixed, and the fix makes the point rather than retiring it.
+There were **two** traps, not one: a patch naming properties the node lacks
+(`{x, y}` instead of `{position:{x,y}}`) was stripped by Zod and reported
+success, and a patch to a property an animation keyframes changes the
+document but not the render, because the track wins. Both now fail loudly and
+both are covered in `smoke.ts`. But neither was *findable* from text — the
+first produced a picture that looked unchanged, and the second produced a
+document that agreed the move had happened. Knowing to look was the hard
+part, and that is exactly what the agent cannot do.
 
 ## Why this outranks vertical depth
 
