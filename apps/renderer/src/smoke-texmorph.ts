@@ -13,6 +13,7 @@ import {
   matchGlyphs,
   morphGlyphs,
   resolveNode,
+  writeGlyphAlphas,
   type TexGlyph,
 } from '@euclid/engine'
 
@@ -180,8 +181,39 @@ assert.ok(strengthAt(2.12)! > rising, 'strength increases while ramping in')
 assert.ok(strengthAt(2.95)! < strengthAt(2.9)!, 'strength decreases while ramping out')
 assert.equal(resolveNode(node, 2.5).highlight?.tex, 'a', 'the target survives resolution')
 
+// ---------- write: glyph-by-glyph reveal ----------
+// The old write swept one mask edge across, slicing glyphs in half as it
+// passed. Revealing symbol by symbol reads like someone writing it out.
+const w = (u: number) => writeGlyphAlphas(FROM.length, u)
+
+assert.deepEqual(w(0), FROM.map(() => 0), 'nothing is drawn at the start')
+assert.deepEqual(w(1), FROM.map(() => 1), 'everything is drawn at the end')
+
+// Reading order: an earlier glyph is never fainter than a later one.
+for (const u of [0.1, 0.3, 0.5, 0.7, 0.9]) {
+  const a = w(u)
+  for (let i = 1; i < a.length; i++) {
+    assert.ok(a[i - 1]! >= a[i]!, `glyph ${i - 1} must lead glyph ${i} (progress ${u})`)
+  }
+  assert.ok(a.every((x) => x >= 0 && x <= 1), 'alphas stay in range')
+}
+
+// Glyphs overlap rather than appearing strictly one at a time, so it flows.
+const partial = w(0.5).filter((a) => a > 0 && a < 1)
+assert.ok(partial.length >= 2, `expected several glyphs mid-fade, got ${partial.length}`)
+
+// Monotonic in time: a glyph never dims as the write proceeds.
+for (let i = 0; i < FROM.length; i++) {
+  assert.ok(w(0.6)[i]! >= w(0.4)[i]!, `glyph ${i} must not dim as the write proceeds`)
+}
+
+assert.deepEqual(writeGlyphAlphas(0, 0.5), [], 'no glyphs, no alphas')
+assert.deepEqual(writeGlyphAlphas(1, 0.4), [0.4], 'a single glyph just tracks progress')
+assert.ok(writeGlyphAlphas(3, -1).every((a) => a === 0), 'progress below 0 is clamped')
+assert.ok(writeGlyphAlphas(3, 2).every((a) => a === 1), 'progress above 1 is clamped')
+
 console.log(
   `texmorph OK — ${match.pairs.length}/${FROM.length} glyphs matched and stationary, ` +
     `${match.removed.length} fade out before ${match.added.length} fade in; order preserved. ` +
-    `highlight: run located at [${run![0]},${run![1]}), pulse ramps 0→1→0`,
+    `highlight: run at [${run![0]},${run![1]}), pulse ramps 0→1→0; write reveals in reading order`,
 )

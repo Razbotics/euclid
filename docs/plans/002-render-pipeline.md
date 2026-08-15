@@ -393,8 +393,14 @@ Wrong or weak, in rough order of impact:
    coordinates, which is why no existing tool could do this. The pulse
    ramps in, holds, and ramps out rather than wiping. Verified by
    screenshot: a gold box around `b²` alone in `a² + b² = c²`.
-3. **write_on is a left-to-right wipe**, not a hand-drawn reveal — fine
-   for text, mechanical-looking on wide equations.
+3. ~~**write_on is a left-to-right wipe**~~ **fixed.** One mask edge swept
+   across, slicing glyphs in half as it passed — fine on a line of text,
+   mechanical on a wide equation. With glyph data available a write now
+   reveals symbol by symbol in reading order, glyphs overlapping slightly
+   so it flows rather than ticks. Verified by screenshot: mid-write,
+   `a² +` is complete, `b` bright, `=` fainter and `c` just emerging,
+   with no glyph cut in half. Falls back to the mask wipe for non-latex
+   nodes and whenever glyph data isn't available.
 4. ~~**Dead air is the cost of scene-sized narration.**~~ **addressed.**
    3.5s of silent hold after the derivation, 4.5s on the end card (~15%
    of runtime silent), and nothing in the pipeline reasoned about the
@@ -418,10 +424,17 @@ Wrong or weak, in rough order of impact:
    combined single-fraction formula; narration never mentions the step.
    Cross-scene continuity is on the agent, and nothing checks it.
 
-None of 1–4 can be fixed by iterating on the document; they are engine
-and tool-surface work. That is the milestone's actual finding: the
+None of 1–4 could be fixed by iterating on the document; they were engine
+and tool-surface work. That was the milestone's actual finding: the
 pipeline reliably produces a *correct, synced* video, and the ceiling on
-*beauty* is now the morph/reveal primitives, not the orchestration.
+*beauty* was the morph/reveal primitives, not the orchestration.
+
+**All six are now addressed** (plus the `animate` bug in Notes below).
+1, 2 and 3 turned out to be one piece of work rather than three: glyph
+extraction, built for the morph, is also what locates a term to highlight
+and what lets a write reveal symbol by symbol. A re-run of the milestone
+is the honest way to find out whether the result now reads as *good* —
+the flaws that remain will be different ones.
 
 ## Deferred on purpose
 - **Cloudflare Queues + Containers.** The flagged infra risk, and it's

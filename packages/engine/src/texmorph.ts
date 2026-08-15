@@ -25,6 +25,31 @@ export interface TexGlyph {
   height: number
 }
 
+/** Fraction of the whole reveal that a single glyph spends fading in. */
+const GLYPH_WRITE_SPAN = 0.3
+
+/**
+ * Per-glyph alpha for a written reveal.
+ *
+ * `write` used to be one mask edge sweeping left to right, which is fine on a
+ * line of text and mechanical on a wide equation — it slices glyphs in half
+ * as it passes. Revealing symbol by symbol in reading order reads far closer
+ * to someone writing it out. Glyphs overlap slightly rather than appearing
+ * one at a time, so it flows instead of ticking.
+ */
+export function writeGlyphAlphas(count: number, progress: number): number[] {
+  const u = progress < 0 ? 0 : progress > 1 ? 1 : progress
+  if (count <= 0) return []
+  if (count === 1) return [u]
+  const step = (1 - GLYPH_WRITE_SPAN) / (count - 1)
+  const out: number[] = []
+  for (let i = 0; i < count; i++) {
+    const a = (u - i * step) / GLYPH_WRITE_SPAN
+    out.push(a < 0 ? 0 : a > 1 ? 1 : a)
+  }
+  return out
+}
+
 export interface GlyphBounds {
   /** centre of the run, in the same centre-relative space as the glyphs */
   x: number

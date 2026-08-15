@@ -77,7 +77,10 @@ Three pieces:
   glyph keeps the same sprite across frames, so an unchanged term is
   genuinely still rather than redrawn.
 
-The same glyph data powers `highlight`: `findGlyphRun` locates a
+The same glyph data powers two more effects. `write` reveals an equation
+symbol by symbol in reading order instead of sweeping a mask edge across it,
+which used to slice glyphs in half mid-stroke; non-latex nodes still use the
+mask. And `highlight`: `findGlyphRun` locates a
 sub-expression by rendering the fragment and finding its code sequence inside
 the equation, so an agent can say "mark `\frac{b}{a}`" without knowing where
 that lands on screen. Its strength ramps in, holds and ramps out — an

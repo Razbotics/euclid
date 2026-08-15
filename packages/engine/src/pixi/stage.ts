@@ -6,6 +6,7 @@ import {
   glyphBounds,
   matchGlyphs,
   morphGlyphs,
+  writeGlyphAlphas,
   type GlyphBounds,
   type GlyphMatch,
   type TexGlyph,
@@ -60,6 +61,8 @@ interface Item {
   glyphLayer?: Container
   /** emphasis marker, drawn behind the node's content */
   highlight?: Graphics
+  /** true when a write is being drawn per-glyph, so applyWrite skips its mask */
+  glyphWrite?: boolean
 }
 
 /**
@@ -344,6 +347,19 @@ export class EuclidStage {
       }
     }
 
+    // A write in progress reveals glyph by glyph when glyph data exists.
+    // applyWrite skips its mask in that case (see item.glyphWrite).
+    const wp = res.writeProgress
+    item.glyphWrite = false
+    if (toTex === fromTex && wp !== null && wp > 0 && wp < 1 && this.texProvider?.getGlyphs) {
+      const glyphs = this.requestGlyphs(fromTex, color, fontSize)
+      if (glyphs && glyphs.length > 0) {
+        item.glyphWrite = true
+        this.updateGlyphWrite(item, glyphs, wp)
+        return
+      }
+    }
+
     if (item.glyphLayer) item.glyphLayer.visible = false
     item.fromSprite.visible = true
     this.assignTexTexture(item.fromSprite, fromTex, color, fontSize)
@@ -374,6 +390,52 @@ export class EuclidStage {
     if (item.fromSprite) item.fromSprite.visible = false
     if (item.toSprite) item.toSprite.visible = false
 
+    let match = this.matchCache.get(matchKey)
+    if (!match) {
+      match = matchGlyphs(from, to)
+      this.matchCache.set(matchKey, match)
+    }
+
+    const drawn = morphGlyphs(from, to, match, progress)
+    this.drawGlyphs(
+      item,
+      drawn.map((g) => ({
+        texture: (g.source === 'from' ? from[g.index]! : to[g.index]!).texture,
+        x: g.x,
+        y: g.y,
+        scale: g.scale,
+        alpha: g.alpha,
+      })),
+    )
+  }
+
+  /**
+   * Reveal an equation symbol by symbol instead of sweeping one mask edge
+   * across it — see writeGlyphAlphas. Only used while a write is in progress;
+   * once complete the whole-equation sprite takes over, which draws the same
+   * pixels since the glyphs are frames of that same rasterization.
+   */
+  private updateGlyphWrite(item: Item, glyphs: TexGlyphRender[], progress: number): void {
+    if (item.fromSprite) item.fromSprite.visible = false
+    if (item.toSprite) item.toSprite.visible = false
+    const alphas = writeGlyphAlphas(glyphs.length, progress)
+    this.drawGlyphs(
+      item,
+      glyphs.map((g, i) => ({
+        texture: g.texture,
+        x: g.x,
+        y: g.y,
+        scale: 1,
+        alpha: alphas[i]!,
+      })),
+    )
+  }
+
+  /** Shared sprite pool: one sprite per drawn glyph, reused across frames. */
+  private drawGlyphs(
+    item: Item,
+    entries: { texture: Texture; x: number; y: number; scale: number; alpha: number }[],
+  ): void {
     if (!item.glyphLayer) {
       item.glyphLayer = new Container()
       item.content.addChild(item.glyphLayer)
@@ -382,15 +444,8 @@ export class EuclidStage {
     item.glyphLayer.visible = true
     const pool = item.glyphSprites!
 
-    let match = this.matchCache.get(matchKey)
-    if (!match) {
-      match = matchGlyphs(from, to)
-      this.matchCache.set(matchKey, match)
-    }
-
-    const drawn = morphGlyphs(from, to, match, progress)
-    for (let i = 0; i < drawn.length; i++) {
-      const g = drawn[i]!
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i]!
       let sprite = pool[i]
       if (!sprite) {
         sprite = new Sprite()
@@ -398,14 +453,13 @@ export class EuclidStage {
         pool.push(sprite)
         item.glyphLayer.addChild(sprite)
       }
-      const glyph = g.source === 'from' ? from[g.index]! : to[g.index]!
-      if (sprite.texture !== glyph.texture) sprite.texture = glyph.texture
-      sprite.position.set(g.x, g.y)
-      sprite.scale.set(g.scale)
-      sprite.alpha = g.alpha
+      if (sprite.texture !== e.texture) sprite.texture = e.texture
+      sprite.position.set(e.x, e.y)
+      sprite.scale.set(e.scale)
+      sprite.alpha = e.alpha
       sprite.visible = true
     }
-    for (let i = drawn.length; i < pool.length; i++) pool[i]!.visible = false
+    for (let i = entries.length; i < pool.length; i++) pool[i]!.visible = false
   }
 
   /** Cached glyph breakdown, kicking off rasterization on first request. */
@@ -468,6 +522,15 @@ export class EuclidStage {
     }
     item.view.visible = true
     if (progress >= 1) {
+      if (item.mask) {
+        item.view.mask = null
+        item.mask.destroy()
+        item.mask = null
+      }
+      return
+    }
+    if (item.glyphWrite) {
+      // The per-glyph alphas are the reveal; a mask on top would clip it.
       if (item.mask) {
         item.view.mask = null
         item.mask.destroy()
