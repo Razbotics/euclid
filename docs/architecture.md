@@ -117,6 +117,23 @@ agent-facing sugar that compiles down to this, the same split as `animate`
 baking keyframes from a sampled current value. The document therefore never
 holds an expression, and the purity invariant needs no argument.
 
+Plotting `y = f(x)` sits on top as a capability, not a node type. `samplePlot`
+in `packages/dsl` samples an expression over a domain and maps it into a canvas
+rectangle, emitting points — so the document holds a curve, never a formula, and
+the renderer needs no evaluator. The expression parser (`expr.ts`) is its own
+small grammar rather than anything reaching the JS evaluator: a whitelist of
+functions, `x`, and five operators, so evaluation is deterministic by
+construction and `Math.random()` is simply unreachable.
+
+The mapping is the part that matters. Run 4's expensive mistake was choosing
+uniform 150 px/unit for x², where over x∈[1,2] the curve rises three units for
+one across — the secant visually hugged the curve and destroyed the contrast the
+video existed to teach, and only a picture caught it. So the y range is fitted
+to the function by default, `uniform` is opt-in, and the transform actually used
+(`originScreen`, `scale`) is **reported back**. That is what lets a caller place
+a point on the curve, or a tangent, in the same coordinate system instead of
+re-deriving a transform that disagrees.
+
 Write-on is where a path differs from every other node. The generic reveal
 sweeps a rectangular mask across the node's bounds, which is right for a line
 of text and wrong for a curve: a mask edge reveals by *x position*, so a steep

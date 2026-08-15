@@ -8,6 +8,8 @@ import {
   op,
   OpError,
   SCHEMA_VERSION,
+  evaluateExpression,
+  samplePlot,
   type EuclidDoc,
   type Track,
 } from '@euclid/dsl'
@@ -237,4 +239,77 @@ const dot = [{ x: 5, y: 5 }, { x: 5, y: 5 }]
 assert.deepEqual(pathAtProgress(dot, false, 0.5), dot, 'a zero-length path is all-or-nothing')
 assert.deepEqual(pathAtProgress([{ x: 0, y: 0 }], false, 0.5), [], 'one point draws nothing')
 
-console.log('smoke OK — reducer, sampler, morph resolution, key moments and path reveal all behave')
+// ---------- expression evaluation ----------
+// Its own grammar rather than anything reaching the JS evaluator, so it is
+// pure by construction: nothing outside the whitelist is reachable.
+assert.equal(evaluateExpression('x^2', 3), 9)
+assert.equal(evaluateExpression('2*x + 1', 4), 9)
+assert.equal(evaluateExpression('-x^2', 3), -9, 'unary minus binds looser than the power')
+assert.equal(evaluateExpression('(2+3)*x', 2), 10, 'parentheses group')
+assert.equal(evaluateExpression('2^3^2', 0), 512, 'exponentiation is right-associative')
+assert.equal(evaluateExpression('x**2', 5), 25, '** is accepted as a synonym for ^')
+assert.ok(Math.abs(evaluateExpression('sin(pi/2)', 0) - 1) < 1e-12, 'functions and constants')
+assert.equal(evaluateExpression('sqrt(abs(-x))', 16), 4, 'calls nest')
+// The point of a whitelist is that everything else is refused, loudly.
+for (const bad of ['Math.random()', 'x; process.exit(1)', 'window', 'foo(x)', '2x']) {
+  assert.throws(() => evaluateExpression(bad, 1), `"${bad}" must be refused`)
+}
+// Implicit multiplication is refused rather than guessed — a caller who typo'd
+// must not get a silently different curve.
+assert.throws(() => evaluateExpression('2x', 1), /explicitly/, 'and the error names the fix')
+
+// ---------- plot mapping ----------
+// The mapping is what run 4 got wrong by hand: it is easy to sample a function
+// and hard to land it on the canvas the right way up.
+const plot = samplePlot({
+  expression: 'x^2',
+  domain: [0, 2],
+  rect: { x: 100, y: 200, width: 400, height: 300 },
+  samples: 5,
+})
+assert.equal(plot.points.length, 5)
+assert.deepEqual(plot.range.map((v) => Math.round(v * 100) / 100), [-0.2, 4.2], 'range is fitted with padding')
+// Canvas y grows DOWNWARD, so a larger function value must be a smaller y.
+assert.ok(
+  plot.points.at(-1)!.y < plot.points[0]!.y,
+  'the top of the parabola must be higher on screen, not lower',
+)
+// x maps left to right across the rectangle.
+assert.equal(Math.round(plot.points[0]!.x), 100, 'the domain starts at the left edge')
+assert.equal(Math.round(plot.points.at(-1)!.x), 500, 'and ends at the right edge')
+// The reported mapping must actually reproduce the points, or a caller placing
+// a dot "on the curve" would find it beside the curve.
+const sampleAtOne = plot.points[2]!
+assert.ok(
+  Math.abs(plot.originScreen.x + 1 * plot.scale.x - sampleAtOne.x) < 1e-9 &&
+    Math.abs(plot.originScreen.y - 1 * plot.scale.y - sampleAtOne.y) < 1e-9,
+  'originScreen + scale must reproduce a sampled point exactly',
+)
+// Fitted axes differ per axis by design; uniform forces them equal.
+assert.ok(plot.scale.x !== plot.scale.y, 'a fitted plot fills the rectangle')
+const round = samplePlot({
+  expression: 'x^2', domain: [0, 2], rect: { x: 0, y: 0, width: 400, height: 300 }, uniform: true,
+})
+assert.equal(round.scale.x, round.scale.y, 'uniform keeps the axes in proportion')
+
+// Undefined points are skipped and counted, not allowed to break the curve.
+const withHoles = samplePlot({
+  expression: 'sqrt(x)', domain: [-1, 1], rect: { x: 0, y: 0, width: 100, height: 100 }, samples: 21,
+})
+assert.ok(withHoles.dropped > 0, 'sqrt of a negative is dropped')
+assert.ok(withHoles.points.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y)))
+assert.throws(
+  () => samplePlot({ expression: 'sqrt(x)', domain: [-4, -1], rect: { x: 0, y: 0, width: 10, height: 10 } }),
+  /undefined almost everywhere/,
+  'a function undefined across the whole domain is an error, not an empty path',
+)
+// A constant has no extent to fit; it must land mid-rectangle, not divide by zero.
+const flat = samplePlot({
+  expression: '3', domain: [0, 1], rect: { x: 0, y: 0, width: 100, height: 100 },
+})
+assert.ok(flat.points.every((p) => Math.abs(p.y - 50) < 1e-9), 'a constant sits mid-rectangle')
+
+console.log(
+  'smoke OK — reducer, sampler, morph resolution, key moments, path reveal, ' +
+    'expressions and plot mapping all behave',
+)

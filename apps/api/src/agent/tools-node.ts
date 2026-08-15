@@ -1,5 +1,13 @@
 import { z } from 'zod'
-import { newId, op, type EuclidNode, type Track, type Transition, type Vec2 } from '@euclid/dsl'
+import {
+  newId,
+  op,
+  samplePlot,
+  type EuclidNode,
+  type Track,
+  type Transition,
+  type Vec2,
+} from '@euclid/dsl'
 import { COLOR, NODE_ID, NUMBERISH, PROJECT_ID, SCENE_ID } from './schemas'
 import { capability, said, CapabilityError } from './types'
 
@@ -172,6 +180,96 @@ export const nodeTools = [
         nodeId: id,
         points: points.length,
       })
+    },
+  }),
+
+  capability({
+    name: 'plot_function',
+    summary: 'Plot y = f(x) into a rectangle — one path node, and it tells you the mapping.',
+    doc: [
+      'Samples an expression over a domain and draws it as a single `path` node. Free.',
+      '',
+      '`expression` uses `x` as the variable: `x^2`, `sin(x)/x`, `exp(-x^2)`. Write multiplication explicitly (`2*x`, not `2x`). Functions available: sin cos tan asin acos atan sinh cosh tanh exp ln log sqrt abs sign floor ceil round; constants `pi` and `e`.',
+      '',
+      '**It returns the mapping, and you should use it.** `originScreen` is where function-space (0,0) lands on the canvas, and `scale` is pixels per unit on each axis. To put anything else in the same coordinate system — a point on the curve, a tangent, an axis label — compute `screenX = originScreen.x + u * scale.x` and `screenY = originScreen.y - v * scale.y` (canvas y grows *downward*, which is the usual thing to get wrong). Deriving your own transform instead is how a curve and the point that is supposed to sit on it end up disagreeing.',
+      '',
+      'By default the y range is **fitted** to what the function does over the domain, so the curve fills the rectangle. That is usually what you want: a real run plotted x² with equal scales on both axes and the secant line visually hugged the curve, destroying the contrast the video existed to teach. Pass `uniform: true` when true geometric proportion matters (a circle should look round), or `range` to fix it yourself. The range actually used is always reported back.',
+      '',
+      'Points where the function is undefined (`1/x` at 0, `sqrt` of a negative) are skipped and counted, rather than breaking the curve.',
+      '',
+      'Combine with `write_on` to draw the curve along its length.',
+    ].join('\n'),
+    args: z.object({
+      projectId: PROJECT_ID,
+      sceneId: SCENE_ID,
+      expression: z.string().min(1).describe('in terms of x, e.g. "x^2"'),
+      xMin: NUMBERISH,
+      xMax: NUMBERISH,
+      /** The canvas rectangle to draw into: top-left plus size. */
+      x: z.number().describe('left edge of the plot area, canvas px'),
+      y: z.number().describe('top edge of the plot area, canvas px'),
+      width: z.number().positive(),
+      height: z.number().positive(),
+      samples: z.number().int().min(2).max(2000).default(120),
+      yMin: NUMBERISH.optional().describe('fitted to the function when omitted'),
+      yMax: NUMBERISH.optional(),
+      uniform: z.boolean().default(false).describe('equal px per unit on both axes'),
+      stroke: COLOR.default('#58c4dd'),
+      strokeWidth: z.number().positive().default(4),
+    }),
+    async handler(ctx, a) {
+      const hasRange = a.yMin !== undefined && a.yMax !== undefined
+      if ((a.yMin === undefined) !== (a.yMax === undefined)) {
+        throw new CapabilityError('give both yMin and yMax, or neither (the range is fitted)')
+      }
+      let plot
+      try {
+        plot = samplePlot({
+          expression: a.expression,
+          domain: [a.xMin, a.xMax],
+          rect: { x: a.x, y: a.y, width: a.width, height: a.height },
+          samples: a.samples,
+          range: hasRange ? [a.yMin!, a.yMax!] : undefined,
+          uniform: a.uniform,
+        })
+      } catch (e) {
+        // The parser's messages already name the fix (unknown function, implicit
+        // multiplication), so they are surfaced rather than replaced.
+        throw new CapabilityError(`could not plot "${a.expression}": ${(e as Error).message}`)
+      }
+
+      const id = newId('plot')
+      await ctx.submit(a.projectId, [
+        op.addNode(a.sceneId, {
+          // Points are absolute canvas coordinates, so the node sits at the
+          // origin — which also makes `originScreen` directly usable for
+          // placing anything else, with no second transform to keep in step.
+          ...baseNode({ x: 0, y: 0 }),
+          id,
+          type: 'path',
+          points: plot.points,
+          stroke: a.stroke,
+          strokeWidth: a.strokeWidth,
+          closed: false,
+        }),
+      ])
+
+      const [lo, hi] = plot.range
+      return said(
+        `plotted "${a.expression}" as ${id} — ${plot.points.length} points over ` +
+          `x ∈ [${a.xMin}, ${a.xMax}], y ∈ [${lo.toFixed(3)}, ${hi.toFixed(3)}]` +
+          `${hasRange ? '' : ' (fitted)'}.\n` +
+          `Mapping: function (0,0) is at canvas (${plot.originScreen.x.toFixed(1)}, ` +
+          `${plot.originScreen.y.toFixed(1)}); ${plot.scale.x.toFixed(2)} px per x-unit, ` +
+          `${plot.scale.y.toFixed(2)} px per y-unit.\n` +
+          `Place anything else on this curve with screenX = ${plot.originScreen.x.toFixed(1)} ` +
+          `+ u * ${plot.scale.x.toFixed(2)}, screenY = ${plot.originScreen.y.toFixed(1)} ` +
+          `− v * ${plot.scale.y.toFixed(2)}.` +
+          (plot.dropped
+            ? `\n${plot.dropped} sample(s) skipped where the function is undefined.`
+            : ''),
+        { nodeId: id, ...plot },
+      )
     },
   }),
 

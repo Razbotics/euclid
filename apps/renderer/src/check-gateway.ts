@@ -312,6 +312,58 @@ assert.match(
 )
 console.log('path OK — one node per curve, samples preserved, degenerate input refused')
 
+// ---------- plot_function: the mapping must be usable ----------
+// Run 4's costly mistake was the coordinate mapping, not the drawing. So the
+// thing worth pinning is that the transform this reports back is the one it
+// actually used — otherwise a caller placing a point "on the curve" using
+// those numbers lands beside it, which is invisible in text and obvious only
+// in a picture.
+const plotted = JSON.parse(
+  (await post('/api/agent/tools/plot_function/execute?format=json', {
+    projectId, sceneId, expression: 'x^2', xMin: 0, xMax: 2,
+    x: 100, y: 100, width: 400, height: 300, samples: 41,
+  })).body,
+) as { text: string; data: { nodeId: string; points: { x: number; y: number }[]
+       originScreen: { x: number; y: number }; scale: { x: number; y: number } } }
+assert.equal(plotted.data.points.length, 41, 'every sample is plotted')
+assert.match(plotted.text, /Mapping: function \(0,0\)/, 'the mapping is reported, not just used')
+
+// x=1 is sample 20 of 41 over [0,2]; y=1 there.
+const onCurve = plotted.data.points[20]!
+assert.ok(
+  Math.abs(plotted.data.originScreen.x + 1 * plotted.data.scale.x - onCurve.x) < 1e-6 &&
+    Math.abs(plotted.data.originScreen.y - 1 * plotted.data.scale.y - onCurve.y) < 1e-6,
+  'the reported mapping must reproduce a plotted point exactly',
+)
+// Canvas y grows downward: the curve's high end must be *higher* on screen.
+assert.ok(
+  plotted.data.points.at(-1)!.y < plotted.data.points[0]!.y,
+  'y must be flipped for the canvas, or the parabola renders upside down',
+)
+
+// The expression errors have to name the fix, like every other error here.
+const implicitMul = await post('/api/agent/tools/plot_function/execute', {
+  projectId, sceneId, expression: '2x', xMin: 0, xMax: 1, x: 0, y: 0, width: 10, height: 10,
+})
+assert.equal(implicitMul.status, 400)
+assert.match(implicitMul.body, /2\*x/, 'implicit multiplication is refused with the correction')
+
+const noSuchFn = await post('/api/agent/tools/plot_function/execute', {
+  projectId, sceneId, expression: 'wibble(x)', xMin: 0, xMax: 1, x: 0, y: 0, width: 10, height: 10,
+})
+assert.equal(noSuchFn.status, 400)
+assert.match(noSuchFn.body, /Available: .*sqrt/, 'an unknown function lists the real ones')
+
+// Nothing outside the whitelist is reachable — the reason this is its own
+// grammar rather than anything touching the JS evaluator.
+for (const hostile of ['Math.random()', 'globalThis', 'x)+(1']) {
+  const r = await post('/api/agent/tools/plot_function/execute', {
+    projectId, sceneId, expression: hostile, xMin: 0, xMax: 1, x: 0, y: 0, width: 10, height: 10,
+  })
+  assert.equal(r.status, 400, `"${hostile}" must be refused`)
+}
+console.log('plot OK — mapping round-trips, y flipped for canvas, expression errors teach')
+
 // ---------- assets ----------
 // Producers are server-side, so the fixture is uploaded the way TTS does it.
 const uploaded = JSON.parse(

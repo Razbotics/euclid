@@ -151,8 +151,10 @@ check its own output.
 ## Deferred: Vertical depth (folded into the animation-depth plan)
 - [x] Matched-glyph LaTeX morphing (upgrade inside texMorph seam)
 - [~] Graphs/axes/function-plot primitives — `path` node with arc-length
-      write-on shipped 2026-08-16 (run 4 spent ~20 calls and 9 nodes on one
-      parabola). `plot_function` sugar — sample an expression, map a domain to
-      the canvas — is the follow-up; the mapping is where run 4's cost actually
-      was, not the drawing
+      write-on and `plot_function` both shipped 2026-08-16 (run 4 spent ~20
+      calls and 9 nodes on one parabola). `plot_function` owns the
+      domain→canvas mapping, which is where run 4's cost actually was, and
+      reports the transform back so a point placed on the curve lands on it.
+      Axes, ticks and labels are still hand-built — worth doing only once a
+      run shows what they should look like
 - [ ] Code-block primitive with line-highlight animations
