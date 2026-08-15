@@ -53,6 +53,22 @@ if (list.items.length > 0) {
     await page.evaluate(() => document.querySelector('header .back') !== null),
     'the editor offers a way back to the list',
   )
+  // Layout regression guard: the side column is fixed-width, so long content
+  // in it can never squeeze the canvas. This throws no error and logs nothing
+  // when it breaks — it just looks like the video went small.
+  const layout = await page.evaluate(() => ({
+    canvasW: document.querySelector('canvas')?.getBoundingClientRect().width ?? 0,
+    sideW: document.querySelector('.side')?.getBoundingClientRect().width ?? 0,
+    viewport: window.innerWidth,
+  }))
+  assert.ok(
+    layout.sideW > 0 && layout.sideW < layout.viewport * 0.35,
+    `side panel must stay a column, got ${layout.sideW}px of ${layout.viewport}px`,
+  )
+  assert.ok(
+    layout.canvasW > layout.viewport * 0.5,
+    `canvas must keep most of the width, got ${layout.canvasW}px of ${layout.viewport}px`,
+  )
 }
 
 // ---------- the demo editor ----------

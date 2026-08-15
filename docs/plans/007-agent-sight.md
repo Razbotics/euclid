@@ -27,15 +27,19 @@ at a picture. An agent without a shell would have shipped it.
 
 ## Why this outranks vertical depth
 
-[Phase 3](000-roadmap.md) is claude.ai connecting over MCP OAuth. **That
-agent has no shell.** It cannot run `tsx`, cannot run `ffmpeg`, cannot decode
-an MP4. Its only feedback channel is text.
+The launch phase ([Phase 5](000-roadmap.md), moved last on 2026-08-15) is
+claude.ai connecting over MCP OAuth. **That agent has no shell**: it cannot
+run `tsx`, cannot run `ffmpeg`, cannot decode an MP4. Its only feedback
+channel is text. Every visual primitive we have shipped was validated by a
+human at a terminal, and the moment that client connects, the validation
+disappears.
 
-So the current loop is: build blind → spend 61 credits and ~3 minutes on a
-render → receive a URL to a file it cannot open. There is no way to iterate
-on *appearance* at all. Every visual primitive we have shipped was validated
-by a human at a terminal, and the moment the intended client connects, that
-validation disappears.
+Moving launch last delays when the shell-less client arrives; it does not
+change that we are building for it, and the case does not rest on it. Even
+holding a terminal, the loop today is: build blind → spend ~61 credits and
+~3 minutes on a render → open the file by hand. There is no way to iterate
+on *appearance* cheaply, which is why every run so far has checked the
+output once, at the end, instead of while building.
 
 Investing in richer visuals before fixing this compounds output nobody can
 check.
@@ -102,7 +106,7 @@ The MCP worker is a Cloudflare Worker. Capture needs a browser. Three paths:
 |---|---|---|
 | **Cloudflare Browser Rendering** (Puppeteer binding) | low | a second capture path to keep pixel-identical with `render.ts` — risks quietly violating the purity invariant |
 | **The render Container** | none new — `render.ts` already screenshots the canvas per frame | blocked on the Queues/Containers work deferred in plans/002 |
-| **Dev-only local path** | lowest | does not solve Phase 3, which is the entire motivation |
+| **Dev-only local path** | lowest | does not solve the shell-less client, which is the entire motivation |
 
 The capture code is **not new work** — this is `render.ts`'s frame loop with a
 short time list and a PNG grid instead of ffmpeg. Recommendation: build

@@ -33,15 +33,7 @@ files; this file tracks the big picture.
 Render queue (Cloudflare Queues → Containers) is deliberately deferred until
 after the milestone — see plans/002 for the reasoning.
 
-## Phase 3: Real users
-- [ ] MCP OAuth (workers-oauth-provider + Better Auth) — claude.ai connects
-- [ ] Auth UI (sign up / sign in), remove DEV_ALLOW_ANON path from prod builds
-- [~] Dashboard: project **list** done (`/` in the editor — agent-created
-      projects were otherwise invisible, since the id only appears in a tool
-      response); create/delete and the credits page still to do
-- [ ] Deploy: workers, D1, R2, Containers; production secrets
-
-## Phase 4: Agent sight → plans/007-agent-sight.md
+## Phase 3: Agent sight → plans/007-agent-sight.md
 Direction decided 2026-08-15 after the third milestone run: **the agent
 cannot see what it makes.** Every quality finding across all three runs came
 from a shell — `shot.ts`, `ffmpeg`, an untracked one-off script — and Phase 3
@@ -66,7 +58,7 @@ Preview frames are only trustworthy because of the purity invariant: a
 preview frame is not an approximation of the export, it *is* the export.
 Building an independent capture path would trade that away.
 
-## Phase 5: General video → plans/003-general-video.md
+## Phase 4: General video → plans/003-general-video.md
 Reinstated as the product direction 2026-08-15. It was briefly superseded by
 the animation-depth plan; the third run showed the binding constraint is not
 the visual vocabulary but verification, which is platform work rather than
@@ -110,3 +102,24 @@ check its own output.
 - [x] Matched-glyph LaTeX morphing (upgrade inside texMorph seam)
 - [ ] Graphs/axes/function-plot primitives
 - [ ] Code-block primitive with line-highlight animations
+
+## Phase 5: Real users — launch, and deliberately last
+Moved to the end 2026-08-15. Auth, billing UI and a production deploy are
+the work that only pays off once there is something worth signing up for,
+and every hour spent on them is an hour not spent on the thing being sold.
+Everything above is buildable against `DEV_ALLOW_ANON` and the internal
+service key.
+
+One consequence worth naming: plans/007 argues for agent sight partly
+*because* this phase connects claude.ai over MCP OAuth, and that agent has
+no shell. Deferring OAuth does not weaken the case — it means the shell-less
+client arrives later, but the underlying problem is that looking at output
+currently costs a 3-minute render and ~61 credits, which is true for an
+agent holding a terminal too.
+
+- [ ] MCP OAuth (workers-oauth-provider + Better Auth) — claude.ai connects
+- [ ] Auth UI (sign up / sign in), remove DEV_ALLOW_ANON path from prod builds
+- [~] Dashboard: project **list** done (`/` in the editor — agent-created
+      projects were otherwise invisible, since the id only appears in a tool
+      response); create/delete and the credits page still to do
+- [ ] Deploy: workers, D1, R2, Containers; production secrets

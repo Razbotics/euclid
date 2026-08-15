@@ -114,7 +114,7 @@ every run** — re-run and re-paste after restarting.
 | `shot.ts <t...>` | pixel-accurate frames of the demo doc through the export surface |
 | `shot-project.ts <projectId> <t...>` | the same, for a **real project** at global seconds — how every milestone run has actually found its visual bugs (`OUT_DIR=` to choose where; needs `dev:api` + `dev:web`). Superseded once `preview_frames` lands (plans/007) |
 | `check-mcp-tools.ts` | MCP surface driven as a real client does: `animate` arg coercion, tool registration (free; needs `dev:api` + `dev:mcp`) |
-| `check-decisions.ts` | agent → human → agent question loop: asked over MCP, arrives live in the editor, answered by click (free; needs all three servers) |
+| `check-decisions.ts` | agent → human → agent question loop, driven headless as a shell-less client would (free; needs `dev:api` + `dev:mcp`) |
 | `check-assets.ts` | asset upload → download is byte-identical; tenancy enforced (needs `dev:api`) |
 | `check-narration.ts [--refund]` | TTS generation end-to-end: pricing, debit, op reaches the doc, overflow warning (**spends credits**; `--refund` needs a broken key, costs nothing) |
 | `check-app.ts` | project list renders and opens a project; demo editor loads; zero console/page errors |
