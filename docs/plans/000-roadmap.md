@@ -91,8 +91,22 @@ agent holding a terminal too.
 - [ ] Auth UI (sign up / sign in), remove DEV_ALLOW_ANON path from prod builds
 - [~] Dashboard: project **list** done (`/` in the editor — agent-created
       projects were otherwise invisible, since the id only appears in a tool
-      response); create/delete and the credits page still to do
+      response). **Delete** done 2026-08-15 (`DELETE /api/projects/:id` with a
+      full cascade — R2 bytes, rows, and the DO's document — plus a
+      `delete_project` capability behind `confirm: true`); a create/delete
+      **UI** and the credits page are still to do
 - [ ] Deploy: workers, D1, R2, Containers; production secrets
+
+## Parallel track: agent gateway → plans/008-mcp-gateway.md
+Started 2026-08-15. Collapses the agent surface onto one implementation: a
+capability catalog in the API worker behind three fixed MCP tools, so a new
+verb costs one catalog entry instead of an endpoint plus a hand-written tool
+plus a docs row — and a tool edit no longer needs a client restart.
+- [x] Capability catalog in the API worker (25 entries) + shared services
+- [x] Gateway endpoints: instructions / describe / execute (+ paid executor)
+- [x] `apps/mcp` rewritten onto it: 807 lines → 295, five fixed tools
+      (`instructions`, `describe`, `execute`, `execute_paid`, `ask_user`)
+- [ ] Re-run the milestone over the gateway — the feasibility gate
 
 ## Parallel track: agent asks the human → plans/005-agent-questions.md
 - [x] `ask_user` / `get_answer` / `record_answer`; questions ride the project

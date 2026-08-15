@@ -16,6 +16,9 @@ importers:
       '@euclid/dsl':
         specifier: workspace:*
         version: link:../../packages/dsl
+      '@euclid/engine':
+        specifier: workspace:*
+        version: link:../../packages/engine
       better-auth:
         specifier: ^1.1.14
         version: 1.6.27(@cloudflare/workers-types@4.20260702.1)(@opentelemetry/api@1.9.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -31,6 +34,9 @@ importers:
       stripe:
         specifier: ^17.5.0
         version: 17.7.0
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250801.0
@@ -47,9 +53,6 @@ importers:
       '@euclid/dsl':
         specifier: workspace:*
         version: link:../../packages/dsl
-      '@euclid/engine':
-        specifier: workspace:*
-        version: link:../../packages/engine
       '@modelcontextprotocol/sdk':
         specifier: ^1.12.0
         version: 1.30.0(zod@3.25.76)

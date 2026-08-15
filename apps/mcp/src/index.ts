@@ -1,26 +1,7 @@
 import { McpAgent } from 'agents/mcp'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
-import {
-  buildAssetTree,
-  formatDecision,
-  formatQuestionForChat,
-  newId,
-  op,
-  outlineDoc,
-  findNode,
-  type AssetFolder,
-  type AssetRecord,
-  type Easing,
-  type Decision,
-  type EuclidDoc,
-  type EuclidNode,
-  type Op,
-  type Track,
-  type Transition,
-  type Vec2,
-} from '@euclid/dsl'
-import { resolveNode } from '@euclid/engine'
+import { formatDecision, formatQuestionForChat, type Decision } from '@euclid/dsl'
 
 interface Env {
   MCP_OBJECT: DurableObjectNamespace
@@ -31,37 +12,27 @@ interface Env {
 /** Set by the OAuth layer once wired; dev fallback below. */
 type Props = { userId?: string }
 
-const EASING = z.enum(['linear', 'easeIn', 'easeOut', 'easeInOut', 'smooth']).default('smooth')
-const COLOR = z.string().regex(/^#[0-9a-fA-F]{6}$/)
-
-/**
- * A number, or a string that is unambiguously one.
- *
- * Union-typed params become `anyOf` in the tool's JSON Schema, and at least one
- * real MCP client (Claude Code) sends their values as strings — `1.12` arrives
- * as `"1.12"` and fails a plain `z.number()`. Plain numeric params are
- * unaffected, so this is needed only inside a union.
- *
- * Deliberately a regex rather than `z.coerce.number()`: coercion accepts `""`,
- * `true`, `null` and `[]` as 0 or 1, which would animate to a silently wrong
- * value instead of reporting a bad argument.
- */
 /** How long to wait for a client to collect an answer before falling back. */
 const ELICIT_TIMEOUT_MS = 30_000
 
-const NUMBERISH = z.union([
-  z.number(),
-  z.string().regex(/^-?(\d+\.?\d*|\.\d+)$/).transform(Number),
-])
-
 /**
- * The agent-facing sugar layer. Tools speak in intents (animate, morph_latex,
- * write_on); everything compiles down to DSL ops submitted to the project's
- * Durable Object through the API worker. Iterating here is free — credits are
- * only spent by render_video / TTS.
+ * A generic gateway, not a tool surface.
+ *
+ * Every editing capability lives in the API worker's catalog
+ * (apps/api/src/agent/) and is reached through `execute`. This worker only
+ * knows how to relay — which is the point: an MCP client caches `tools/list`
+ * when the session starts, so a surface that names each capability needs a
+ * client restart every time one changes. This one never changes, and a catalog
+ * edit is live on the next call in the same session.
+ *
+ * Two things stay native. `ask_user` is a protocol act — the server asks the
+ * *client* to open a picker — and its fallback controls what the agent says
+ * next; neither survives being turned into a request/response call. And paid
+ * work gets its own tool, because MCP permissions are per-tool: with a single
+ * executor, "always allow" would quietly cover renders.
  */
 export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
-  server = new McpServer({ name: 'euclid', version: '0.1.0' })
+  server = new McpServer({ name: 'euclid', version: '0.2.0' })
 
   private get userId(): string {
     return this.props?.userId ?? 'dev-user'
@@ -79,34 +50,17 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
     })
   }
 
-  private async getDoc(projectId: string): Promise<{ doc: EuclidDoc; version: number }> {
-    const res = await this.api(`/api/projects/${projectId}/doc`)
-    if (!res.ok) throw new Error(`get doc failed (${res.status}): ${await res.text()}`)
-    return (await res.json()) as { doc: EuclidDoc; version: number }
-  }
-
-  /** Submit ops with fetch-version → apply → retry-on-409 rebase (3 attempts). */
-  private async submit(projectId: string, ops: Op[]): Promise<{ version: number; doc: EuclidDoc }> {
-    let lastError = ''
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const { version } = await this.getDoc(projectId)
-      const res = await this.api(`/api/projects/${projectId}/ops`, {
-        method: 'POST',
-        body: JSON.stringify({
-          id: crypto.randomUUID(),
-          baseVersion: version,
-          actor: { type: 'agent', id: this.userId },
-          ops,
-        }),
-      })
-      if (res.ok) {
-        const { doc } = await this.getDoc(projectId)
-        return { version: ((await res.json()) as { version: number }).version, doc }
-      }
-      lastError = await res.text()
-      if (res.status !== 409) break
-    }
-    throw new Error(`ops rejected: ${lastError}`)
+  /**
+   * Relay a gateway response verbatim.
+   *
+   * A failure body is already written for the agent — it names the argument to
+   * fix or the capability to call next — so it is passed through untouched
+   * rather than wrapped in a status code the agent cannot act on.
+   */
+  private async relay(res: Response): Promise<{ content: { type: 'text'; text: string }[] }> {
+    const body = await res.text()
+    if (!res.ok) throw new Error(body)
+    return { content: [{ type: 'text' as const, text: body }] }
   }
 
   /**
@@ -124,40 +78,40 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
   private async elicit(projectId: string, decision: Decision): Promise<string | null> {
     if (!this.server.server.getClientCapabilities()?.elicitation) return null
     try {
-      const result = await this.server.server.elicitInput({
-        mode: 'form',
-        message: formatQuestionForChat(decision),
-        requestedSchema: {
-          type: 'object',
-          properties: {
-            choice: {
-              type: 'string',
-              title: 'Choice',
-              description: decision.question,
-              enum: decision.options.map((o) => o.id),
-              enumNames: decision.options.map((o) => o.label),
+      const result = await this.server.server.elicitInput(
+        {
+          mode: 'form',
+          message: formatQuestionForChat(decision),
+          requestedSchema: {
+            type: 'object',
+            properties: {
+              choice: {
+                type: 'string',
+                title: 'Choice',
+                description: decision.question,
+                enum: decision.options.map((o) => o.id),
+                enumNames: decision.options.map((o) => o.label),
+              },
+              note: {
+                type: 'string',
+                title: 'Or in your own words',
+                description: 'optional — overrides the choice above',
+              },
             },
-            note: {
-              type: 'string',
-              title: 'Or in your own words',
-              description: 'optional — overrides the choice above',
-            },
+            required: ['choice'],
           },
-          required: ['choice'],
         },
-      },
-      // Bounded on purpose. A client can advertise the capability and still
-      // never deliver the request — observed with a Streamable-HTTP client
-      // that wasn't reading the stream server-initiated requests arrive on.
-      // Without a cap, every question would stall for the default timeout
-      // before falling back. Long enough for a human to pick from a short
-      // list; short enough that a silent client costs seconds, not minutes.
-      { timeout: ELICIT_TIMEOUT_MS },
+        // Bounded on purpose. A client can advertise the capability and still
+        // never deliver the request — observed with a Streamable-HTTP client
+        // that wasn't reading the stream server-initiated requests arrive on.
+        // Without a cap, every question would stall for the default timeout
+        // before falling back.
+        { timeout: ELICIT_TIMEOUT_MS },
       )
 
       if (result.action !== 'accept') {
         // Declined or dismissed is not an answer; leave the question open so
-        // the editor still shows it and the agent still knows it is blocked.
+        // the agent still knows it is blocked.
         return (
           `The human ${result.action === 'decline' ? 'declined' : 'dismissed'} the question ` +
           `(${decision.id}). It is still open. Ask them in your reply instead:\n\n` +
@@ -183,445 +137,91 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
     }
   }
 
-  private findNodeOrThrow(doc: EuclidDoc, sceneId: string, nodeId: string): EuclidNode {
-    const scene = doc.scenes.find((s) => s.id === sceneId)
-    if (!scene) throw new Error(`scene ${sceneId} not found`)
-    const hit = findNode(scene.nodes, nodeId)
-    if (!hit) throw new Error(`node ${nodeId} not found in scene ${sceneId}`)
-    return hit.node
-  }
-
   async init(): Promise<void> {
-    const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] })
-    const baseNode = (position: Vec2) => ({
-      position,
-      scale: 1,
-      rotation: 0,
-      opacity: 1,
-      tracks: [] as Track[],
-      transitions: [] as Transition[],
-    })
-
-    this.server.tool('list_projects', 'List your Euclid video projects.', {}, async () => {
-      const res = await this.api('/api/projects')
-      return text(await res.text())
-    })
-
     this.server.tool(
-      'create_project',
-      'Create a new video project (1920x1080 @ 60fps by default).',
-      { name: z.string().min(1) },
-      async ({ name }) => {
-        const res = await this.api('/api/projects', { method: 'POST', body: JSON.stringify({ name }) })
-        return text(await res.text())
-      },
+      'instructions',
+      'READ THIS FIRST in every new thread, before any other Euclid tool. Returns how this ' +
+        'surface works, how a video project is put together, and the full list of capabilities ' +
+        'with a one-line summary each. Free, and cheap enough to call whenever you are unsure. ' +
+        'Most capabilities are callable straight from their summary; the list is the map for ' +
+        'everything else.',
+      {},
+      async () => this.relay(await this.api('/api/agent/tools')),
     )
 
     this.server.tool(
-      'get_project',
-      'Compact outline of a project: scenes, timings, nodes, animations. Cheap — call freely while iterating.',
-      { projectId: z.string() },
-      async ({ projectId }) => text(outlineDoc((await this.getDoc(projectId)).doc)),
-    )
-
-    this.server.tool(
-      'get_scene',
-      'Full JSON of one scene, for detailed inspection.',
-      { projectId: z.string(), sceneId: z.string() },
-      async ({ projectId, sceneId }) => {
-        const { doc } = await this.getDoc(projectId)
-        const scene = doc.scenes.find((s) => s.id === sceneId)
-        if (!scene) throw new Error(`scene ${sceneId} not found`)
-        return text(JSON.stringify(scene, null, 2))
-      },
-    )
-
-    this.server.tool(
-      'add_scene',
-      'Append a scene. Coordinates are canvas pixels, origin top-left; scene time starts at 0.',
+      'describe',
+      'Full arguments and behaviour for named capabilities (batch — pass several at once). ' +
+        'Free. Call it when a summary from `instructions` is not enough, or when `execute` ' +
+        'rejects your arguments. The behaviour notes matter: several capabilities succeed in ' +
+        'ways that change nothing on screen, and this is where that is written down.',
       {
-        projectId: z.string(),
-        name: z.string(),
-        duration: z.number().positive().describe('seconds'),
-        background: COLOR.default('#101418'),
+        names: z
+          .array(z.string())
+          .min(1)
+          .describe('capability names, e.g. ["animate","morph_latex"]'),
       },
-      async ({ projectId, name, duration, background }) => {
-        const id = newId('sc')
-        await this.submit(projectId, [
-          op.addScene({ id, name, duration, background, nodes: [] }),
-        ])
-        return text(`created scene ${id}`)
-      },
-    )
-
-    this.server.tool(
-      'update_scene',
-      'Change a scene\'s name, duration, or background. Extending duration is the usual fix when generate_narration reports that speech overruns the scene.',
-      {
-        projectId: z.string(),
-        sceneId: z.string(),
-        name: z.string().optional(),
-        duration: z.number().positive().optional().describe('seconds'),
-        background: COLOR.optional(),
-      },
-      async ({ projectId, sceneId, name, duration, background }) => {
-        const patch = Object.fromEntries(
-          Object.entries({ name, duration, background }).filter(([, v]) => v !== undefined),
-        )
-        if (Object.keys(patch).length === 0) throw new Error('nothing to update')
-        await this.submit(projectId, [op.updateScene(sceneId, patch)])
-        return text(`updated scene ${sceneId}: ${JSON.stringify(patch)}`)
-      },
-    )
-
-    this.server.tool(
-      'add_latex',
-      'Add a LaTeX equation node (rendered like 3b1b math). Anchored at its center.',
-      {
-        projectId: z.string(),
-        sceneId: z.string(),
-        tex: z.string().min(1),
-        x: z.number(),
-        y: z.number(),
-        fontSize: z.number().positive().default(64),
-        color: COLOR.default('#ffffff'),
-      },
-      async ({ projectId, sceneId, tex, x, y, fontSize, color }) => {
-        const id = newId('eq')
-        await this.submit(projectId, [
-          op.addNode(sceneId, { ...baseNode({ x, y }), id, type: 'latex', tex, color, fontSize }),
-        ])
-        return text(`created latex node ${id}`)
-      },
-    )
-
-    this.server.tool(
-      'add_text',
-      'Add a text node, anchored at its center.',
-      {
-        projectId: z.string(),
-        sceneId: z.string(),
-        textContent: z.string(),
-        x: z.number(),
-        y: z.number(),
-        fontSize: z.number().positive().default(48),
-        fill: COLOR.default('#ffffff'),
-        fontFamily: z.string().default('Georgia, serif'),
-      },
-      async ({ projectId, sceneId, textContent, x, y, fontSize, fill, fontFamily }) => {
-        const id = newId('txt')
-        await this.submit(projectId, [
-          op.addNode(sceneId, {
-            ...baseNode({ x, y }),
-            id,
-            type: 'text',
-            text: textContent,
-            fontSize,
-            fill,
-            fontFamily,
+      async ({ names }) =>
+        this.relay(
+          await this.api('/api/agent/tools/describe', {
+            method: 'POST',
+            body: JSON.stringify({ names }),
           }),
-        ])
-        return text(`created text node ${id}`)
-      },
+        ),
     )
 
     this.server.tool(
-      'add_shape',
-      'Add a rect, circle or line. Rect/circle are anchored at their center; line points are relative to position.',
+      'execute',
+      'Run one Euclid capability. `name` comes from `instructions`; `args` is a plain object ' +
+        'matching that capability\'s arguments. Every FREE capability runs here — creating ' +
+        'projects and scenes, adding and editing nodes, animating, narration text, captions, ' +
+        'assets, reading the document. Iterate as much as you like; none of it costs credits. ' +
+        'Capabilities that spend credits refuse this tool and must go through `execute_paid`.',
       {
-        projectId: z.string(),
-        sceneId: z.string(),
-        shape: z.enum(['rect', 'circle', 'line']),
-        x: z.number(),
-        y: z.number(),
-        width: z.number().positive().optional(),
-        height: z.number().positive().optional(),
-        radius: z.number().positive().optional(),
-        x2: z.number().optional().describe('line end x, relative to position'),
-        y2: z.number().optional().describe('line end y, relative to position'),
-        fill: COLOR.default('#58c4dd'),
-        stroke: COLOR.optional(),
-        strokeWidth: z.number().min(0).default(4),
+        name: z.string().describe('capability name from instructions, e.g. "add_latex"'),
+        args: z.record(z.any()).default({}).describe("the capability's arguments as an object"),
       },
-      async ({ projectId, sceneId, shape, x, y, width, height, radius, x2, y2, fill, stroke, strokeWidth }) => {
-        const id = newId(shape)
-        let node: EuclidNode
-        if (shape === 'rect') {
-          node = {
-            ...baseNode({ x, y }),
-            id,
-            type: 'rect',
-            width: width ?? 200,
-            height: height ?? 120,
-            fill,
-            cornerRadius: 0,
-            stroke,
-            strokeWidth,
-          }
-        } else if (shape === 'circle') {
-          node = { ...baseNode({ x, y }), id, type: 'circle', radius: radius ?? 80, fill, stroke, strokeWidth }
-        } else {
-          node = {
-            ...baseNode({ x, y }),
-            id,
-            type: 'line',
-            from: { x: 0, y: 0 },
-            to: { x: x2 ?? 100, y: y2 ?? 0 },
-            stroke: stroke ?? fill,
-            strokeWidth: Math.max(1, strokeWidth),
-          }
-        }
-        await this.submit(projectId, [op.addNode(sceneId, node)])
-        return text(`created ${shape} node ${id}`)
-      },
+      async ({ name, args }) =>
+        this.relay(
+          await this.api(`/api/agent/tools/${encodeURIComponent(name)}/execute`, {
+            method: 'POST',
+            body: JSON.stringify(args ?? {}),
+          }),
+        ),
     )
 
     this.server.tool(
-      'update_node',
-      'Shallow-patch node properties. id/type are immutable, and a property the node does not have is rejected rather than ignored. Position is {"position":{"x":…,"y":…}} — not the top-level x/y that add_text/add_latex take. Patching a property that an animation already keyframes changes the base value but not what renders: the track wins. Use animate for those, or remove the track first.',
-      { projectId: z.string(), sceneId: z.string(), nodeId: z.string(), patch: z.record(z.any()) },
-      async ({ projectId, sceneId, nodeId, patch }) => {
-        // Warn before the write, so the message is about the node as the
-        // caller found it.
-        const { doc } = await this.getDoc(projectId)
-        const node = this.findNodeOrThrow(doc, sceneId, nodeId)
-        const shadowed = Object.keys(patch).filter((k) =>
-          node.tracks.some((t) => t.property === k),
-        )
-
-        await this.submit(projectId, [op.updateNode(sceneId, nodeId, patch)])
-        if (shadowed.length === 0) return text(`updated ${nodeId}`)
-        // The document really did change — which is why this is easy to miss:
-        // get_scene confirms the new value while the render ignores it.
-        return text(
-          `updated ${nodeId}, but ${shadowed.join(', ')} ${shadowed.length > 1 ? 'are' : 'is'} ` +
-            `animated on this node, so the keyframes override the value you just set and ` +
-            `nothing will look different. get_scene will show your value; the render will ` +
-            `not use it. Animate ${shadowed.join('/')} instead, or clear the track first.`,
-        )
-      },
-    )
-
-    this.server.tool(
-      'remove_node',
-      'Delete a node from a scene.',
-      { projectId: z.string(), sceneId: z.string(), nodeId: z.string() },
-      async ({ projectId, sceneId, nodeId }) => {
-        await this.submit(projectId, [op.removeNode(sceneId, nodeId)])
-        return text(`removed ${nodeId}`)
-      },
-    )
-
-    this.server.tool(
-      'animate',
-      'Animate one property from its current value (sampled at `start`) to `to`, over `duration` seconds. Properties: position {x,y}, scale/rotation/opacity/width/height/radius/fontSize/strokeWidth (number), fill/stroke/color (#rrggbb). Existing keyframes after `start` on that property are replaced.',
+      'execute_paid',
+      'Run one Euclid capability that SPENDS CREDITS — today `generate_narration` (speech ' +
+        'synthesis, priced by script length) and `render_video` (priced per second of video). ' +
+        'Separate from `execute` on purpose, so that allowing free edits never silently allows ' +
+        'a charge. Everything else is free and belongs in `execute`, which this tool refuses. ' +
+        'Get the script right with the free capabilities before spending anything here.',
       {
-        projectId: z.string(),
-        sceneId: z.string(),
-        nodeId: z.string(),
-        property: z.enum([
-          'position', 'scale', 'rotation', 'opacity', 'fill', 'stroke', 'color',
-          'width', 'height', 'radius', 'fontSize', 'strokeWidth',
-        ]),
-        // NUMBERISH first: a colour like "#ff0000" fails it and falls through
-        // to COLOR, while "1.12" is accepted where a bare z.number() would not.
-        to: z.union([NUMBERISH, z.object({ x: NUMBERISH, y: NUMBERISH }), COLOR]),
-        start: z.number().min(0).describe('scene-local seconds'),
-        duration: z.number().positive(),
-        easing: EASING,
+        name: z.string().describe('a credit-spending capability, e.g. "render_video"'),
+        args: z.record(z.any()).default({}).describe("the capability's arguments as an object"),
       },
-      async ({ projectId, sceneId, nodeId, property, to, start, duration, easing }) => {
-        const { doc } = await this.getDoc(projectId)
-        const node = this.findNodeOrThrow(doc, sceneId, nodeId)
-        const current = resolveNode(node, start).props[property]
-        if (current === undefined) {
-          throw new Error(`property ${property} does not exist on ${node.type} node ${nodeId}`)
-        }
-        const existing = node.tracks.find((t) => t.property === property)
-        const keep = existing ? existing.keyframes.filter((k) => k.t < start) : []
-        const track: Track = {
-          property,
-          keyframes: [
-            ...keep,
-            { t: start, value: current, easing: 'linear' },
-            { t: start + duration, value: to, easing: easing as Easing },
-          ],
-        }
-        await this.submit(projectId, [op.setTrack(sceneId, nodeId, track)])
-        return text(`animating ${nodeId}.${property} → ${JSON.stringify(to)} over [${start}s, ${start + duration}s]`)
-      },
-    )
-
-    this.server.tool(
-      'morph_latex',
-      'Morph a latex node to a new equation (the signature 3b1b move). Sequential morphs on one node chain in start-time order; a call whose window overlaps an existing morph replaces it, so re-calling revises rather than stacks. Shared glyphs move and only new or removed ones fade, so additive changes read cleanly — a change that re-lays-out the equation, like collapsing into a fraction, is briefly illegible mid-morph, so prefer several small morphs over one structural leap.',
-      {
-        projectId: z.string(),
-        sceneId: z.string(),
-        nodeId: z.string(),
-        toTex: z.string().min(1),
-        start: z.number().min(0),
-        duration: z.number().positive().default(1),
-        easing: EASING,
-      },
-      async ({ projectId, sceneId, nodeId, toTex, start, duration, easing }) => {
-        const { doc } = await this.getDoc(projectId)
-        const node = this.findNodeOrThrow(doc, sceneId, nodeId)
-        if (node.type !== 'latex') throw new Error(`${nodeId} is a ${node.type}, not latex`)
-        // Morphs chain, so sequential ones accumulate — but a morph
-        // overlapping the new window is *replaced*, matching `highlight`, so
-        // re-calling to adjust one revises it instead of stacking a second
-        // morph on top. Two morphs overlapping in time are ambiguous anyway:
-        // the later one's source would be a half-finished equation.
-        const replaced = node.transitions.filter(
-          (t) =>
-            t.type === 'texMorph' &&
-            t.start < start + duration &&
-            start < t.start + t.duration,
-        ).length
-        const transitions: Transition[] = [
-          ...node.transitions.filter(
-            (t) =>
-              t.type !== 'texMorph' ||
-              t.start + t.duration <= start ||
-              start + duration <= t.start,
-          ),
-          { type: 'texMorph', start, duration, toTex, easing: easing as Easing },
-        ]
-        await this.submit(projectId, [op.updateNode(sceneId, nodeId, { transitions })])
-        return text(
-          `morphing ${nodeId} → "${toTex}" over [${start}s, ${start + duration}s]` +
-            (replaced ? ` (replaced ${replaced} overlapping morph${replaced > 1 ? 's' : ''})` : ''),
-        )
-      },
-    )
-
-    this.server.tool(
-      'write_on',
-      'Draw-on reveal (left to right), like writing an equation by hand. Node is invisible before `start`.',
-      {
-        projectId: z.string(),
-        sceneId: z.string(),
-        nodeId: z.string(),
-        start: z.number().min(0),
-        duration: z.number().positive().default(1.5),
-      },
-      async ({ projectId, sceneId, nodeId, start, duration }) => {
-        const { doc } = await this.getDoc(projectId)
-        const node = this.findNodeOrThrow(doc, sceneId, nodeId)
-        const transitions: Transition[] = [
-          ...node.transitions.filter((t) => t.type !== 'write'),
-          { type: 'write', start, duration },
-        ]
-        await this.submit(projectId, [op.updateNode(sceneId, nodeId, { transitions })])
-        return text(`write-on ${nodeId} over [${start}s, ${start + duration}s]`)
-      },
-    )
-
-    this.server.tool(
-      'highlight',
-      'Draw attention to a node, or to one term inside an equation, for a stretch of time. Free. Give `tex` to mark a sub-expression — e.g. tex="\\\\frac{b}{a}" marks just that term, located by its glyphs, so you never need screen coordinates. Styles: `color` recolours the term (default, usually the cleanest), `spotlight` dims everything else and reads strongest on a busy equation, `box` and `underline` draw a marker around it. `color`/`spotlight` need `tex` on a latex node and fall back to a box otherwise. Use it when the narration dwells on something and nothing else is moving. Sequential highlights on one node accumulate; a call whose window overlaps an existing highlight replaces it, and one highlight renders at a time.',
-      {
-        projectId: z.string(),
-        sceneId: z.string(),
-        nodeId: z.string(),
-        start: z.number().min(0).describe('scene-local seconds'),
-        duration: z.number().positive(),
-        tex: z.string().optional().describe('sub-expression to mark; whole node if omitted'),
-        style: z.enum(['box', 'underline', 'color', 'spotlight']).default('color'),
-        color: COLOR.default('#e8c74a'),
-      },
-      async ({ projectId, sceneId, nodeId, start, duration, tex, style, color }) => {
-        const { doc } = await this.getDoc(projectId)
-        const node = this.findNodeOrThrow(doc, sceneId, nodeId)
-        if (tex && node.type !== 'latex') {
-          throw new Error(`tex targeting only works on latex nodes; ${nodeId} is a ${node.type}`)
-        }
-        // Sequential highlights accumulate; only a highlight overlapping the
-        // new window is replaced, so re-calling to adjust one still works.
-        // The engine renders one highlight at a time, so overlap-replace is
-        // also what keeps the document renderable as authored.
-        const transitions: Transition[] = [
-          ...node.transitions.filter(
-            (t) =>
-              t.type !== 'highlight' ||
-              t.start + t.duration <= start ||
-              start + duration <= t.start,
-          ),
-          { type: 'highlight', start, duration, tex, style, color },
-        ]
-        await this.submit(projectId, [op.updateNode(sceneId, nodeId, { transitions })])
-        return text(
-          `highlighting ${tex ? `"${tex}" in ` : ''}${nodeId} over [${start}s, ${start + duration}s] (${style})`,
-        )
-      },
-    )
-
-    this.server.tool(
-      'set_narration',
-      'Set the narration script for a scene. Free — writes text only. Call generate_narration afterwards to synthesize the audio.',
-      { projectId: z.string(), sceneId: z.string(), narrationText: z.string(), voiceId: z.string().optional() },
-      async ({ projectId, sceneId, narrationText, voiceId }) => {
-        await this.submit(projectId, [
-          op.setNarration(sceneId, { text: narrationText, voiceId }),
-        ])
-        return text(`narration set for ${sceneId} (${narrationText.split(/\s+/).length} words)`)
-      },
-    )
-
-    this.server.tool(
-      'generate_narration',
-      'Synthesize a scene\'s narration to speech. COSTS CREDITS (priced by script length). Stores the audio and writes word-level timings into the document, which makes captions exact and gives you real timings to animate against. Warns if the speech is longer than the scene.',
-      {
-        projectId: z.string(),
-        sceneId: z.string(),
-        text: z.string().optional().describe('overrides the scene\'s existing narration text'),
-        voiceId: z.string().optional(),
-      },
-      async ({ projectId, sceneId, text: override, voiceId }) => {
-        const res = await this.api(
-          `/api/projects/${projectId}/scenes/${sceneId}/narration/generate`,
-          { method: 'POST', body: JSON.stringify({ text: override, voiceId }) },
-        )
-        return text(await res.text())
-      },
-    )
-
-    this.server.tool(
-      'fit_scene_to_narration',
-      'Set a scene\'s duration from its generated speech plus a held tail. Free. Use it to close dead air (get_project flags a long tail) or to make room when speech overruns. The tail is deliberate breathing room — pass more for a beat you want to land, less to keep things tight.',
-      {
-        projectId: z.string(),
-        sceneId: z.string(),
-        tailSec: z
-          .number()
-          .min(0)
-          .max(10)
-          .default(0.8)
-          .describe('silence held after the last word'),
-      },
-      async ({ projectId, sceneId, tailSec }) => {
-        const { doc } = await this.getDoc(projectId)
-        const scene = doc.scenes.find((s) => s.id === sceneId)
-        if (!scene) throw new Error(`scene ${sceneId} not found`)
-        const audio = scene.narration?.audio
-        if (!audio) {
-          throw new Error(
-            `scene ${sceneId} has no generated narration — call generate_narration first`,
-          )
-        }
-        const duration = Math.round((audio.durationSec + tailSec) * 100) / 100
-        await this.submit(projectId, [op.updateScene(sceneId, { duration })])
-        return text(
-          `scene ${sceneId}: ${scene.duration}s → ${duration}s ` +
-            `(${audio.durationSec.toFixed(2)}s speech + ${tailSec}s tail)`,
-        )
-      },
+      async ({ name, args }) =>
+        this.relay(
+          await this.api(`/api/agent/tools/${encodeURIComponent(name)}/execute?paid=1`, {
+            method: 'POST',
+            body: JSON.stringify(args ?? {}),
+          }),
+        ),
     )
 
     this.server.tool(
       'ask_user',
-      'Put a choice to the human IN CHAT and wait for their reply. Free. Use when a decision is genuinely theirs — pacing, style, how to resolve a narration overrun, whether a scene change needs explaining — not for things you can determine yourself. This is blocking by intention. If your client supports MCP elicitation you will be shown the answer directly; otherwise it returns a ready-to-paste block — put it in your very next reply and stop. Do not keep building against a guess, and do not defer the question to a summary at the end — an unanswered question that you worked around was not a question. Chat is the surface that always exists — the system may run headless with no editor open, so never wait on a browser. When they reply, close the question with record_answer.',
+      'Put a choice to the human IN CHAT and wait for their reply. Free. Use when a decision is ' +
+        'genuinely theirs — pacing, style, how to resolve a narration overrun, whether a scene ' +
+        'change needs explaining — not for things you can determine yourself. This is blocking ' +
+        'by intention. If your client supports MCP elicitation you will be shown the answer ' +
+        'directly; otherwise it returns a ready-to-paste block — put it in your very next reply ' +
+        'and stop. Do not keep building against a guess, and do not defer the question to a ' +
+        'summary at the end — an unanswered question that you worked around was not a question. ' +
+        'Chat is the surface that always exists — the system may run headless with no editor ' +
+        'open, so never wait on a browser. When they reply, close the question with ' +
+        'execute(name="record_answer").',
       {
         projectId: z.string(),
         question: z.string().min(1).describe('one clear question'),
@@ -647,12 +247,12 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
         })
         if (!res.ok) throw new Error(`ask_user failed (${res.status}): ${await res.text()}`)
         const { decision } = (await res.json()) as { decision: Decision }
+
         // Preferred path: have the client collect the answer itself, so the
         // human gets their own native picker and the answer travels
-        // client → server with the agent never in the middle. Clients that
-        // don't advertise the capability fall through to the block below.
+        // client → server with the agent never in the middle.
         const elicited = await this.elicit(projectId, decision)
-        if (elicited) return text(elicited)
+        if (elicited) return { content: [{ type: 'text' as const, text: elicited }] }
 
         // Fallback. The return value is the strongest prompt surface there is
         // — the agent reads it the instant it lands. A receipt ("asked (id)")
@@ -660,139 +260,27 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
         // wording exists because a real run asked a good question, scheduled a
         // wakeup, built the rest of the video against its own guess, and only
         // mentioned the unanswered question in its closing summary.
-        return text(
-          `STOP — WAITING ON THE HUMAN (${decision.id})\n` +
-            `Paste the block below into your NEXT reply, then stop and wait. Do not ` +
-            `continue building, do not pick a default, and do not save it for a ` +
-            `summary later.\n\n` +
-            `────────────────────────────\n` +
-            `${formatQuestionForChat(decision)}\n` +
-            `────────────────────────────\n\n` +
-            `When they reply to you, call record_answer with optionId ${decision.options
-              .map((o, i) => `${i + 1}→${o.id}`)
-              .join(' ')} (or note=<their words>). Nothing else closes this question and ` +
-            `nothing will remind you: continuing without an answer means you ` +
-            `decided it yourself.`,
-        )
-      },
-    )
-
-    this.server.tool(
-      'record_answer',
-      "Record the answer the human gave you in conversation, closing the question ask_user opened. Free. Only for what they actually said — never guess on their behalf, and if they have not answered, keep waiting rather than choosing for them.",
-      {
-        projectId: z.string(),
-        decisionId: z.string(),
-        optionId: z.string().optional().describe('the id of the option they chose'),
-        note: z.string().optional().describe('their answer verbatim, if they did not pick an option'),
-      },
-      async ({ projectId, decisionId, optionId, note }) => {
-        const res = await this.api(
-          `/api/projects/${projectId}/decisions/${decisionId}/answer`,
-          { method: 'POST', body: JSON.stringify({ optionId, note, via: 'agent' }) },
-        )
-        if (!res.ok) throw new Error(`record_answer failed (${res.status}): ${await res.text()}`)
-        const { decision } = (await res.json()) as { decision: Decision }
-        return text(formatDecision(decision))
-      },
-    )
-
-    this.server.tool(
-      'list_assets',
-      "The project's files as a tree — narration audio today, footage and images later. Free. Paths are virtual (folders are derived), so `move_asset` renames by writing a new path. Marks which files the document depends on: those are the ones remove_asset refuses to delete.",
-      { projectId: z.string() },
-      async ({ projectId }) => {
-        const res = await this.api(`/api/projects/${projectId}/assets`)
-        if (!res.ok) throw new Error(await res.text())
-        const { assets } = (await res.json()) as { assets: (AssetRecord & { usedBy: boolean })[] }
-        if (assets.length === 0) return text('no assets in this project')
-
-        const used = new Map(assets.map((a) => [a.id, a.usedBy]))
-        const lines: string[] = []
-        const walk = (folder: AssetFolder, depth: number) => {
-          const pad = '  '.repeat(depth)
-          for (const f of folder.folders) {
-            lines.push(`${pad}${f.name}/`)
-            walk(f, depth + 1)
-          }
-          for (const file of folder.files) {
-            const kb = `${Math.round(file.bytes / 1024)}KB`
-            const dur = file.durationSec ? ` ${file.durationSec.toFixed(2)}s` : ''
-            const mark = used.get(file.id) ? ' [in use]' : ' [unused]'
-            lines.push(`${pad}${file.name}  ${kb}${dur}${mark}  ${file.id}`)
-          }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                `STOP — WAITING ON THE HUMAN (${decision.id})\n` +
+                `Paste the block below into your NEXT reply, then stop and wait. Do not ` +
+                `continue building, do not pick a default, and do not save it for a ` +
+                `summary later.\n\n` +
+                `────────────────────────────\n` +
+                `${formatQuestionForChat(decision)}\n` +
+                `────────────────────────────\n\n` +
+                `When they reply to you, call execute(name="record_answer") with decisionId ` +
+                `${decision.id} and optionId ${decision.options
+                  .map((o, i) => `${i + 1}→${o.id}`)
+                  .join(' ')} (or note=<their words>). Nothing else closes this question and ` +
+                `nothing will remind you: continuing without an answer means you ` +
+                `decided it yourself.`,
+            },
+          ],
         }
-        walk(buildAssetTree(assets), 0)
-        const unused = assets.filter((a) => !a.usedBy).length
-        return text(
-          `${assets.length} file(s)${unused ? `, ${unused} unused` : ''}\n${lines.join('\n')}`,
-        )
-      },
-    )
-
-    this.server.tool(
-      'move_asset',
-      'Rename or move a file to a new virtual path (e.g. "/narration/hook.mp3"). Free. Folders are created implicitly by the path and disappear when empty; there is nothing to mkdir.',
-      { projectId: z.string(), assetId: z.string(), path: z.string().min(1) },
-      async ({ assetId, path }) => {
-        const res = await this.api(`/api/assets/${assetId}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ path }),
-        })
-        if (!res.ok) throw new Error(await res.text())
-        const out = (await res.json()) as { path: string }
-        return text(`moved ${assetId} → ${out.path}`)
-      },
-    )
-
-    this.server.tool(
-      'remove_asset',
-      'Delete a file. Free. Refuses if the document still references it — a scene would be left pointing at nothing — and names the scenes; pass force to delete anyway.',
-      { projectId: z.string(), assetId: z.string(), force: z.boolean().default(false) },
-      async ({ assetId, force }) => {
-        const res = await this.api(`/api/assets/${assetId}${force ? '?force=1' : ''}`, {
-          method: 'DELETE',
-        })
-        if (res.status === 409) {
-          const body = (await res.json()) as { scenes?: string[] }
-          throw new Error(
-            `${assetId} is still used by: ${(body.scenes ?? []).join(', ') || 'the document'}. ` +
-              'Re-generate or repoint that scene first, or call again with force: true.',
-          )
-        }
-        if (!res.ok) throw new Error(await res.text())
-        const out = (await res.json()) as { wasInUse: boolean }
-        return text(`deleted ${assetId}${out.wasInUse ? ' (was in use — a scene now points at nothing)' : ''}`)
-      },
-    )
-
-    this.server.tool(
-      'get_captions',
-      'Subtitles for the whole project (SRT or VTT). Free — derived from narration. Cues are word-accurate where TTS timings exist, and estimated from text length elsewhere.',
-      { projectId: z.string(), format: z.enum(['srt', 'vtt']).default('srt') },
-      async ({ projectId, format }) => {
-        const res = await this.api(`/api/projects/${projectId}/captions?format=${format}`)
-        return text(await res.text())
-      },
-    )
-
-    this.server.tool(
-      'render_video',
-      'Render the project to MP4. COSTS CREDITS (per second of video; narration is billed separately by generate_narration). Returns a job id.',
-      { projectId: z.string() },
-      async ({ projectId }) => {
-        const res = await this.api(`/api/projects/${projectId}/render`, { method: 'POST' })
-        return text(await res.text())
-      },
-    )
-
-    this.server.tool(
-      'get_render_status',
-      'Status of recent render jobs for a project. A finished job includes downloadUrl for the MP4; a failed job has had its credits refunded.',
-      { projectId: z.string() },
-      async ({ projectId }) => {
-        const res = await this.api(`/api/projects/${projectId}/renders`)
-        return text(await res.text())
       },
     )
   }

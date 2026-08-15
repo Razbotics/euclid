@@ -1,14 +1,19 @@
 /**
- * MCP tool surface, driven the way a real client drives it.
+ * MCP surface, driven the way a real client drives it.
  * Run: pnpm --filter @euclid/renderer exec tsx src/check-mcp-tools.ts
  *
- * Free — no credits. Needs `dev:api` and `dev:mcp` running.
+ * Free — no credits. Needs `dev:api` and `dev:mcp`.
  *
- * Exists because of a bug the Phase 5 milestone hit: `animate`'s `to` param is
- * union-typed, which becomes `anyOf` in the tool's JSON Schema, and at least
- * one real MCP client sends such values as strings. `1.12` arrived as "1.12"
- * and failed validation, forcing the agent to bypass its own tools. Typecheck
- * cannot catch that — only calling the worker the way a client does can.
+ * The surface is now a gateway (plans/008): five fixed tools over the API
+ * worker's capability catalog. So what this proves has shifted. It is no longer
+ * "are the 26 tools registered" but the two claims the gateway is built on:
+ *
+ *  1. The tool list is small and STABLE — no capability may leak back in as a
+ *     tool of its own, or the client-restart problem returns.
+ *  2. Nothing was lost in the move. `animate`'s argument coercion is checked
+ *     here rather than only in check-gateway because the bug it exists for was
+ *     a *client* behaviour — a real MCP client sending `1.12` as "1.12" — and
+ *     only driving the worker over JSON-RPC exercises that path end to end.
  */
 import './load-env'
 import assert from 'node:assert'
@@ -60,14 +65,17 @@ async function rpc(method: string, params?: unknown): Promise<Record<string, any
   return JSON.parse(buffered)
 }
 
-/** Returns the tool's text, or throws with the validation error a client would see. */
-async function call(name: string, args: Record<string, unknown>): Promise<string> {
+/** Returns the tool's text, or throws with the error a client would see. */
+async function tool(name: string, args: Record<string, unknown>): Promise<string> {
   const r = await rpc('tools/call', { name, arguments: args })
   if (r.error) throw new Error(`${name}: ${r.error.message}`)
   const text = r.result?.content?.[0]?.text ?? ''
   if (r.result?.isError) throw new Error(`${name}: ${text}`)
   return text
 }
+
+/** Run a free capability through the gateway's executor. */
+const run = (name: string, args: Record<string, unknown>) => tool('execute', { name, args })
 
 console.log('connecting to', MCP_URL)
 const init = await rpc('initialize', {
@@ -84,35 +92,61 @@ await fetch(MCP_URL, {
 
 console.log('initialized')
 
-// ---------- the surface itself ----------
+// ---------- the surface must stay small and stable ----------
 const tools = (await rpc('tools/list')).result.tools as { name: string; description: string }[]
-const names = tools.map((t) => t.name)
-for (const required of ['animate', 'update_scene', 'generate_narration', 'set_narration', 'render_video']) {
-  assert.ok(names.includes(required), `tool ${required} must be registered`)
-}
-// Credit-spending tools must say so — the agent decides what to call from this text alone.
-for (const paid of ['generate_narration', 'render_video']) {
-  assert.match(
-    tools.find((t) => t.name === paid)!.description,
-    /COSTS CREDITS/,
-    `${paid} must announce that it spends credits`,
-  )
-}
+const names = tools.map((t) => t.name).sort()
+assert.deepStrictEqual(
+  names,
+  ['ask_user', 'describe', 'execute', 'execute_paid', 'instructions'],
+  'the gateway must expose exactly these five tools — a capability leaking back in as its ' +
+    'own tool would reinstate the client-restart problem the gateway exists to remove',
+)
 
-console.log(`${tools.length} tools listed`)
-const project = JSON.parse(await call('create_project', { name: 'MCP Tool Check' })) as { id: string }
-const sceneId = (await call('add_scene', { projectId: project.id, name: 'S', duration: 5 })).match(
+// The bootstrap has to be discoverable from the tool list alone: nothing forces
+// a client to call `instructions`, so the descriptions must say to.
+assert.match(
+  tools.find((t) => t.name === 'instructions')!.description,
+  /READ THIS FIRST/,
+  'instructions must announce itself as the first call of a thread',
+)
+// Credit-spending work must be visible as such from the tool list, because
+// that list is what a permission prompt is built from.
+assert.match(
+  tools.find((t) => t.name === 'execute_paid')!.description,
+  /SPENDS CREDITS/,
+  'execute_paid must announce that it spends credits',
+)
+console.log(`${tools.length} tools listed — ${names.join(', ')}`)
+
+// ---------- tool 1: the capability list arrives through MCP ----------
+const instructions = await tool('instructions', {})
+for (const required of ['create_project', 'animate', 'morph_latex', 'render_video']) {
+  assert.ok(instructions.includes(required), `instructions must list ${required}`)
+}
+assert.match(instructions, /execute_paid/, 'instructions must route paid work correctly')
+
+// ---------- tool 2: describe reaches the catalog prose ----------
+const described = await tool('describe', { names: ['animate', 'update_node'] })
+assert.match(described, /sampled from the document/, 'animate keeps its start-value contract')
+assert.match(described, /the track wins/, 'update_node keeps the shadowing warning')
+
+// ---------- tool 3: execute, with the argument coercion that forced it ----------
+// Every capability answers in compact text, so the ids come out of the lines
+// they return — which is itself worth checking: an agent has nothing else.
+const projectId = (await run('create_project', { name: 'MCP Gateway Check' })).match(
+  /created project (\S+)/,
+)![1]!
+const sceneId = (await run('add_scene', { projectId, name: 'S', duration: 5 })).match(
   /scene (\S+)/,
 )![1]!
 const nodeId = (
-  await call('add_text', { projectId: project.id, sceneId, textContent: 'hi', x: 960, y: 540 })
+  await run('add_text', { projectId, sceneId, textContent: 'hi', x: 960, y: 540 })
 ).match(/node (\S+)/)![1]!
 
-console.log('fixture ready:', project.id)
+console.log('fixture ready:', projectId)
 
-// ---------- animate: union-typed `to` ----------
 const animate = (property: string, to: unknown) =>
-  call('animate', { projectId: project.id, sceneId, nodeId, property, to, start: 0, duration: 1 })
+  run('animate', { projectId, sceneId, nodeId, property, to, start: 0, duration: 1 })
 
 // Accepted: native forms, and the stringified forms a real client sends.
 await animate('opacity', 1.12)
@@ -135,10 +169,18 @@ for (const bad of ['abc', '', true, null, []]) {
 
 console.log('rejected forms OK')
 
+// ---------- the credit gate, over the wire ----------
+// A standing approval on `execute` must not be able to spend anything.
+await assert.rejects(
+  () => run('render_video', { projectId }),
+  /execute_paid/,
+  'a paid capability must refuse the free executor and name the paid one',
+)
+
 // ---------- what actually landed in the document ----------
 // The real risk of coercion is a string reaching a keyframe, where the sampler
 // would interpolate it as NaN and fail silently at render time.
-const docRes = await fetch(`${API_URL}/api/projects/${project.id}/doc`, {
+const docRes = await fetch(`${API_URL}/api/projects/${projectId}/doc`, {
   headers: { 'x-internal-key': KEY, 'x-user-id': 'dev-user' },
 })
 const { doc } = (await docRes.json()) as {
@@ -153,7 +195,11 @@ assert.strictEqual(typeof (byProp.position as { x: unknown }).x, 'number', 'x mu
 assert.strictEqual(byProp.fill, '#ff0000', 'colours must stay strings, not be coerced')
 assert.strictEqual(byProp.rotation, -0.5, 'negative stringified numbers must parse')
 
+// Passing runs leave nothing behind; a failure keeps the fixture to inspect.
+await run('delete_project', { projectId, confirm: true })
+
 console.log(
-  `mcp tools OK — ${tools.length} registered; animate accepts native and stringified ` +
-    `numbers/coords, rejects "abc"/""/true/null/[], and stores real numbers in the document`,
+  `mcp gateway OK — 5 stable tools; instructions and describe reach the catalog, execute ` +
+    `accepts native and stringified numbers/coords, rejects "abc"/""/true/null/[], stores real ` +
+    `numbers in the document, and refuses to spend credits`,
 )

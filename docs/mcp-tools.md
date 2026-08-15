@@ -1,49 +1,86 @@
 # MCP tool surface
 
-The agent-facing API (`apps/mcp/src/index.ts`). Design rules:
+The agent-facing API. Since [plans/008](plans/008-mcp-gateway.md) it is a
+**gateway**: `apps/mcp/src/index.ts` exposes five fixed tools and holds no
+capability logic. Everything an agent can *do* lives in the API worker's
+capability catalog (`apps/api/src/agent/`), and this page describes the
+gateway — the capability list itself is served by `instructions`, which is
+the copy that cannot go stale.
 
-- Tools speak **intent** (`animate`, `morph_latex`); everything compiles to
-  DSL ops submitted through the API worker to the project's Durable Object.
-- Tool results are **compact text** — outlines, ids, time ranges — so agent
-  iteration stays cheap/free. Only `render_video` and `generate_narration`
-  cost credits; every other tool is free to call as often as needed.
-- Writes auto-rebase: fetch version → submit → retry ×3 on 409.
-- Coordinates are canvas pixels, origin top-left. Times are scene-local
-  seconds. Nodes anchor at their center.
-- Tools report what they *did*, not what they were asked to do. Several
-  succeed in ways that change nothing on screen — a patch shadowed by a
-  track, narration cut at a scene edge — and say so in the result rather
-  than leaving it to be discovered in a render.
+## The five tools
 
 | Tool | Semantics |
 |---|---|
-| `list_projects` / `create_project` | dashboard-level CRUD |
-| `get_project` | cheap text outline of everything — call freely. Includes pacing: total silence as a percentage, and per scene `speech=`/`tail=`, with tails over 2s marked `(long)` |
-| `get_scene` | full JSON of one scene for detailed inspection |
-| `add_scene` | appends a scene (name, duration, background) |
-| `update_scene` | patch a scene's name/duration/background; extending `duration` is the fix when narration overruns |
-| `add_latex` / `add_text` / `add_shape` | create nodes with sensible defaults, return the node id |
-| `update_node` | shallow patch; `id`/`type` immutable. Invalid patches are rejected atomically, **and so is a key the node has no property for** — it errors naming the key instead of silently changing nothing. Position is `{"position":{"x":…,"y":…}}`, not the top-level `x`/`y` that `add_text`/`add_latex` accept. Patching a property an animation keyframes **changes the document but not the render** — the track wins — so the result says so; use `animate` for those, or clear the track first |
-| `remove_node` | delete |
-| `animate` | keyframes one property from its **current value sampled at `start`** to `to` over `duration` — animations always chain continuously; replaces that property's keyframes after `start` |
-| `morph_latex` | queues a `texMorph` transition; multiple morphs chain in start-time order, and a call whose window **overlaps** an existing morph replaces it (as `highlight` does), so re-calling revises rather than stacks. Clean for *additive* changes — appending terms holds the existing glyphs still; a change that re-lays-out the equation, such as collapsing into a fraction, is briefly illegible mid-morph, so prefer several small morphs over one structural leap |
-| `write_on` | draw-on reveal; node invisible before `start` |
-| `highlight` | emphasise a node, or one term inside an equation named by its LaTeX (`tex: "\\frac{b}{a}"`) — located by glyph codes, so no coordinates are needed. Styles: `color` recolours the term (default), `spotlight` dims everything else, `box`/`underline` draw a marker. Sequential highlights on one node accumulate; a call overlapping an existing window replaces it. Free |
-| `set_narration` | per-scene narration script. Free — writes text only |
-| `generate_narration` | **spends credits** (priced by script length). Synthesizes the scene's narration, stores the audio, and writes word timings into the document as a `system` op. Reports — but does not reject — speech that overruns the scene |
-| `fit_scene_to_narration` | set a scene's duration to its speech plus a held tail — the one-call fix for the dead air `get_project` flags as `(long)` |
-| `ask_user` | put a choice to the human **in chat** and stop. Free, and blocking by intention. If the client supports MCP elicitation the human answers in its own picker and the result comes straight back; otherwise it returns a ready-to-paste block with numbered options for you to relay. The question is also stored on the project (queryable, audit-trailed) but **no UI mirrors it** — chat is the surface, and the system may be headless, so never wait on a browser |
-| `record_answer` | close an `ask_user` question with the answer the human gave you in conversation — the only thing that closes one, and nothing will chase you for it. Provenance is kept and ranked by trust: `chat` (elicited — nothing interpreted it), `editor` (clicked), `agent` (this tool — your reading of what they said, the only path where the answer is an interpretation). First answer wins; a second is refused rather than overwriting |
-| `list_assets` | the project's files as a tree — narration audio today, footage later. Free. Paths are virtual (folders derived), and each file is marked in-use or unused so a leftover from a regenerated scene is visible |
-| `move_asset` | rename or move a file by writing a new virtual path; folders are implicit, so there is nothing to mkdir and no empty folder to clean up |
-| `remove_asset` | delete a file. **Refuses** if the document still references it, naming the scenes — a scene must never point at nothing; `force: true` overrides deliberately |
-| `get_captions` | SRT/VTT subtitles for the project. Free — derived from narration; word-accurate where TTS timings exist, estimated elsewhere |
-| `render_video` | **spends credits** up front (video seconds only; narration is billed by `generate_narration`); returns a job id. The render worker completes the job asynchronously |
-| `get_render_status` | recent jobs; a `done` job carries `downloadUrl` for the MP4, and a `failed` job has already had its credits refunded |
+| `instructions` | Orientation, the workflow, cost rules, and every capability with a one-line summary. **Read once per new thread.** Free |
+| `describe` | Full arguments and behaviour for named capabilities (batched). Free. Call it when a summary isn't enough, or when `execute` rejects your arguments |
+| `execute` | Run one **free** capability: `{name, args}`. Every edit, read, narration script, caption and asset operation goes through here |
+| `execute_paid` | Run one **credit-spending** capability — today `generate_narration` and `render_video`. Separate on purpose (see below) |
+| `ask_user` | Put a choice to the human **in chat** and stop. Free, and blocking by intention. Stays a tool of its own (see below) |
+
+## Why this shape
+
+- **The tool list never changes.** An MCP client caches `tools/list` when the
+  session starts, so a surface naming each capability needed a client restart
+  every time one changed — that cost two milestone runs their tool coverage.
+  Here the catalog is read at call time: an edit is live on the next call in
+  the same session (measured end-to-end, ~14s, same session id, no reconnect).
+- **Paid work is a separate door.** MCP permissions are per-tool. With one
+  executor, "always allow" would quietly cover renders. A paid capability
+  refuses `execute` and names `execute_paid`; a free one refuses
+  `execute_paid`, so the split can't be worked around by always using the
+  paid door.
+- **`ask_user` cannot be a capability.** Asking is a protocol act — the server
+  asks the *client* to open its own picker (elicitation) — and the fallback
+  controls what the agent puts in its very next reply. Neither survives being
+  flattened into request/response. Closing a question is ordinary state, so
+  `record_answer` *is* a capability: `execute(name="record_answer")`.
+- **Bytes stay on REST.** Tool args are JSON; base64 through an LLM context is
+  a non-starter, so asset upload is a plain endpoint (`POST
+  /api/projects/:id/assets`, internal-key only).
+
+One capability is destructive: `delete_project` removes a project and
+everything it owns, and nothing can bring it back. It requires `confirm: true`;
+called without it, it reports what would be lost and deletes nothing — the same
+shape as `remove_asset`'s `force`.
+
+## Rules the catalog keeps
+
+- Capabilities speak **intent** (`animate`, `morph_latex`); everything compiles
+  to DSL ops applied through the shared reducer beside the Durable Object.
+- Results are **compact text** — outlines, ids, time ranges — so agent
+  iteration stays free. Only `generate_narration` and `render_video` cost
+  credits; everything else is free to call as often as needed. (`?format=json`
+  on the gateway returns the structured payload instead, which is what the
+  editor binds to — same handler, two renderings.)
+- Writes auto-rebase: fetch version → submit → retry ×3 on 409.
+- Coordinates are canvas pixels, origin top-left. Times are scene-local
+  seconds. Nodes anchor at their center.
+- Capabilities report what they *did*, not what they were asked to do. Several
+  succeed in ways that change nothing on screen — a patch shadowed by a track,
+  narration cut at a scene edge — and say so in the result rather than leaving
+  it to be discovered in a render.
+- **Errors are the documentation.** Validation is server-side now, so a
+  rejection names the argument to fix, the capability to call next, or what
+  *does* exist ("scene sc_1 not found. This project has: …"). Responses carry
+  `catalog revision`, so a schema that moved mid-thread can say so instead of
+  looking like a malformed call.
+
+## Adding a capability
+
+One catalog entry in `apps/api/src/agent/tools-*.ts` — name, summary, prose
+contract, Zod args, optional `costsCredits`, handler — and it is listed,
+describable and executable. No MCP worker change, no client restart, no row to
+add here. `apps/api` is on **zod v4** (see dev-setup for why that is load
+bearing).
+
+Verified by `check-gateway.ts` (catalog over HTTP) and `check-mcp-tools.ts`
+(the same surface over JSON-RPC, which is where client-side argument
+stringification shows up).
 
 Auth: currently `dev-user` via the internal service key. OAuth
 (workers-oauth-provider backed by the API's Better Auth), so claude.ai
 connects as a real user, is Phase 5 in [plans/000](plans/000-roadmap.md) —
-deliberately last. Note what that client implies for this surface: it has no
-shell, so every tool result here is its only feedback. That is the argument
-[plans/007](plans/007-agent-sight.md) is built on.
+deliberately last. Note what that client implies: it has no shell, so every
+result here is its only feedback. That is the argument
+[plans/007](plans/007-agent-sight.md) is built on, and the gateway does not
+change it.

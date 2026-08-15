@@ -1,22 +1,30 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import {
-  CREDIT_COSTS,
-  assetIdsInDoc,
-  defaultAssetPath,
-  docDuration,
-  documentCues,
-  normalizeAssetPath,
-  op,
-  toSRT,
-  toVTT,
-  ttsCost,
-  type EuclidDoc,
-  type Op,
-} from '@euclid/dsl'
+import { docDuration, documentCues, toSRT, toVTT, type EuclidDoc } from '@euclid/dsl'
 import { makeAuth } from './auth'
-import { adjustCredits, billing, getBalance, handleStripeWebhook } from './billing'
-import { elevenLabsProvider, TtsError } from './tts'
+import { adjustCredits, billing, handleStripeWebhook } from './billing'
+import { AccessError, docOf, projectStub, requireProjectAccess, slugify } from './shared'
+import { createProject, deleteProject, listProjects, projectContents } from './services/projects'
+import {
+  ASSET_KINDS,
+  AssetInUse,
+  AssetPathTaken,
+  deleteAsset,
+  listProjectAssets,
+  loadAsset,
+  moveAsset,
+  storeAsset,
+} from './services/assets'
+import { NarrationError, generateSceneNarration } from './services/narration'
+import {
+  JOB_TERMINAL,
+  type RenderJobRow,
+  RenderError,
+  downloadUrlFor,
+  listRenderJobs,
+  startRender,
+} from './services/render'
+import { agent } from './agent/routes'
 import type { Env, Vars } from './env'
 
 export { ProjectDO } from './do'
@@ -56,30 +64,42 @@ app.use('/api/*', async (c, next) => {
 })
 
 app.route('/api/billing', billing)
+// The agent gateway: three endpoints over the capability catalog. Same auth as
+// everything else, so the MCP worker reaches it with the internal key.
+app.route('/api/agent', agent)
 
 // ---------- projects ----------
 
 app.get('/api/projects', async (c) => {
-  const rows = await c.env.DB.prepare(
-    'SELECT id, name, created_at FROM projects WHERE user_id = ? ORDER BY created_at DESC',
-  )
-    .bind(c.get('userId'))
-    .all()
-  return c.json({ projects: rows.results })
+  return c.json({ projects: await listProjects(c.env, c.get('userId')) })
 })
 
 app.post('/api/projects', async (c) => {
   const { name } = (await c.req.json()) as { name: string }
   if (!name?.trim()) return c.json({ error: 'name_required' }, 400)
-  const id = crypto.randomUUID()
-  await c.env.DB.prepare('INSERT INTO projects (id, user_id, name, created_at) VALUES (?, ?, ?, ?)')
-    .bind(id, c.get('userId'), name.trim(), Date.now())
-    .run()
-  await projectStub(c.env, id).fetch('https://do/init', {
-    method: 'POST',
-    body: JSON.stringify({ id, name: name.trim() }),
-  })
-  return c.json({ id, name: name.trim() })
+  return c.json(await createProject(c.env, name, c.get('userId')))
+})
+
+/**
+ * Delete a project and everything it owns — R2 bytes, asset and job rows, and
+ * the Durable Object's document and decisions.
+ *
+ * Irreversible and not undoable through the event log, which lives in the
+ * storage this destroys. `?dryRun=1` reports what would go without touching
+ * anything, which is what makes a bulk cleanup checkable before it runs.
+ */
+app.delete('/api/projects/:id', async (c) => {
+  const projectId = c.req.param('id')
+  try {
+    if (c.req.query('dryRun')) {
+      await requireProjectAccess(c.env, projectId, c.get('userId'))
+      return c.json({ dryRun: true, ...(await projectContents(c.env, projectId)) })
+    }
+    return c.json(await deleteProject(c.env, projectId, c.get('userId')))
+  } catch (e) {
+    if (e instanceof AccessError) return c.json({ error: e.message }, e.status as 403)
+    throw e
+  }
 })
 
 /** Ownership gate + forward to the project's Durable Object. */
@@ -142,10 +162,6 @@ app.get('/api/projects/:id/captions', async (c) => {
   })
 })
 
-function slugify(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'captions'
-}
-
 // ---------- narration (TTS) ----------
 
 /**
@@ -158,188 +174,43 @@ function slugify(name: string): string {
  * knowable before synthesis) and refunded if anything after the debit fails.
  */
 app.post('/api/projects/:id/scenes/:sceneId/narration/generate', async (c) => {
-  const projectId = c.req.param('id')
-  const sceneId = c.req.param('sceneId')
-
-  const docRes = await forwardToDO(c, projectId, '/doc') // also the ownership gate
-  if (!docRes.ok) return docRes
-  const { doc } = (await docRes.json()) as { doc: EuclidDoc }
-
-  const scene = doc.scenes.find((s) => s.id === sceneId)
-  if (!scene) return c.json({ error: 'scene_not_found', sceneId }, 404)
-
-  const body = (await c.req.json().catch(() => ({}))) as { text?: string; voiceId?: string }
-  const text = (body.text ?? scene.narration?.text ?? '').trim()
-  if (!text) {
-    return c.json({ error: 'no_narration_text', detail: 'set narration text first, or pass text' }, 400)
-  }
-  const voiceId = body.voiceId ?? scene.narration?.voiceId
-
-  const cost = ttsCost(text)
-  const userId = c.get('userId')
-  const balance = await getBalance(c.env, userId)
-  if (balance < cost) return c.json({ error: 'insufficient_credits', required: cost, balance }, 402)
-
-  // One id ties the debit and any refund together in the ledger, the same way
-  // a job id does for renders.
-  const ttsId = crypto.randomUUID()
-  await adjustCredits(c.env, userId, -cost, `tts:${ttsId} (${sceneId})`)
-  const refund = (why: string) =>
-    adjustCredits(c.env, userId, cost, `refund:${ttsId} (${why})`)
-
-  let synthesis
   try {
-    synthesis = await elevenLabsProvider(c.env.ELEVENLABS_API_KEY).synthesize({ text, voiceId })
+    const result = await generateSceneNarration(
+      c.env,
+      c.req.param('id'),
+      c.req.param('sceneId'),
+      c.get('userId'),
+      (await c.req.json().catch(() => ({}))) as { text?: string; voiceId?: string },
+    )
+    return c.json(result)
   } catch (e) {
-    const detail = e instanceof TtsError ? e.message : String(e)
-    await refund('tts failed')
-    return c.json({ error: 'tts_failed', detail, refunded: cost }, 502)
+    if (e instanceof NarrationError) {
+      return c.json({ error: e.code, detail: e.message, ...e.extra }, e.status as 400)
+    }
+    if (e instanceof AccessError) return c.json({ error: e.message }, e.status as 403)
+    throw e
   }
-
-  let assetId: string
-  try {
-    assetId = (
-      await storeAsset(c.env, projectId, {
-        kind: 'audio',
-        mime: synthesis.mime,
-        durationSec: synthesis.durationSec,
-        // Named after the scene, so the explorer reads as a project's files
-        // rather than a pile of uuids.
-        path: `/narration/${slugify(scene.name)}.mp3`,
-        body: synthesis.audio,
-      })
-    ).assetId
-    await submitSystemOps(c.env, projectId, [
-      op.setNarration(sceneId, {
-        text,
-        voiceId,
-        audio: { assetId, durationSec: synthesis.durationSec, words: synthesis.words },
-      }),
-    ])
-  } catch (e) {
-    await refund('store failed')
-    return c.json({ error: 'narration_store_failed', detail: String(e), refunded: cost }, 500)
-  }
-
-  // Overflow is reported, not enforced: the mismatch is only knowable after
-  // synthesis, so rejecting here would discard audio the user just paid for
-  // and make the retry cost again. The agent still decides what to change.
-  const fits = synthesis.durationSec <= scene.duration
-  const suggested = Math.ceil(synthesis.durationSec * 10) / 10
-  return c.json({
-    assetId,
-    sceneId,
-    cost,
-    durationSec: synthesis.durationSec,
-    words: synthesis.words.length,
-    sceneDuration: scene.duration,
-    fits,
-    ...(fits
-      ? {}
-      : {
-          warning:
-            `narration runs ${synthesis.durationSec.toFixed(2)}s but scene "${sceneId}" is ` +
-            `${scene.duration}s, so ${(synthesis.durationSec - scene.duration).toFixed(2)}s would be cut. ` +
-            `The audio is saved and already in the document — either call ` +
-            `update_scene(sceneId="${sceneId}", duration=${suggested}) or shorten the script and regenerate.`,
-        }),
-  })
 })
-
-/**
- * Submit ops to a project's DO as the `system` actor, rebasing on conflict.
- * Used by server-side producers that have no client version to work from.
- */
-async function submitSystemOps(env: Env, projectId: string, ops: Op[]): Promise<void> {
-  const stub = projectStub(env, projectId)
-  let lastError = ''
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const docRes = await stub.fetch('https://do/doc')
-    if (!docRes.ok) throw new Error(`doc unavailable: ${docRes.status}`)
-    const { version } = (await docRes.json()) as { version: number }
-
-    const res = await stub.fetch('https://do/ops', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        id: crypto.randomUUID(),
-        baseVersion: version,
-        actor: { type: 'system' },
-        ops,
-      }),
-    })
-    if (res.ok) return
-    lastError = await res.text()
-    if (res.status !== 409) break
-  }
-  throw new Error(`ops rejected: ${lastError}`)
-}
 
 // ---------- render ----------
 
 app.post('/api/projects/:id/render', async (c) => {
-  const projectId = c.req.param('id')
-  const docRes = await forwardToDO(c, projectId, '/doc')
-  if (!docRes.ok) return docRes
-  const { doc } = (await docRes.json()) as { doc: EuclidDoc }
-
-  const seconds = Math.ceil(docDuration(doc))
-  if (seconds === 0) return c.json({ error: 'empty_project' }, 400)
-  const perSecond =
-    doc.canvas.height > 720 ? CREDIT_COSTS.renderPerSecond1080 : CREDIT_COSTS.renderPerSecond720
-  const cost = Math.ceil(seconds * perSecond)
-
-  const userId = c.get('userId')
-  const balance = await getBalance(c.env, userId)
-  if (balance < cost) {
-    return c.json({ error: 'insufficient_credits', required: cost, balance }, 402)
+  try {
+    return c.json(await startRender(c.env, c.req.param('id'), c.get('userId')))
+  } catch (e) {
+    if (e instanceof RenderError) {
+      return c.json({ error: e.code, detail: e.message, ...e.extra }, e.status as 400)
+    }
+    if (e instanceof AccessError) return c.json({ error: e.message }, e.status as 403)
+    throw e
   }
-
-  const jobId = crypto.randomUUID()
-  await adjustCredits(c.env, userId, -cost, `render:${jobId}`)
-  await c.env.DB.prepare(
-    `INSERT INTO render_jobs (id, project_id, user_id, status, cost, created_at, updated_at)
-     VALUES (?, ?, ?, 'queued', ?, ?, ?)`,
-  )
-    .bind(jobId, projectId, userId, cost, Date.now(), Date.now())
-    .run()
-
-  // TODO(render): push jobId onto a Cloudflare Queue consumed by the container
-  // worker (apps/renderer). Until the queue is wired, run the renderer manually:
-  //   pnpm --filter @euclid/renderer render -- --project <id> --job <jobId>
-  // The worker then drives this job to done/failed (failure refunds the cost).
-  return c.json({ jobId, cost, seconds, status: 'queued' })
 })
 
 app.get('/api/projects/:id/renders', async (c) => {
-  const rows = await c.env.DB.prepare(
-    'SELECT id, status, cost, output_key, created_at FROM render_jobs WHERE project_id = ? ORDER BY created_at DESC LIMIT 20',
-  )
-    .bind(c.req.param('id'))
-    .all<RenderJobRow>()
-  const origin = publicOrigin(c)
-  return c.json({
-    jobs: rows.results.map((j) => ({ ...j, downloadUrl: downloadUrlFor(origin, j) })),
-  })
+  return c.json({ jobs: await listRenderJobs(c.env, c.req.param('id'), publicOrigin(c)) })
 })
 
 // ---------- render jobs (lifecycle driven by the render worker) ----------
-
-interface RenderJobRow {
-  id: string
-  project_id?: string
-  user_id?: string
-  status: string
-  cost: number
-  output_key: string | null
-  created_at: number
-}
-
-const JOB_TERMINAL = ['done', 'failed']
-
-function downloadUrlFor(origin: string, job: { id: string; status: string; output_key: string | null }) {
-  return job.status === 'done' && job.output_key ? `${origin}/api/jobs/${job.id}/download` : null
-}
 
 /**
  * Origin to use in client-facing URLs. Service-binding requests (MCP worker)
@@ -513,19 +384,6 @@ app.get('/api/jobs/:jobId/download', async (c) => {
 
 // ---------- assets ----------
 
-interface AssetRow {
-  id: string
-  project_id: string
-  kind: string
-  r2_key: string
-  mime: string
-  bytes: number
-  duration_sec: number | null
-  created_at: number
-}
-
-const ASSET_KINDS = ['audio', 'video', 'image']
-
 /**
  * Assets are created by server-side producers (TTS today, ingest later), never
  * uploaded by the browser, so this is internal-key only. The server mints the
@@ -569,227 +427,50 @@ app.post('/api/projects/:id/assets', async (c) => {
   }
 })
 
-/**
- * Suffix a path until it is free, so a regenerated narration clip sits beside
- * the old one instead of colliding with it (the explorer is what finally makes
- * those leftovers visible).
- */
-async function uniqueAssetPath(env: Env, projectId: string, wanted: string): Promise<string> {
-  const dot = wanted.lastIndexOf('.')
-  const stem = dot > wanted.lastIndexOf('/') ? wanted.slice(0, dot) : wanted
-  const ext = dot > wanted.lastIndexOf('/') ? wanted.slice(dot) : ''
-  for (let n = 0; n < 50; n++) {
-    const candidate = n === 0 ? wanted : `${stem}-${n + 1}${ext}`
-    const clash = await env.DB.prepare('SELECT id FROM assets WHERE project_id = ? AND path = ?')
-      .bind(projectId, candidate)
-      .first<{ id: string }>()
-    if (!clash) return candidate
-  }
-  return `${stem}-${Date.now()}${ext}`
-}
-
-/**
- * Shared by the upload route and the in-worker producers (TTS today). The row
- * is written only once the bytes are really in R2, and a zero-byte put is
- * removed before any row exists — a document must never hold an assetId that
- * resolves to nothing.
- */
-async function storeAsset(
-  env: Env,
-  projectId: string,
-  input: {
-    kind: string
-    mime: string
-    durationSec?: number | null
-    /** Virtual path; defaults to /<kind>/<id>.<ext> when the caller has no better name. */
-    path?: string | null
-    body: ReadableStream | ArrayBuffer
-  },
-): Promise<{ assetId: string; bytes: number; path: string }> {
-  const assetId = crypto.randomUUID()
-  const key = `assets/${projectId}/${assetId}`
-  const object = await env.ASSETS.put(key, input.body, {
-    httpMetadata: { contentType: input.mime },
-  })
-  if (!object || object.size === 0) {
-    await env.ASSETS.delete(key)
-    throw new Error('empty_asset_body')
-  }
-  let path = defaultAssetPath(input.kind, input.mime, assetId)
-  if (input.path) {
-    try {
-      path = await uniqueAssetPath(env, projectId, normalizeAssetPath(input.path))
-    } catch {
-      // A bad suggested name must not lose the bytes we already stored.
-    }
-  }
-  await env.DB.prepare(
-    `INSERT INTO assets (id, project_id, kind, r2_key, mime, bytes, duration_sec, path, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  )
-    .bind(assetId, projectId, input.kind, key, input.mime, object.size, input.durationSec ?? null, path, Date.now())
-    .run()
-  return { assetId, bytes: object.size, path }
-}
-
-/**
- * The project's document, straight from the DO. Callers here have already
- * checked ownership, so this deliberately skips the auth forwarding.
- */
-async function docOf(env: Env, projectId: string): Promise<EuclidDoc | null> {
-  const res = await projectStub(env, projectId).fetch('https://do/doc')
-  if (!res.ok) return null
-  return ((await res.json()) as { doc: EuclidDoc }).doc
-}
-
-/** R2 keys that finished render jobs still hand out download URLs for. */
-async function renderOutputKeys(env: Env, projectId: string): Promise<Set<string>> {
-  const rows = await env.DB.prepare(
-    'SELECT output_key FROM render_jobs WHERE project_id = ? AND output_key IS NOT NULL',
-  )
-    .bind(projectId)
-    .all<{ output_key: string }>()
-  return new Set(rows.results.map((r) => r.output_key))
-}
-
-/** Owner-or-internal lookup shared by the asset routes. */
-async function loadAsset(env: Env, assetId: string) {
-  return env.DB.prepare(
-    `SELECT a.*, p.user_id AS owner FROM assets a
-     JOIN projects p ON p.id = a.project_id
-     WHERE a.id = ?`,
-  )
-    .bind(assetId)
-    .first<AssetRow & { owner: string; path: string | null }>()
-}
-
-/**
- * A project's files. `path` is a virtual path — folders are derived from it,
- * never stored — so the editor and the MCP tools build the same tree from
- * these rows with `buildAssetTree`.
- *
- * `usedBy` marks assets the document depends on, which is what makes deletion
- * refusable rather than silently breaking a scene.
- */
 app.get('/api/projects/:id/assets', async (c) => {
-  const projectId = c.req.param('id')
-  const project = await c.env.DB.prepare('SELECT user_id FROM projects WHERE id = ?')
-    .bind(projectId)
-    .first<{ user_id: string }>()
-  if (!project) return c.json({ error: 'project_not_found' }, 404)
-  const userId = c.get('userId')
-  if (project.user_id !== userId && userId !== 'internal') return c.json({ error: 'forbidden' }, 403)
-
-  const rows = await c.env.DB.prepare(
-    'SELECT id, kind, mime, bytes, duration_sec, path, r2_key, created_at FROM assets WHERE project_id = ? ORDER BY created_at',
-  )
-    .bind(projectId)
-    .all<{
-      id: string
-      kind: string
-      mime: string
-      bytes: number
-      duration_sec: number | null
-      path: string | null
-      r2_key: string
-      created_at: number
-    }>()
-
-  const doc = await docOf(c.env, projectId)
-  const used = doc ? assetIdsInDoc(doc) : new Set<string>()
-  // A render output is not referenced by the *document* but is very much in
-  // use — its job hands out a download URL for it. Without this every render
-  // would read as "unused", which is exactly the wrong nudge.
-  const renderKeys = await renderOutputKeys(c.env, projectId)
-
-  return c.json({
-    assets: rows.results.map((r) => ({
-      id: r.id,
-      kind: r.kind,
-      mime: r.mime,
-      bytes: r.bytes,
-      durationSec: r.duration_sec,
-      // Rows predating the path column still resolve to a sensible place.
-      path: r.path || defaultAssetPath(r.kind, r.mime, r.id),
-      createdAt: r.created_at,
-      usedBy: used.has(r.id) || renderKeys.has(r.r2_key),
-    })),
-  })
+  try {
+    return c.json({ assets: await listProjectAssets(c.env, c.req.param('id'), c.get('userId')) })
+  } catch (e) {
+    if (e instanceof AccessError) return c.json({ error: e.message }, e.status as 403)
+    throw e
+  }
 })
 
 /** Rename or move — both are just a new virtual path. */
 app.patch('/api/assets/:assetId', async (c) => {
-  const asset = await loadAsset(c.env, c.req.param('assetId'))
-  if (!asset) return c.json({ error: 'asset_not_found' }, 404)
-  const userId = c.get('userId')
-  if (asset.owner !== userId && userId !== 'internal') return c.json({ error: 'forbidden' }, 403)
-
   const body = (await c.req.json().catch(() => null)) as { path?: unknown } | null
   if (!body || typeof body.path !== 'string') return c.json({ error: 'path_required' }, 400)
-
-  let path: string
   try {
-    path = normalizeAssetPath(body.path)
+    return c.json(await moveAsset(c.env, c.req.param('assetId'), body.path, c.get('userId')))
   } catch (e) {
+    if (e instanceof AccessError) return c.json({ error: e.message }, e.status as 403)
+    if (e instanceof AssetPathTaken) {
+      return c.json({ error: 'path_taken', detail: e.path, assetId: e.assetId }, 409)
+    }
     return c.json({ error: 'invalid_path', detail: (e as Error).message }, 400)
   }
-
-  // Two files sharing a path would render an ambiguous tree.
-  const clash = await c.env.DB.prepare(
-    'SELECT id FROM assets WHERE project_id = ? AND path = ? AND id != ?',
-  )
-    .bind(asset.project_id, path, asset.id)
-    .first<{ id: string }>()
-  if (clash) return c.json({ error: 'path_taken', detail: path, assetId: clash.id }, 409)
-
-  await c.env.DB.prepare('UPDATE assets SET path = ? WHERE id = ?').bind(path, asset.id).run()
-  return c.json({ assetId: asset.id, path })
 })
 
-/**
- * Delete, unless the document still points at it.
- *
- * Phase 2 established that a document must never hold an assetId resolving to
- * nothing; that invariant is worth as much on the way out as on the way in.
- * `?force=1` is the deliberate override, and it reports what it broke.
- */
 app.delete('/api/assets/:assetId', async (c) => {
-  const asset = await loadAsset(c.env, c.req.param('assetId'))
-  if (!asset) return c.json({ error: 'asset_not_found' }, 404)
-  const userId = c.get('userId')
-  if (asset.owner !== userId && userId !== 'internal') return c.json({ error: 'forbidden' }, 403)
-
-  const doc = await docOf(c.env, asset.project_id)
-  const used = doc ? assetIdsInDoc(doc) : new Set<string>()
-  const force = !!c.req.query('force')
-  const renderKeys = await renderOutputKeys(c.env, asset.project_id)
-  const isRenderOutput = renderKeys.has(asset.r2_key)
-  const inUse = used.has(asset.id) || isRenderOutput
-
-  if (inUse && !force) {
-    const scenes = (doc?.scenes ?? [])
-      .filter((s) => s.narration?.audio?.assetId === asset.id)
-      .map((s) => s.name)
+  try {
     return c.json(
-      {
-        error: 'asset_in_use',
-        scenes,
-        ...(isRenderOutput ? { reason: 'a finished render job still serves this file' } : {}),
-        hint: 'pass ?force=1 to delete anyway',
-      },
-      409,
+      await deleteAsset(c.env, c.req.param('assetId'), !!c.req.query('force'), c.get('userId')),
     )
+  } catch (e) {
+    if (e instanceof AccessError) return c.json({ error: e.message }, e.status as 403)
+    if (e instanceof AssetInUse) {
+      return c.json(
+        {
+          error: 'asset_in_use',
+          scenes: e.scenes,
+          ...(e.isRenderOutput ? { reason: 'a finished render job still serves this file' } : {}),
+          hint: 'pass ?force=1 to delete anyway',
+        },
+        409,
+      )
+    }
+    throw e
   }
-
-  await c.env.ASSETS.delete(asset.r2_key)
-  await c.env.DB.prepare('DELETE FROM assets WHERE id = ?').bind(asset.id).run()
-  // Don't leave a job advertising a download that now 410s.
-  if (isRenderOutput) {
-    await c.env.DB.prepare('UPDATE render_jobs SET output_key = NULL WHERE output_key = ?')
-      .bind(asset.r2_key)
-      .run()
-  }
-  return c.json({ deleted: asset.id, wasInUse: inUse })
 })
 
 /**
@@ -798,13 +479,7 @@ app.delete('/api/assets/:assetId', async (c) => {
  * immutable, so they cache forever.
  */
 app.get('/api/assets/:assetId', async (c) => {
-  const asset = await c.env.DB.prepare(
-    `SELECT a.*, p.user_id AS owner FROM assets a
-     JOIN projects p ON p.id = a.project_id
-     WHERE a.id = ?`,
-  )
-    .bind(c.req.param('assetId'))
-    .first<AssetRow & { owner: string }>()
+  const asset = await loadAsset(c.env, c.req.param('assetId'))
   if (!asset) return c.json({ error: 'asset_not_found' }, 404)
 
   const userId = c.get('userId')
@@ -819,9 +494,5 @@ app.get('/api/assets/:assetId', async (c) => {
   if (!ranged) return c.json({ error: 'asset_missing' }, 410)
   return ranged
 })
-
-function projectStub(env: Env, projectId: string): DurableObjectStub {
-  return env.PROJECT.get(env.PROJECT.idFromName(projectId))
-}
 
 export default app

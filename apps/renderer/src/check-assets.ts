@@ -92,7 +92,56 @@ const badKind = await fetch(`${API_URL}/api/projects/${projectId}/assets?kind=sp
 })
 assert.equal(badKind.status, 400, 'unknown kind → 400')
 
+// 7. The explorer routes — list, move, delete.
+//
+// These are what the editor's asset panel binds to, and since plans/008 they
+// are thin wrappers over the same service functions the agent capabilities
+// call. Covered here at the HTTP level because the wrappers own their own
+// status-code mapping, which the capability path never exercises.
+const listed = await fetch(`${API_URL}/api/projects/${projectId}/assets`, { headers: as(OWNER) })
+const { assets } = await jsonOrThrow<{
+  assets: { id: string; path: string; usedBy: boolean; durationSec: number | null }[]
+}>(listed, 'list assets')
+const row = assets.find((a) => a.id === asset.assetId)
+assert.ok(row, 'the uploaded asset must appear in the list')
+assert.equal(row.usedBy, false, 'nothing references it yet')
+assert.ok(row.path.startsWith('/'), `path must be virtual and absolute, got ${row.path}`)
+
+// A non-owner must not be able to enumerate someone else's files.
+const nosy = await fetch(`${API_URL}/api/projects/${projectId}/assets`, { headers: as(INTRUDER) })
+assert.equal(nosy.status, 403, `non-owner must not list, got ${nosy.status}`)
+
+const moved = await fetch(`${API_URL}/api/assets/${asset.assetId}`, {
+  method: 'PATCH',
+  headers: { ...as(OWNER), 'content-type': 'application/json' },
+  body: JSON.stringify({ path: '/audio/renamed.mp3' }),
+})
+const { path } = await jsonOrThrow<{ path: string }>(moved, 'move asset')
+assert.equal(path, '/audio/renamed.mp3', 'move writes the new virtual path')
+
+// Traversal must be refused rather than normalised into an escape.
+const escape = await fetch(`${API_URL}/api/assets/${asset.assetId}`, {
+  method: 'PATCH',
+  headers: { ...as(OWNER), 'content-type': 'application/json' },
+  body: JSON.stringify({ path: '../../etc/passwd' }),
+})
+assert.equal(escape.status, 400, `traversal must be refused, got ${escape.status}`)
+
+const deleted = await fetch(`${API_URL}/api/assets/${asset.assetId}`, {
+  method: 'DELETE',
+  headers: as(OWNER),
+})
+const { wasInUse } = await jsonOrThrow<{ wasInUse: boolean }>(deleted, 'delete asset')
+assert.equal(wasInUse, false, 'an unreferenced asset deletes cleanly')
+
+const gone = await fetch(`${API_URL}/api/assets/${asset.assetId}`, { headers: as('internal') })
+assert.equal(gone.status, 404, 'a deleted asset must be gone from D1, not just R2')
+
+// Passing runs leave nothing behind; a failure keeps the fixture to inspect.
+await fetch(`${API_URL}/api/projects/${projectId}`, { method: 'DELETE', headers: as(OWNER) })
+
 console.log(
   `assets OK — ${(payload.byteLength / 1024).toFixed(0)}KiB round-tripped byte-identical ` +
-    `(asset ${asset.assetId} in project ${projectId}); tenancy, 404 and kind validation enforced`,
+    `(asset ${asset.assetId} in project ${projectId}); tenancy, 404 and kind validation ` +
+    `enforced; list/move/delete routes verified including traversal refusal`,
 )

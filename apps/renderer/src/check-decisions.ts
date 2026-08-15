@@ -58,6 +58,13 @@ async function call(name: string, args: Record<string, unknown>): Promise<string
   return t
 }
 
+/**
+ * Run a catalog capability. Only `ask_user` is still a tool of its own — it is
+ * a protocol act, not a request/response call — so everything else, including
+ * the `record_answer` that closes a question, goes through the executor.
+ */
+const run = (name: string, args: Record<string, unknown>) => call('execute', { name, args })
+
 await rpc('initialize', {
   protocolVersion: '2024-11-05',
   capabilities: {},
@@ -70,13 +77,16 @@ await fetch(MCP_URL, {
 })
 
 const tools = (await rpc('tools/list')).result.tools as { name: string }[]
-for (const t of ['ask_user', 'record_answer']) {
-  assert.ok(tools.map((x) => x.name).includes(t), `${t} must be registered`)
-}
+const toolNames = tools.map((x) => x.name)
+// Asking stays native; answering does not. Elicitation is a server→client
+// request and the fallback controls the agent's next reply, neither of which
+// survives being flattened into `execute`.
+assert.ok(toolNames.includes('ask_user'), 'ask_user must stay a tool of its own')
+assert.ok(toolNames.includes('execute'), 'record_answer is reached through execute')
 // get_answer was removed: polling had no path left once ask_user either
 // elicited the answer or told the agent to relay it. Its absence is asserted
 // so it cannot drift back in as a "cheap to keep" convenience.
-assert.ok(!tools.map((x) => x.name).includes('get_answer'), 'get_answer should be gone')
+assert.ok(!toolNames.includes('get_answer'), 'get_answer should be gone')
 
 /** Read decisions straight from the API — the state the tools write to. */
 const decisions = async (): Promise<any[]> => {
@@ -87,8 +97,10 @@ const decisions = async (): Promise<any[]> => {
   return ((await r.json()) as { decisions: any[] }).decisions
 }
 
-const project = JSON.parse(await call('create_project', { name: 'Decision Check' })) as { id: string }
-await call('add_scene', { projectId: project.id, name: 'One', duration: 6 })
+const project = {
+  id: (await run('create_project', { name: 'Decision Check' })).match(/created project (\S+)/)![1]!,
+}
+await run('add_scene', { projectId: project.id, name: 'One', duration: 6 })
 
 // ---------- 1. the agent asks ----------
 const asked = await call('ask_user', {
@@ -114,6 +126,8 @@ for (const label of ['Extend the scene', 'Shorten the script', 'Let it cut']) {
   assert.ok(asked.includes(label), `the pasteable block names option "${label}"`)
 }
 assert.match(asked, /1→opt1/, 'it maps reply numbers back to option ids for record_answer')
+// The instruction has to name the tool that actually exists now.
+assert.match(asked, /execute\(name="record_answer"\)/, 'it names how to close the question')
 // With get_answer gone, record_answer is the only thing that closes a
 // question and nothing will chase it — so the result has to say that
 // continuing regardless is a decision, not an oversight.
@@ -146,8 +160,8 @@ assert.equal(settled.answer.via, 'editor', 'provenance says which surface answer
 
 // ---------- 4. answering twice is refused ----------
 await assert.rejects(
-  () => call('record_answer', { projectId: project.id, decisionId, optionId: 'opt2' }),
-  /already_answered/,
+  () => run('record_answer', { projectId: project.id, decisionId, optionId: 'opt2' }),
+  /already answered/,
   'a second answer must be rejected, not silently overwrite',
 )
 
@@ -158,7 +172,7 @@ const second = await call('ask_user', {
   options: [{ label: 'Yes' }, { label: 'No' }],
 })
 const secondId = second.match(/STOP — WAITING ON THE HUMAN \(([^)]+)\)/)![1]!
-const relayed = await call('record_answer', {
+const relayed = await run('record_answer', {
   projectId: project.id,
   decisionId: secondId,
   note: 'hold it about two seconds longer',
@@ -182,7 +196,11 @@ assert.deepEqual(
   'the two answers keep distinct provenance',
 )
 
+// Passing runs leave nothing behind; a failure keeps the fixture to inspect.
+await run('delete_project', { projectId: project.id, confirm: true })
+
 console.log(
-  'decisions OK — pasteable block asked over MCP, stored open, editor endpoint and chat ' +
-    'relay answer with distinct provenance, double-answer refused, get_answer gone',
+  'decisions OK — pasteable block asked over MCP (native ask_user), stored open, editor ' +
+    'endpoint and chat relay answer with distinct provenance via execute(record_answer), ' +
+    'double-answer refused, get_answer gone',
 )

@@ -44,14 +44,30 @@ value is used in prod and dev, per Better Auth cloud setup).
 > middleware-loader.entry.ts`. Fix by deleting `apps/*/.wrangler/tmp`. Never
 > delete `.wrangler/state` — that is the local D1 database and R2 bucket.
 
-> **Gotcha:** an MCP client captures the tool list **when the session starts**.
-> Add or change a tool and existing sessions never see it — they can read the
-> docs, fail to call it, and fall back to driving the worker over raw JSON-RPC,
-> which looks like the tool working while bypassing the client entirely. After
-> changing `apps/mcp`, restart the *client* (a fresh `claude` session), not
-> just the worker. This has now cost two milestone runs their tool-surface
-> coverage.
+> **Mostly historical:** an MCP client captures the tool list **when the
+> session starts**, so adding or changing a tool used to need a restart of the
+> *client* (a fresh `claude` session), not just the worker. Sessions that
+> missed a change would read the docs, fail to call it, and fall back to raw
+> JSON-RPC — which looks like the tool working while bypassing the client
+> entirely. This cost two milestone runs their tool-surface coverage, and is
+> the main reason the gateway exists.
+>
+> Since [plans/008](plans/008-mcp-gateway.md) the tool list is five fixed
+> entries and capabilities are read from the API worker at call time, so
+> **editing a capability needs no restart of anything** — verified end-to-end
+> at ~14s: same MCP session id, unchanged tool list, new capability text. The
+> old rule still applies to the five gateway tools themselves, which is
+> exactly why they are meant to stop changing.
 
+> **Gotcha:** `apps/api` must declare **zod v4**, while `packages/dsl` and
+> `apps/mcp` stay on v3. `better-call` (under Better Auth) takes zod as a
+> *peer*, so it resolves to whatever the importing app declares — adding a
+> plain `zod: ^3` to `apps/api` flips it onto v3 and the worker dies at boot
+> with `zod_default.url is not a function`. `pnpm.overrides` cannot fix it
+> (overrides retarget dependency versions, not peer resolution). Inside
+> `apps/api` use the v4 API: `z.record(z.string(), z.any())`, and never
+> compose a `@euclid/dsl` Zod object into a v4 schema.
+>
 > **Gotcha:** wrangler does **not** reliably hot-reload `.dev.vars`. After
 > changing a secret, restart the worker or it keeps serving the old value —
 > which looks exactly like a broken third-party integration. `sync-env`
@@ -128,8 +144,10 @@ every run** — re-run and re-paste after restarting.
 | `shot.ts <t...>` | pixel-accurate frames of the demo doc through the export surface |
 | `shot-project.ts <projectId> <t...>` | the same, for a **real project** at global seconds — how every milestone run has actually found its visual bugs (`OUT_DIR=` to choose where; needs `dev:api` + `dev:web`). Superseded once `preview_frames` lands (plans/007) |
 | `check-mcp-tools.ts` | MCP surface driven as a real client does: `animate` arg coercion, tool registration (free; needs `dev:api` + `dev:mcp`) |
+| `check-gateway.ts` | agent gateway (plans/008): instructions → describe → execute, and **every capability in the catalog** — transitions and overlap-replace, the credit gate, both `update_node` traps, arg coercion, asset in-use refusal (free; needs `dev:api` only) |
 | `check-decisions.ts` | agent → human → agent question loop, driven headless as a shell-less client would (free; needs `dev:api` + `dev:mcp`) |
-| `check-assets.ts` | asset upload → download is byte-identical; tenancy enforced (needs `dev:api`) |
+| `check-delete.ts` | project deletion: confirm guard, side-effect-free dry run, tenancy, and that the cascade clears D1 rows, R2 bytes **and** the Durable Object's document (free; needs `dev:api`) |
+| `check-assets.ts` | asset upload → download is byte-identical; tenancy enforced; the explorer routes the editor binds to — list, move (incl. traversal refusal), delete (needs `dev:api`) |
 | `check-narration.ts [--refund]` | TTS generation end-to-end: pricing, debit, op reaches the doc, overflow warning (**spends credits**; `--refund` needs a broken key, costs nothing) |
 | `check-app.ts` | project list renders and opens a project; demo editor loads; zero console/page errors |
 | `check-narration-ui.ts` | editor narration preview: audio loads cross-origin, exact captions render, overrun panel fixes the scene (**spends credits**; needs `dev:api` + `dev:web`) |
@@ -137,6 +155,11 @@ every run** — re-run and re-paste after restarting.
 | `render.ts --project <id>` | full MP4 export with narration audio (needs ffmpeg) |
 | `check-mux.ts` | A/V sync in a real render, measured with `silencedetect` (**spends credits**; needs ffmpeg + `dev:api` + `dev:web`) |
 | `bench-webcodecs.ts` | WebCodecs codec support + 1080p encode throughput in headless Chromium |
+
+Scripts that create a project **delete it again when they pass**, so a green
+run leaves the project list as it found it. A *failing* run deliberately keeps
+its fixture, so the wreckage can be opened in the editor. Debris from passing
+runs is what previously grew the list to 105 projects.
 
 Run any of them with `pnpm --filter @euclid/renderer exec tsx src/<script>`.
 Visual changes should be verified with screenshots (Read the PNGs), not by

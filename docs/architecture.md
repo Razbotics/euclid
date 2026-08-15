@@ -168,6 +168,77 @@ agent can read the real duration before choreographing against it and the
 editor sees narration appear live. See
 [plans/002](plans/002-render-pipeline.md) for the wiring.
 
+## The capability catalog (agent gateway)
+
+`apps/mcp` is a **relay, not a tool surface** — five fixed tools
+(`instructions`, `describe`, `execute`, `execute_paid`, `ask_user`) and no
+capability logic at all. Agent-facing verbs live in **one place**:
+`apps/api/src/agent/`, a catalog of
+capabilities each carrying its name, summary, prose contract, Zod args, a
+`costsCredits` flag, and a handler. Three endpoints stand over it —
+`GET /api/agent/tools` (orientation + the whole list), `POST
+/api/agent/tools/describe` (full contract for named entries), and `POST
+/api/agent/tools/:name/execute`. See
+[plans/008](plans/008-mcp-gateway.md) for the reasoning and the migration.
+
+Three properties are load-bearing:
+
+- **One implementation surface.** The intent compilation that used to live in
+  the MCP worker (keyframes from a sampled current value, morph/highlight
+  overlap-replace, the `update_node` track-shadowing warning) now runs beside
+  the Durable Object, so a write is one local stub call instead of three
+  cross-worker round trips — and the editor can reach the same verbs. The
+  heavyweight paths (`services/{assets,narration,render}.ts`) are shared
+  outright: the REST routes and the catalog call the same functions, so
+  pricing, debit and refund exist once.
+- **A fixed tool list.** MCP clients cache `tools/list` at connect, so a tool
+  edit used to need a redeploy *and* a client restart — which cost two
+  milestone runs their tool coverage. With permanent meta-tools the catalog is
+  read at call time, and an edit is live on the next call in the same session
+  (measured through a held MCP session: same session id, unchanged tool list,
+  new capability text). `CATALOG_REVISION` is derived from the catalog and
+  stamped on responses, so a validation error can say the schema moved rather
+  than looking like the agent got the call wrong.
+- **Paid work is a separate door.** Permissions in MCP clients are per-tool, so
+  a single `execute` would let "always allow" quietly cover renders. Credit-
+  spending capabilities are reachable only through the paid executor, and each
+  door refuses the other's capabilities.
+
+Two things deliberately do **not** move. `ask_user` stays a native MCP tool:
+elicitation is a protocol act (the server asks the *client* to open a picker),
+and the fallback controls the agent's next reply — neither is expressible as a
+request/response capability. And asset **bytes** stay on plain REST, since tool
+args are JSON and base64 through an LLM context is a non-starter.
+
+Because validation moved server-side, error text is now the agent's only
+teacher — which is why lookups name what *does* exist and rejections name the
+capability to call next.
+
+## Deleting a project
+
+`DELETE /api/projects/:id` (and the `delete_project` capability) is the only
+operation with **no way back**: the event log that makes every other mistake
+recoverable lives in the Durable Object storage this destroys. Three things
+follow from that.
+
+The cascade is ordered **bytes → rows → document → project row**. R2 is the
+only store with no foreign key pointing at it, so an object orphaned by a
+mid-way failure is invisible and unreclaimable, while an orphaned *row* is
+still reachable by `project_id` and cleans up on a retry. So the unrecoverable
+work happens first, while the rows that let us find it again still exist. The
+project row goes last because the deletion stays resumable — and ownership
+stays checkable — for as long as it is there.
+
+The Durable Object gets an explicit `/destroy`, because no SQL delete reaches
+the document or the decisions. It clears its in-memory `doc` too: emptying
+storage does not evict a live instance, so one that kept its copy would go on
+serving and mutating a document that no longer exists anywhere else.
+
+Both surfaces refuse to fire blind. The endpoint takes `?dryRun=1` and the
+capability requires `confirm: true`; without them each reports what the
+project holds — scenes, duration, assets, renders — and deletes nothing. That
+report is what makes a bulk cleanup checkable before it runs.
+
 ## Editor entry points
 
 `/` lists every project, newest first; `?project=<id>` opens the editor on

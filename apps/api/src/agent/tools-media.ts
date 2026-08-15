@@ -1,0 +1,269 @@
+import { z } from 'zod'
+import {
+  buildAssetTree,
+  documentCues,
+  op,
+  toSRT,
+  toVTT,
+  type AssetFolder,
+} from '@euclid/dsl'
+import {
+  AssetInUse,
+  AssetPathTaken,
+  deleteAsset,
+  listProjectAssets,
+  moveAsset,
+} from '../services/assets'
+import { NarrationError, generateSceneNarration } from '../services/narration'
+import { RenderError, listRenderJobs, startRender } from '../services/render'
+import { PROJECT_ID, SCENE_ID } from './schemas'
+import { capability, said, CapabilityError } from './types'
+
+/** Service errors carry the remedy already; re-throwing keeps it intact. */
+function asCapabilityError(e: unknown): never {
+  if (e instanceof NarrationError || e instanceof RenderError) {
+    const extra = Object.entries(e.extra)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(', ')
+    throw new CapabilityError(`${e.message}${extra ? ` (${extra})` : ''}`, e.status)
+  }
+  throw e
+}
+
+export const mediaTools = [
+  capability({
+    name: 'set_narration',
+    summary: "Set a scene's narration script. Free — writes text only.",
+    doc: 'Writes the script into the document without synthesizing anything. Free, so iterate on wording here as much as you like. Captions already work from this text alone (estimated timing); call generate_narration when you want real audio and exact word timings.',
+    args: z.object({
+      projectId: PROJECT_ID,
+      sceneId: SCENE_ID,
+      narrationText: z.string(),
+      voiceId: z.string().optional(),
+    }),
+    async handler(ctx, { projectId, sceneId, narrationText, voiceId }) {
+      const { doc } = await ctx.getDoc(projectId)
+      ctx.sceneOrThrow(doc, sceneId)
+      await ctx.submit(projectId, [op.setNarration(sceneId, { text: narrationText, voiceId })])
+      const words = narrationText.trim() ? narrationText.trim().split(/\s+/).length : 0
+      return said(`narration set for ${sceneId} (${words} words)`, { sceneId, words })
+    },
+  }),
+
+  capability({
+    name: 'generate_narration',
+    summary: 'Synthesize a scene\'s narration to speech. SPENDS CREDITS.',
+    doc: [
+      '**Costs credits**, priced by script length. Everything else about narration is free — set the text with set_narration and iterate there first.',
+      '',
+      'Stores the audio as a project asset and writes word-level timings into the document, which makes captions exact and gives you real timings to animate against.',
+      '',
+      'Reports — but does not reject — speech longer than its scene. That mismatch is only knowable after synthesis, so refusing would bin audio you just paid for. Fix it with fit_scene_to_narration.',
+    ].join('\n'),
+    costsCredits: true,
+    args: z.object({
+      projectId: PROJECT_ID,
+      sceneId: SCENE_ID,
+      text: z.string().optional().describe("overrides the scene's existing narration text"),
+      voiceId: z.string().optional(),
+    }),
+    async handler(ctx, { projectId, sceneId, text, voiceId }) {
+      const r = await generateSceneNarration(ctx.env, projectId, sceneId, ctx.userId, {
+        text,
+        voiceId,
+      }).catch(asCapabilityError)
+      return said(
+        `generated narration for ${sceneId}: ${r.durationSec.toFixed(2)}s, ${r.words} words, ` +
+          `cost ${r.cost} credits (asset ${r.assetId})` +
+          (r.warning ? `\nWARNING: ${r.warning}` : ''),
+        r,
+      )
+    },
+  }),
+
+  capability({
+    name: 'fit_scene_to_narration',
+    summary: 'Set a scene\'s duration to its speech plus a held tail.',
+    doc: 'Free. The one-call fix for the dead air get_project flags as `(long)`, and for speech that overruns its scene. The tail is deliberate breathing room — pass more for a beat you want to land, less to keep things tight. Requires generated narration, since it needs the real audio duration.',
+    args: z.object({
+      projectId: PROJECT_ID,
+      sceneId: SCENE_ID,
+      tailSec: z
+        .number()
+        .min(0)
+        .max(10)
+        .default(0.8)
+        .describe('silence held after the last word'),
+    }),
+    async handler(ctx, { projectId, sceneId, tailSec }) {
+      const { doc } = await ctx.getDoc(projectId)
+      const scene = ctx.sceneOrThrow(doc, sceneId)
+      const audio = scene.narration?.audio
+      if (!audio) {
+        throw new CapabilityError(
+          `scene ${sceneId} has no generated narration — call generate_narration first ` +
+            `(that is the step that produces a real duration to fit to)`,
+        )
+      }
+      const duration = Math.round((audio.durationSec + tailSec) * 100) / 100
+      await ctx.submit(projectId, [op.updateScene(sceneId, { duration })])
+      return said(
+        `scene ${sceneId}: ${scene.duration}s → ${duration}s ` +
+          `(${audio.durationSec.toFixed(2)}s speech + ${tailSec}s tail)`,
+        { sceneId, was: scene.duration, duration, speechSec: audio.durationSec, tailSec },
+      )
+    },
+  }),
+
+  capability({
+    name: 'get_captions',
+    summary: 'SRT/VTT subtitles for the whole project.',
+    doc: 'Free — derived from the document, so always current. Cues are word-accurate where TTS timings exist and estimated from text length elsewhere; `format: "json"` marks which is which per cue.',
+    args: z.object({
+      projectId: PROJECT_ID,
+      format: z.enum(['srt', 'vtt', 'json']).default('srt'),
+    }),
+    async handler(ctx, { projectId, format }) {
+      const { doc } = await ctx.getDoc(projectId)
+      const cues = documentCues(doc)
+      if (cues.length === 0) return said('no narration yet — no cues to emit', { cues: [] })
+      const body = format === 'vtt' ? toVTT(cues) : format === 'srt' ? toSRT(cues) : JSON.stringify(cues, null, 2)
+      return said(body, { cues, estimated: cues.some((q) => q.estimated) })
+    },
+  }),
+
+  capability({
+    name: 'list_assets',
+    summary: "The project's files as a tree, marked in-use or unused.",
+    doc: 'Free. Paths are virtual — folders are derived, so there is nothing to mkdir. Each file is marked `[in use]` or `[unused]`, which is what makes a leftover from a regenerated scene visible; those in use are the ones remove_asset refuses to delete.',
+    args: z.object({ projectId: PROJECT_ID }),
+    async handler(ctx, { projectId }) {
+      await ctx.requireProject(projectId)
+      const assets = await listProjectAssets(ctx.env, projectId, ctx.userId)
+      if (assets.length === 0) return said('no assets in this project', { assets: [] })
+
+      const used = new Map(assets.map((a) => [a.id, a.usedBy]))
+      const lines: string[] = []
+      const walk = (folder: AssetFolder, depth: number) => {
+        const pad = '  '.repeat(depth)
+        for (const f of folder.folders) {
+          lines.push(`${pad}${f.name}/`)
+          walk(f, depth + 1)
+        }
+        for (const file of folder.files) {
+          const kb = `${Math.round(file.bytes / 1024)}KB`
+          const dur = file.durationSec ? ` ${file.durationSec.toFixed(2)}s` : ''
+          const mark = used.get(file.id) ? ' [in use]' : ' [unused]'
+          lines.push(`${pad}${file.name}  ${kb}${dur}${mark}  ${file.id}`)
+        }
+      }
+      walk(buildAssetTree(assets), 0)
+      const unused = assets.filter((a) => !a.usedBy).length
+      return said(
+        `${assets.length} file(s)${unused ? `, ${unused} unused` : ''}\n${lines.join('\n')}`,
+        { assets },
+      )
+    },
+  }),
+
+  capability({
+    name: 'move_asset',
+    summary: 'Rename or move a file by writing a new virtual path.',
+    doc: 'Free. Folders are implicit in the path — they appear when a file names them and disappear when empty, so there is nothing to create or clean up. Paths must stay inside the project (no traversal).',
+    args: z.object({
+      projectId: PROJECT_ID,
+      assetId: z.string().min(1),
+      path: z.string().min(1).describe('e.g. /narration/hook.mp3'),
+    }),
+    async handler(ctx, { projectId, assetId, path }) {
+      await ctx.requireProject(projectId)
+      try {
+        const out = await moveAsset(ctx.env, assetId, path, ctx.userId)
+        return said(`moved ${assetId} → ${out.path}`, out)
+      } catch (e) {
+        if (e instanceof AssetPathTaken) {
+          throw new CapabilityError(
+            `${e.path} is already used by asset ${e.assetId} — pick another name`,
+            409,
+          )
+        }
+        throw new CapabilityError(`could not move ${assetId}: ${(e as Error).message}`)
+      }
+    },
+  }),
+
+  capability({
+    name: 'remove_asset',
+    summary: 'Delete a file. Refuses if the document still references it.',
+    doc: 'Free. A scene must never point at nothing, so a referenced file is refused and the refusal names the scenes. Re-generate or repoint that scene first, or pass `force: true` to delete anyway and accept the broken reference.',
+    args: z.object({
+      projectId: PROJECT_ID,
+      assetId: z.string().min(1),
+      force: z.boolean().default(false),
+    }),
+    async handler(ctx, { projectId, assetId, force }) {
+      await ctx.requireProject(projectId)
+      try {
+        const out = await deleteAsset(ctx.env, assetId, force, ctx.userId)
+        return said(
+          `deleted ${assetId}${out.wasInUse ? ' (was in use — a scene now points at nothing)' : ''}`,
+          out,
+        )
+      } catch (e) {
+        if (e instanceof AssetInUse) {
+          throw new CapabilityError(
+            `${assetId} is still used by: ${e.scenes.join(', ') || 'the document'}. ` +
+              (e.isRenderOutput ? 'A finished render job still serves this file. ' : '') +
+              'Re-generate or repoint that scene first, or call again with force: true.',
+            409,
+          )
+        }
+        throw new CapabilityError(`could not delete ${assetId}: ${(e as Error).message}`)
+      }
+    },
+  }),
+
+  capability({
+    name: 'render_video',
+    summary: 'Render the project to MP4. SPENDS CREDITS. Returns a job id.',
+    doc: [
+      '**Costs credits**, priced per second of video at the project resolution. Narration is billed separately by generate_narration and is not charged again here.',
+      '',
+      'Returns a job id immediately; the render worker completes it asynchronously. Poll get_render_status for the download URL.',
+      '',
+      'A failed job refunds its credits automatically, so a failure costs nothing but time.',
+    ].join('\n'),
+    costsCredits: true,
+    args: z.object({ projectId: PROJECT_ID }),
+    async handler(ctx, { projectId }) {
+      const r = await startRender(ctx.env, projectId, ctx.userId).catch(asCapabilityError)
+      return said(
+        `queued render ${r.jobId} — ${r.seconds}s of video, ${r.cost} credits. ` +
+          `Poll get_render_status for the download URL.`,
+        r,
+      )
+    },
+  }),
+
+  capability({
+    name: 'get_render_status',
+    summary: 'Recent render jobs; a done job carries downloadUrl.',
+    doc: 'Free. Lists the last 20 jobs newest first. A `done` job carries `downloadUrl` for the MP4; a `failed` job has already had its credits refunded.',
+    args: z.object({ projectId: PROJECT_ID }),
+    async handler(ctx, { projectId }) {
+      await ctx.requireProject(projectId)
+      const jobs = await listRenderJobs(ctx.env, projectId, ctx.origin)
+      if (jobs.length === 0) return said('no render jobs yet', { jobs: [] })
+      return said(
+        jobs
+          .map(
+            (j) =>
+              `${j.id}  ${j.status}  ${j.cost} credits` +
+              (j.downloadUrl ? `  ${j.downloadUrl}` : ''),
+          )
+          .join('\n'),
+        { jobs },
+      )
+    },
+  }),
+]

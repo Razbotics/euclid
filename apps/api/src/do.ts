@@ -59,6 +59,31 @@ export class ProjectDO extends DurableObject<Env> {
       return json({ doc: this.doc, version: this.version })
     }
 
+    /**
+     * Tear this project down. Called only by the API's delete path, after it
+     * has checked ownership.
+     *
+     * The in-memory copies are cleared too: a Durable Object is not evicted
+     * just because its storage was emptied, so an instance that kept `doc`
+     * would happily keep serving and mutating a document that no longer
+     * exists anywhere else. Subscribers are closed rather than left hanging on
+     * a project that is gone — 1001 "going away" is what tells an open editor
+     * to stop, instead of it retrying against a dead id.
+     */
+    if (url.pathname === '/destroy' && request.method === 'POST') {
+      for (const ws of this.ctx.getWebSockets()) {
+        try {
+          ws.close(1001, 'project deleted')
+        } catch {
+          // already closing; hibernation API cleans it up
+        }
+      }
+      await this.ctx.storage.deleteAll()
+      this.doc = null
+      this.version = 0
+      return json({ destroyed: true })
+    }
+
     if (url.pathname === '/ops' && request.method === 'POST') {
       const parsed = OpEnvelopeSchema.safeParse(await request.json())
       if (!parsed.success) return json({ error: 'invalid_envelope', detail: parsed.error.message }, 400)
