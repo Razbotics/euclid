@@ -10,24 +10,33 @@ and only surfaced when a human watched the export. Two of the six recorded
 flaws — dead-air pacing and an unexplained cross-scene rewrite — are exactly
 the kind of thing a human would have answered in one click.
 
-## Where a question lives (the load-bearing decision)
+## Where a question is asked, and where it lives
 
-**In the project's Durable Object, not in the chat.**
+**Asked in chat. Stored in the project's Durable Object.** These are
+different things, and conflating them was the original design error.
 
-MCP has an `elicitation` capability that would ask through the client. It was
-rejected for two reasons:
+The first version treated the editor as the place a question got asked, on
+the grounds that "the narration overruns by 1.9s" is a question about a
+moment in a video and the editor is where you can seek to it. That reasoning
+still holds — but it assumed someone had a browser open. **The system can run
+headless**: a cron job, CI, an agent on a server. A question that exists only
+in a web panel is a question nobody is asked.
 
-1. **Context.** "The narration overruns by 1.9s — how should I fix it?" is a
-   question about a moment in a video. Answered in a chat window it is
-   abstract; answered in the editor the human can seek to 4.2s and watch the
-   problem first. The question carries an optional `atSec`, and the panel
-   offers a "jump to" button.
-2. **Portability.** Elicitation depends on client support. Riding the DO works
-   with any MCP client, including none — the questions are just project state.
+So chat is the surface that always exists. `ask_user` returns a
+ready-to-paste block — question, numbered options, "reply with a number" —
+and instructs the agent to put it in its next reply and stop. The DO copy is
+what gives it persistence, an audit trail, and a **second** surface for
+whoever does have the editor open, where the `atSec` seek button still adds
+the context chat can't.
 
-Consequences: questions broadcast over the **existing** WebSocket, so the
-editor shows them live with no new transport; and they survive disconnects,
-so a question asked before the editor was open is still there when it opens.
+MCP's `elicitation` capability would be the native way to ask through the
+client, and is worth revisiting; it was passed over because it depends on
+client support, whereas a returned string works with every client.
+
+Consequences of the DO copy: questions broadcast over the **existing**
+WebSocket, so the editor shows them live with no new transport, and they
+survive disconnects — a question asked before the editor was open is still
+there when it opens.
 
 **Not part of `EuclidDoc`.** A decision is workflow state, not video content.
 Putting it in the document would bump `SCHEMA_VERSION`, reach the renderer,
@@ -79,14 +88,36 @@ rejected. Zero console errors.
   is the agent's job; the tool description tells it when asking is
   appropriate, and hardcoding would both fire when unwanted and miss the cases
   nobody predicted.
-- **No blocking `ask_user`.** It returns immediately and the agent polls
-  `get_answer`. A long-poll would read better in an agent loop but risks
-  request-duration limits; revisit if polling proves annoying in practice.
+- ~~**No blocking `ask_user`.**~~ **This was wrong.** It returned a receipt
+  ("asked (id)") and merely suggested polling. In the first real run the agent
+  asked a good question at the right moment, scheduled a wakeup, built the
+  rest of the video against its own guess, and mentioned the unanswered
+  question only in its closing summary. A question that doesn't stop the asker
+  is a log line, not a question.
+
+  Fixed in the cheapest place that works: the **return value**, which is the
+  strongest prompt surface available — the agent reads it the instant it
+  lands. It now opens `STOP — WAITING ON THE HUMAN` and carries a
+  ready-to-paste block for the human; `get_answer` repeats the instruction
+  while anything is open, since polling and then carrying on is the same
+  failure. Still no server-side long-poll: that risks request-duration
+  limits, and wording is worth trying first.
 - **No expiry or cancel.** An unanswered question stays open forever. Fine
   while projects are single-user and short-lived.
 
-## Open question
+## What the first real run showed
 
-Nothing forces the agent to *use* this. Whether it asks at sensible moments —
-rather than never, or constantly — is a prompt/description problem that only
-shows up in a real build. Worth watching in the next milestone run.
+The predicted failure was "the agent never asks". It did ask, unprompted and
+at a sensible moment — how long the end card should hold in silence, with
+three costed options and a seek-to-moment link. The actual failures were
+different:
+
+1. **It didn't wait.** Addressed above.
+2. **The call never reached the MCP client.** The run happened in a session
+   that had connected before these tools existed, so they weren't in its tool
+   list; it discovered them from the docs and invoked them over raw JSON-RPC
+   through Bash. The question reached the editor, but nothing in the chat knew
+   a question existed — see the client-restart gotcha in
+   [dev-setup](../dev-setup.md).
+
+Still open: whether the wording alone makes it wait. Only a fresh run tells.

@@ -24,11 +24,11 @@ The agent-facing API (`apps/mcp/src/index.ts`). Design rules:
 | `animate` | keyframes one property from its **current value sampled at `start`** to `to` over `duration` — animations always chain continuously; replaces that property's keyframes after `start` |
 | `morph_latex` | queues a `texMorph` transition; multiple morphs chain in start-time order |
 | `write_on` | draw-on reveal; node invisible before `start` |
-| `highlight` | box or underline a node, or one term inside an equation named by its LaTeX (`tex: "\\frac{b}{a}"`) — located by glyph codes, so no coordinates are needed. Free |
+| `highlight` | box or underline a node, or one term inside an equation named by its LaTeX (`tex: "\\frac{b}{a}"`) — located by glyph codes, so no coordinates are needed. Sequential highlights on one node accumulate; a call overlapping an existing highlight's window replaces it. Free |
 | `set_narration` | per-scene narration script. Free — writes text only |
 | `generate_narration` | **spends credits** (priced by script length). Synthesizes the scene's narration, stores the audio, and writes word timings into the document as a `system` op. Reports — but does not reject — speech that overruns the scene |
 | `fit_scene_to_narration` | set a scene's duration to its speech plus a held tail — the one-call fix for the dead air `get_project` flags as `(long)` |
-| `ask_user` | put a choice to the human instead of deciding alone. Free. Appears live in their editor, where they can scrub to the moment in question before answering. Returns a decision id |
+| `ask_user` | put a choice to the human **in chat** and stop. Free. Returns a ready-to-paste block with numbered options; also mirrored to the editor for whoever has it open. Blocking by intention — the system may be headless, so never wait on the browser |
 | `get_answer` | poll for the human's answer, or list every question and its status. Free |
 | `record_answer` | record an answer the human gave in chat rather than in the editor; provenance is kept (`via: agent` vs `via: editor`) |
 | `get_captions` | SRT/VTT subtitles for the project. Free — derived from narration; word-accurate where TTS timings exist, estimated elsewhere |

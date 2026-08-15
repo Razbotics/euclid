@@ -106,7 +106,19 @@ const asked = await call('ask_user', {
   ],
   atSec: 4.2,
 })
-const decisionId = asked.match(/asked \(([^)]+)\)/)![1]!
+// The return value is the mechanism that makes the agent wait, so assert it.
+assert.match(asked, /STOP — WAITING ON THE HUMAN/, 'the result instructs, it does not just receipt')
+assert.match(asked, /NEXT reply/, 'it says to relay the question immediately')
+// Chat is the surface that always exists, so the result must carry a block
+// the agent can paste as-is — headless runs have no editor to click in.
+assert.match(asked, /Reply with a number/, 'the block is written for a human to answer in chat')
+for (const label of ['Extend the scene', 'Shorten the script', 'Let it cut']) {
+  assert.ok(asked.includes(label), `the pasteable block names option "${label}"`)
+}
+assert.match(asked, /1→opt1/, 'it maps reply numbers back to option ids for record_answer')
+assert.match(asked, /headless/, 'it warns not to wait on the browser')
+assert.match(asked, /do not (continue building|pick a default)/i, 'it forbids guessing on')
+const decisionId = asked.match(/STOP — WAITING ON THE HUMAN \(([^)]+)\)/)![1]!
 console.log(`asked ${decisionId}`)
 
 // ---------- 2. it reaches the open editor live ----------
@@ -153,8 +165,11 @@ assert.ok(
   `canvas must keep most of the width, got ${layout.canvasW}px of ${layout.viewport}px`,
 )
 
-// The agent must see it as still open while waiting.
-assert.match(await call('get_answer', { projectId: project.id, decisionId }), /^\[open\]/m)
+// Polling must keep saying "still blocked" — quietly returning [open] and
+// letting the agent carry on is the same failure in a different place.
+const polled = await call('get_answer', { projectId: project.id, decisionId })
+assert.match(polled, /^\[open\]/m, 'the question reads as open')
+assert.match(polled, /STILL WAITING on \d+ question/, 'polling repeats that it is blocking')
 
 // ---------- 3. the human answers in the editor ----------
 await page.locator('.decision-options button').first().click()
@@ -180,7 +195,7 @@ const second = await call('ask_user', {
   question: 'Should the end card hold longer?',
   options: [{ label: 'Yes' }, { label: 'No' }],
 })
-const secondId = second.match(/asked \(([^)]+)\)/)![1]!
+const secondId = second.match(/STOP — WAITING ON THE HUMAN \(([^)]+)\)/)![1]!
 const relayed = await call('record_answer', {
   projectId: project.id,
   decisionId: secondId,

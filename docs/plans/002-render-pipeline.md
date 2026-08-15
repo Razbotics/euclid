@@ -436,6 +436,78 @@ and what lets a write reveal symbol by symbol. A re-run of the milestone
 is the honest way to find out whether the result now reads as *good* —
 the flaws that remain will be different ones.
 
+### The re-run (2026-08-15)
+
+"Euler's Identity, in One Minute" (`9a78aa67`) — a different topic on
+purpose, so the judgment isn't anchored on the quadratic video. 3 scenes
+(hook / substitution derivation / five-constants finale), 130 words, one
+latex node morphing e^{iθ}=cosθ+isinθ down to e^{iπ}+1=0, with the cut
+into the finale carrying the *identical* form (old finding 6). 68 credits
+(9 TTS + 59 render). 58.98s h264+aac 1080p60, 1.96MB.
+
+New-tool usage, and what it changed about the build:
+- Scenes were sized by `fit_scene_to_narration` (0.8s / 1.2s / 2.5s
+  tails), not guessed; the finale's 0.39s overrun warning was cleared by
+  the same call. `get_project` reported 8% silence (first run: 15%), and
+  its one `(long)` flag was the deliberate end-card hold.
+- 8 highlights: cosπ and sinπ boxed while the narration dwells on each
+  (right before each collapses), the five constants boxed in sequence as
+  the finale names them, and a closing whole-equation underline.
+- `ask_user` posed the end-card hold length (tight/standard/long) with
+  the editor seeked to the moment; the question stayed unanswered, so the
+  stated default (2.5s) shipped and the decision is still open in the
+  project. The loop works; it just needs a human present.
+
+**Bug found and fixed mid-run: only one highlight per node survived.**
+The MCP tool stripped every existing highlight before appending
+(`filter(t => t.type !== 'highlight')`), and the engine sampled
+`transitions.find(type === 'highlight')` — first one, regardless of `t`.
+Single-highlight verification passed while the tool's actual use case (a
+sequence) was impossible; the five-constants finale is what exposed it.
+Fixed both ends: the sampler picks the highlight whose window contains
+`t` (still a pure function of document and time), and the tool replaces
+only highlights *overlapping* the new window, so sequences accumulate
+and re-calling to adjust one still replaces it. `pnpm -r typecheck` and
+`smoke.ts` green; docs updated (architecture.md, mcp-tools.md).
+
+### What the re-run actually looks like (recorded honestly)
+
+Verdict: **genuinely good** — the engine work moved it from "clean
+slides with dissolves" to something that reads as deliberate animation.
+The glyph reveal syncs with the narrator *reading* the formula, shared
+glyphs hold still through morphs, and the gold boxes land exactly on the
+term being spoken. Measured A/V offsets ≤ ~20ms again; the one mid-scene
+silence flagged by `silencedetect` is the narrator's own breath between
+sentences, not a placement error.
+
+Remaining flaws, in rough order of impact — polish now, not correctness:
+1. **Mid-morph the equation is briefly incomplete.** Staggered fades
+   mean θ leaves before π arrives, so for ~0.4s the equation reads
+   "e^i = cos + i sin" with holes. Honest trade — far better than the
+   old double-exposure — but a careful viewer sees a momentarily wrong
+   equation. A per-glyph *slide* from old to new position (true
+   correspondence for changed glyphs, not leave-then-arrive) is the next
+   step toward 3b1b.
+2. **Highlight boxes inherit glyph size.** Boxing `i` or `π` inside the
+   exponent of e^{iπ} draws a box a few pixels tall — precise but
+   visually underweighted for a finale beat that names each constant. A
+   minimum visual size, or a glow/scale emphasis style, would carry
+   better at 1080p viewing distance.
+3. **Nothing connects a highlight to *why*.** The five constants get
+   boxes while the narration explains each, but on screen there is no
+   label — a small callout ("growth", "rotation", …) under each would be
+   the 3b1b move. That's a new primitive (labeled callouts), not a fix.
+4. Caption cue 4/5 splits "e to the i / theta" — `balancedCuts` nudges
+   to clause boundaries, but a long clause-free sentence still breaks
+   mid-phrase. Only visible failure of the caption fix.
+5. The hook is static from 2.5s to 5.9s while the narration muses —
+   acceptable breathing room, but a slow drift or scale would keep it
+   alive. No pacing signal exists for *visual* stillness, only audio.
+
+The pipeline now makes a good sixty-second video. The distance to
+*beautiful* is: per-glyph motion paths in the morph, visual weight
+options for emphasis, and labeled callouts.
+
 ## Deferred on purpose
 - **Cloudflare Queues + Containers.** The flagged infra risk, and it's
   orchestration for a pipeline that hasn't yet proven it makes a *good*

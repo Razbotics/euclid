@@ -3,6 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import {
   formatDecision,
+  formatQuestionForChat,
   newId,
   op,
   outlineDoc,
@@ -404,7 +405,7 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
 
     this.server.tool(
       'highlight',
-      'Draw attention to a node, or to one term inside an equation, for a stretch of time. Free. Give `tex` to mark a sub-expression — e.g. tex="\\\\frac{b}{a}" boxes just that term, located by its glyphs, so you never need screen coordinates. Use it when the narration dwells on something and nothing else is moving.',
+      'Draw attention to a node, or to one term inside an equation, for a stretch of time. Free. Give `tex` to mark a sub-expression — e.g. tex="\\\\frac{b}{a}" boxes just that term, located by its glyphs, so you never need screen coordinates. Use it when the narration dwells on something and nothing else is moving. Sequential highlights on one node accumulate; a call whose window overlaps an existing highlight replaces it, and one highlight renders at a time.',
       {
         projectId: z.string(),
         sceneId: z.string(),
@@ -421,8 +422,17 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
         if (tex && node.type !== 'latex') {
           throw new Error(`tex targeting only works on latex nodes; ${nodeId} is a ${node.type}`)
         }
+        // Sequential highlights accumulate; only a highlight overlapping the
+        // new window is replaced, so re-calling to adjust one still works.
+        // The engine renders one highlight at a time, so overlap-replace is
+        // also what keeps the document renderable as authored.
         const transitions: Transition[] = [
-          ...node.transitions.filter((t) => t.type !== 'highlight'),
+          ...node.transitions.filter(
+            (t) =>
+              t.type !== 'highlight' ||
+              t.start + t.duration <= start ||
+              start + duration <= t.start,
+          ),
           { type: 'highlight', start, duration, tex, style, color },
         ]
         await this.submit(projectId, [op.updateNode(sceneId, nodeId, { transitions })])
@@ -496,7 +506,7 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
 
     this.server.tool(
       'ask_user',
-      'Put a choice to the human instead of deciding alone. Free. Use when a decision is genuinely theirs — pacing, style, how to resolve a narration overrun, whether a scene change needs explaining — not for things you can determine yourself. The question appears live in their editor, where they can scrub to the relevant moment before answering. Returns immediately with a decision id; poll get_answer. If they answer in chat instead, record it with record_answer.',
+      'Put a choice to the human IN CHAT and wait for their reply. Free. Use when a decision is genuinely theirs — pacing, style, how to resolve a narration overrun, whether a scene change needs explaining — not for things you can determine yourself. This is blocking by intention: it returns a ready-to-paste block — put it in your very next reply and stop. Do not keep building against a guess, and do not defer the question to a summary at the end — an unanswered question that you worked around was not a question. Chat is the surface that always exists — the system may run headless with no editor open, so never wait on the browser. The question is also mirrored into the editor for anyone who does have it open, and get_answer reports that; the normal path is that they reply to you and you call record_answer.',
       {
         projectId: z.string(),
         question: z.string().min(1).describe('one clear question'),
@@ -522,17 +532,32 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
         })
         if (!res.ok) throw new Error(`ask_user failed (${res.status}): ${await res.text()}`)
         const { decision } = (await res.json()) as { decision: Decision }
+        // The return value is the strongest prompt surface there is — the
+        // agent reads it the instant it lands. A receipt ("asked (id)") gets
+        // filed and worked around; an instruction gets followed. This wording
+        // exists because a real run asked a good question, scheduled a wakeup,
+        // built the rest of the video against its own guess, and only
+        // mentioned the unanswered question in its closing summary.
         return text(
-          `asked (${decision.id}) — waiting on the human. Show them this question and either ` +
-            `poll get_answer or call record_answer if they reply to you directly.\n` +
-            formatDecision(decision),
+          `STOP — WAITING ON THE HUMAN (${decision.id})\n` +
+            `Paste the block below into your NEXT reply, then stop and wait. Do not ` +
+            `continue building, do not pick a default, and do not save it for a ` +
+            `summary later.\n\n` +
+            `────────────────────────────\n` +
+            `${formatQuestionForChat(decision)}\n` +
+            `────────────────────────────\n\n` +
+            `When they reply to you, call record_answer with optionId ${decision.options
+              .map((o, i) => `${i + 1}→${o.id}`)
+              .join(' ')} (or note=<their words>). If they happen to have the editor ` +
+            `open they can answer there instead and get_answer will report it — but ` +
+            `never rely on that: the system may be running headless.`,
         )
       },
     )
 
     this.server.tool(
       'get_answer',
-      'Check whether the human has answered. Free — poll it. With no decisionId, lists every question and its status, so you can see what is still blocking.',
+      'Check whether the human has answered. Free — poll it. A question still open means you are still blocked: ask again in your reply rather than proceeding. With no decisionId, lists every question and its status.',
       { projectId: z.string(), decisionId: z.string().optional() },
       async ({ projectId, decisionId }) => {
         const res = await this.api(`/api/projects/${projectId}/decisions`)
@@ -542,7 +567,14 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
         if (wanted.length === 0) {
           return text(decisionId ? `no decision ${decisionId}` : 'no questions asked yet')
         }
-        return text(wanted.map(formatDecision).join('\n'))
+        // Still-open questions repeat the instruction: polling and then
+        // carrying on regardless is the exact failure this guards against.
+        const open = wanted.filter((d) => d.status === 'open')
+        const header = open.length
+          ? `STILL WAITING on ${open.length} question(s). Ask the human again in your ` +
+            `reply and stop; do not proceed until they answer.\n\n`
+          : ''
+        return text(header + wanted.map(formatDecision).join('\n'))
       },
     )
 

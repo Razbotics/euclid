@@ -84,7 +84,10 @@ mask. And `highlight`: `findGlyphRun` locates a
 sub-expression by rendering the fragment and finding its code sequence inside
 the equation, so an agent can say "mark `\frac{b}{a}`" without knowing where
 that lands on screen. Its strength ramps in, holds and ramps out — an
-emphasis is a pulse, not a wipe.
+emphasis is a pulse, not a wipe. A node can carry a sequence of highlights;
+the sampler renders the one whose window contains `t` (the MCP layer keeps
+windows non-overlapping), which is what lets narration walk through several
+terms of one equation in turn.
 
 Fades are staggered — what leaves goes before what arrives — since a
 simultaneous cross-fade is the muddy look being replaced. The provider seam
@@ -170,13 +173,15 @@ The agent can put a choice to the human rather than deciding alone —
 `ask_user` / `get_answer` / `record_answer`, all free. See
 [plans/005](plans/005-agent-questions.md) for the reasoning.
 
-Questions live in the project's Durable Object, **not** in the agent's chat
-and **not** in `EuclidDoc`. Not the chat, because "the narration overruns by
-1.9s" is a question about a moment in a video and the editor is where you can
-seek to it before answering — and because riding the DO works with any MCP
-client rather than depending on the `elicitation` capability. Not the
-document, because a decision is workflow state that never affects a frame;
-putting it there would bump SCHEMA_VERSION and reach the renderer.
+Questions are **asked in chat** and **stored** in the project's Durable
+Object. Chat because the system may run headless, with no browser open — a
+question that exists only in a web panel is a question nobody is asked; the
+tool returns a ready-to-paste block and instructs the agent to stop and wait.
+The DO copy gives persistence, an audit trail, and a second surface for
+whoever does have the editor open, where a question about a moment can offer
+to seek to it. Not in `EuclidDoc`, because a decision is workflow state that
+never affects a frame; putting it there would bump SCHEMA_VERSION and reach
+the renderer.
 
 They broadcast over the same WebSocket as ops, so the editor shows them live
 with no new transport, and they persist, so a question asked before the editor

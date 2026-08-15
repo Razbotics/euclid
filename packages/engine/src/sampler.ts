@@ -66,8 +66,12 @@ export function resolveNode(node: EuclidNode, t: number): ResolvedNode {
   // An emphasis is a pulse, not a ramp: it appears, holds while the narration
   // talks about the thing, then leaves. A monotonic 0→1 would be a wipe.
   let highlight: HighlightState | null = null
-  const hl = node.transitions.find((tr) => tr.type === 'highlight')
-  if (hl && hl.type === 'highlight' && t >= hl.start && t <= hl.start + hl.duration) {
+  // Highlights are sequential: the one whose window contains t wins. The MCP
+  // layer keeps windows non-overlapping, so at most one is active at a time.
+  const hl = node.transitions.find(
+    (tr) => tr.type === 'highlight' && t >= tr.start && t <= tr.start + tr.duration,
+  )
+  if (hl && hl.type === 'highlight') {
     const u = clamp01((t - hl.start) / hl.duration)
     const ramp = Math.min(HIGHLIGHT_RAMP, 0.5)
     const strength =

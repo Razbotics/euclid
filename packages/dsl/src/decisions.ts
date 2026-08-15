@@ -103,6 +103,25 @@ export const DecisionSchema: z.ZodType<Decision> = z.object({
     .optional(),
 })
 
+/**
+ * The question rendered for a human to read in a chat reply.
+ *
+ * Chat is the primary surface: the system may run headless, with no editor
+ * open and nobody to click a button, so a question that only exists in a web
+ * panel is a question nobody is asked. Options are numbered so the answer can
+ * be "2" rather than an option id.
+ */
+export function formatQuestionForChat(d: Decision): string {
+  const lines = [d.question]
+  if (d.detail) lines.push('', d.detail)
+  lines.push('')
+  d.options.forEach((o, i) => {
+    lines.push(`  ${i + 1}. ${o.label}${o.detail ? ` — ${o.detail}` : ''}`)
+  })
+  lines.push('', 'Reply with a number, or tell me what you want instead.')
+  return lines.join('\n')
+}
+
 /** Compact text for the agent — MCP results must stay cheap. */
 export function formatDecision(d: Decision): string {
   const lines = [`[${d.status}] ${d.id}: ${d.question}`]

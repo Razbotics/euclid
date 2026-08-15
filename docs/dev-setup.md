@@ -44,6 +44,14 @@ value is used in prod and dev, per Better Auth cloud setup).
 > middleware-loader.entry.ts`. Fix by deleting `apps/*/.wrangler/tmp`. Never
 > delete `.wrangler/state` — that is the local D1 database and R2 bucket.
 
+> **Gotcha:** an MCP client captures the tool list **when the session starts**.
+> Add or change a tool and existing sessions never see it — they can read the
+> docs, fail to call it, and fall back to driving the worker over raw JSON-RPC,
+> which looks like the tool working while bypassing the client entirely. After
+> changing `apps/mcp`, restart the *client* (a fresh `claude` session), not
+> just the worker. This has now cost two milestone runs their tool-surface
+> coverage.
+
 > **Gotcha:** wrangler does **not** reliably hot-reload `.dev.vars`. After
 > changing a secret, restart the worker or it keeps serving the old value —
 > which looks exactly like a broken third-party integration. `sync-env`
