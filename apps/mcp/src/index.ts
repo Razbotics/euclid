@@ -454,7 +454,7 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
 
     this.server.tool(
       'morph_latex',
-      'Morph a latex node to a new equation (the signature 3b1b move). Chains: multiple morphs on one node run in start-time order.',
+      'Morph a latex node to a new equation (the signature 3b1b move). Sequential morphs on one node chain in start-time order; a call whose window overlaps an existing morph replaces it, so re-calling revises rather than stacks. Shared glyphs move and only new or removed ones fade, so additive changes read cleanly — a change that re-lays-out the equation, like collapsing into a fraction, is briefly illegible mid-morph, so prefer several small morphs over one structural leap.',
       {
         projectId: z.string(),
         sceneId: z.string(),
