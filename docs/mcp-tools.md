@@ -31,6 +31,9 @@ The agent-facing API (`apps/mcp/src/index.ts`). Design rules:
 | `ask_user` | put a choice to the human **in chat** and stop. Free. Returns a ready-to-paste block with numbered options; also mirrored to the editor for whoever has it open. Blocking by intention — the system may be headless, so never wait on the browser |
 | `get_answer` | poll for the human's answer, or list every question and its status. Free |
 | `record_answer` | record an answer the human gave in chat rather than in the editor; provenance is kept (`via: agent` vs `via: editor`) |
+| `list_assets` | the project's files as a tree — narration audio today, footage later. Free. Paths are virtual (folders derived), and each file is marked in-use or unused so a leftover from a regenerated scene is visible |
+| `move_asset` | rename or move a file by writing a new virtual path; folders are implicit, so there is nothing to mkdir and no empty folder to clean up |
+| `remove_asset` | delete a file. **Refuses** if the document still references it, naming the scenes — a scene must never point at nothing; `force: true` overrides deliberately |
 | `get_captions` | SRT/VTT subtitles for the project. Free — derived from narration; word-accurate where TTS timings exist, estimated elsewhere |
 | `render_video` | **spends credits** up front (video seconds only; narration is billed by `generate_narration`); returns a job id. The render worker completes the job asynchronously |
 | `get_render_status` | recent jobs; a `done` job carries `downloadUrl` for the MP4, and a `failed` job has already had its credits refunded |

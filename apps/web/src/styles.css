@@ -59,6 +59,24 @@ main { display: flex; flex: 1; min-height: 0; }
   pointer-events: none;
 }
 .narration-dot { color: #e8c74a; font-size: 9px; }
+/* Narration lane: absolute clips over the same span as .timeline-bar, so a
+   gap here is exactly the silence in the exported file. */
+.timeline-audio {
+  position: relative; height: 22px; margin-top: 4px;
+  background: #12181f; border: 1px solid #1d2229; border-radius: 4px;
+  overflow: hidden; user-select: none;
+}
+.audio-clip {
+  position: absolute; top: 2px; bottom: 2px;
+  background: #1d3a44; border: 1px solid #2f6b7d; border-radius: 3px;
+  display: flex; align-items: center; padding: 0 6px; overflow: hidden;
+  white-space: nowrap; font-size: 10px; color: #7fd3e8;
+}
+/* Narration the mux cuts at the scene edge — the clip is longer than its slot. */
+.audio-clip.trimmed { border-right: 2px solid #fc6255; }
+.lane-empty {
+  position: absolute; left: 8px; top: 4px; font-size: 10px; color: #5c646d;
+}
 .playhead {
   position: absolute; top: -4px; bottom: -4px; width: 2px;
   background: #fc6255; pointer-events: none;
@@ -185,3 +203,25 @@ header .back h1 { color: inherit; }
 .list-note.error { color: #e8a04a; }
 .list-note a { color: #7fb3ff; }
 .list-note code { color: #9aa3ad; }
+
+/* ---------- project files (asset explorer) ---------- */
+
+.assets { padding: 10px 12px; border-bottom: 1px solid #1d2229; }
+.assets h4 { margin: 0 0 8px; font-size: 11px; letter-spacing: .08em; color: #7f8c99; }
+.assets .muted { color: #5c646d; font-weight: 400; letter-spacing: 0; }
+.asset-folder { font-size: 11px; color: #7f8c99; margin: 4px 0 2px; }
+.asset-file {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 4px; border-radius: 3px; font-size: 12px; color: #c8ced5;
+}
+.asset-file:hover { background: #171d24; }
+.asset-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.asset-meta { font-size: 10px; color: #5c646d; white-space: nowrap; }
+.asset-actions { display: flex; gap: 2px; opacity: 0; }
+.asset-file:hover .asset-actions { opacity: 1; }
+.asset-actions a, .asset-actions button {
+  background: none; border: none; color: #7f8c99; cursor: pointer;
+  font-size: 11px; padding: 1px 3px; text-decoration: none; line-height: 1;
+}
+.asset-actions a:hover, .asset-actions button:hover { color: #e6e8eb; }
+.asset-actions button:disabled { opacity: .4; cursor: default; }

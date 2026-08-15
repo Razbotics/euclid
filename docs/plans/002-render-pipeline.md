@@ -615,6 +615,42 @@ of engine work that would lift every derivation video at once.
   internal-key path works for first-party testing.
 
 ## Notes / gotchas
+- ~~**Exported MP4s were unplayable-in-place on the web.**~~ **fixed.** Three
+  separate defects on the delivery path, all found from one "the video has no
+  sound" report — and the audio was fine (`volumedetect`: mean −19.6 dB, max
+  −3.9 dB). (1) `mux.ts` never passed `-movflags +faststart`, so `moov` was
+  written *after* `mdat` and a browser could not describe **any** track,
+  audio included, until it had the whole file. (2) `GET /api/jobs/:id/download`
+  answered `Range` requests with `200` and the entire file, so a `<video>`
+  element could not seek. (3) it forced `Content-Disposition: attachment`, so
+  the URL could only ever download. Now: faststart in the muxer, real `206`
+  with `Content-Range`/`Accept-Ranges`, and `inline` by default with
+  `?download=1` to force the save dialog. The existing milestone render was
+  repaired by a lossless `-c copy -movflags +faststart` remux and re-upload to
+  the same job key — **no re-render, no credits**. Verified: served bytes now
+  begin `ftyp, moov`, and a range request returns `206 bytes 0-1023/2643093`.
+- ~~**Editor narration would not play from anywhere but the very start.**~~
+  **fixed**, and the cause was not the audio. `GET /api/assets/:id` served the
+  whole mp3 with no `Accept-Ranges`, so Chrome reported
+  `audio.seekable.end(0) === 0` **even at `readyState: 4` with a correct
+  `duration`** — and every assignment to `currentTime` was silently ignored.
+  Playing from 0 worked (no seek needed), so it looked intermittent; scrub
+  anywhere and press play and the clip either started from its own beginning
+  or never lined up. Both media routes now share `serveR2Range`
+  (`apps/api/src/index.ts`) which answers `206` with `Content-Range`. Verified
+  in a real browser — with Playwright's `--autoplay-policy` override
+  **removed**, so autoplay behaves as it does for a user: `seekEnd` went
+  `0` → `9.6 / 26.8 / 20.9`, seeking to 20s parks scene 2 at `t=9.99`
+  (= 20 − 10.11), and play advances it to 11.60.
+- **Diagnosing media in headless Chromium needs the autoplay override off.**
+  Playwright launches with `--autoplay-policy=no-user-gesture-required`, so a
+  probe can "prove" audio works while a real browser refuses. Launch with
+  `ignoreDefaultArgs: ['--autoplay-policy=no-user-gesture-required']` when the
+  question is *why does the user hear nothing*. The first probe of this bug
+  passed for exactly that reason and sent the diagnosis down the wrong path.
+- The timeline now draws a **narration lane** from `planNarration` — the same
+  placement the export mux uses — so the audio is visible even when it is not
+  audible, and the gaps are exactly the silence `get_project` reports as tail.
 - ~~**`update_node` reports success for a patch it silently discarded.**~~
   **fixed.** The reducer merged every patch key, then `NodeSchema.safeParse`
   stripped the ones the schema doesn't know (Zod's default) and wrote the

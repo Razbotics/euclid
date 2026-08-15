@@ -54,6 +54,71 @@ Today only narration audio has an `assetId`. Need a real registry: kind
 (video/audio/image), R2 key, duration, dimensions, fps, a low-res **proxy**
 for editing, thumbnail/filmstrip, source URL, and rights metadata.
 
+#### Assets are a per-project filesystem, and nothing exposes it (2026-08-15)
+
+Observed while reviewing the third milestone run in the editor. Every asset
+*is* a file — narration mp3s, renders, and soon footage — but:
+
+- **The agent cannot enumerate them.** The MCP surface has no `list_assets`,
+  no upload, no delete. `generate_narration` mints an `assetId` as a side
+  effect and that id appears in exactly one tool response; nothing can ask a
+  project what it holds. Assets are the one part of a project the agent
+  writes to but cannot read back — the same blindness
+  [plans/007](007-agent-sight.md) names for frames.
+- **The editor cannot show them.** The sidebar is a node inspector; there is
+  no view of the project's files at all. A user cannot see that three
+  narration clips exist, replace one, or delete a stale one — the Bayes run
+  left an orphaned scene-2 mp3 after a regeneration, invisible in both
+  surfaces.
+- **There is no hierarchy.** `assets` is a flat table keyed by project. Once
+  a project holds source footage, proxies, thumbnails and renders, flat is
+  not navigable.
+
+Direction: treat a project's assets as a **scoped filesystem** — folders and
+files, owned by the project, with the same one-mutation-path discipline as
+the document (moves and renames are ops, not direct writes). Two surfaces
+over one model:
+
+- **MCP** — `list_assets` (cheap text tree, free), `upload_asset`,
+  `move_asset`/`rename`, `remove_asset`. The agent manages files the way it
+  manages nodes.
+- **Editor** — the sidebar becomes a **file explorer scoped to the open
+  project**: folder tree, thumbnails, duration, size, drag-to-timeline.
+
+#### Built 2026-08-15 — decisions taken
+
+- **Folders are virtual.** A `path` column on `assets`; `buildAssetTree`
+  derives the hierarchy. Rename and move are the same single UPDATE, and an
+  empty folder cannot exist to be cleaned up. `normalizeAssetPath` rejects
+  `..` outright rather than resolving it — these paths never touch a
+  filesystem, so traversal has no legitimate meaning.
+- **A referenced asset resists deletion.** `DELETE` returns 409 naming the
+  scenes that would be left pointing at nothing, honouring the Phase 2
+  invariant; `?force=1` is the deliberate override and reports what it broke.
+- **Renders are assets too.** A finished job registers its output at
+  `/renders/<project-slug>-<job8>.mp4`. The row **points at the render's
+  existing R2 key** — bytes are not copied, so the download URL and the
+  explorer serve the same object. "In use" therefore means *referenced by the
+  document **or** served by a finished job*, otherwise every render would read
+  as garbage. Force-deleting one also NULLs the job's `output_key` so no job
+  advertises a download that 410s.
+
+Surfaces: `list_assets` / `move_asset` / `remove_asset` over MCP (all free),
+and the editor sidebar as a project-scoped explorer. The Bayes run's orphaned
+scene-2 clip — 341KB left behind by a regeneration, invisible to both
+surfaces — was found and deleted this way, which is the whole point.
+
+Deliberately **not** shown: an "unused" badge. It was in the first cut and
+removed — with renders counted as in-use it flagged almost nothing, and a
+scary label on a file the user may simply not have wired up yet is the wrong
+nudge. The API still returns `usedBy`, because the delete guard needs it.
+
+Still open:
+- Upload from the editor (drag-and-drop) and an `upload_asset` MCP tool —
+  `POST /assets` is still internal-key only, so today only producers create
+  files.
+- Bulk actions, and a "delete every file no scene references" sweep.
+
 ### 2. New node types
 - `video` — `assetId`, `sourceIn`/`sourceOut`, `playbackRate`, fit/crop.
   Trimming is a source-range property, not a document-time property.

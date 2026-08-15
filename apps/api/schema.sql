@@ -34,9 +34,11 @@ CREATE TABLE IF NOT EXISTS assets (
   mime TEXT NOT NULL,
   bytes INTEGER NOT NULL,
   duration_sec REAL,         -- audio/video only; NULL for images
+  path TEXT,                 -- virtual path, e.g. /narration/scene-1.mp3; folders are derived
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_assets_project ON assets (project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_assets_path ON assets (project_id, path);
 
 CREATE TABLE IF NOT EXISTS render_jobs (
   id TEXT PRIMARY KEY,

@@ -70,6 +70,19 @@ pnpm exec wrangler d1 execute euclid --local --file=./auth-schema.sql  # better 
 `pnpm --filter @euclid/api db:migrate:local` after pulling a schema change —
 an existing local DB won't pick up a new table on its own.
 
+> **Gotcha:** that idempotence covers new *tables*, not new *columns*.
+> `CREATE TABLE IF NOT EXISTS` is a no-op on an existing table, so a column
+> added to `schema.sql` never reaches a database that already has the table.
+> Run the `ALTER` once by hand, e.g. for the assets `path` column:
+>
+> ```sh
+> pnpm exec wrangler d1 execute euclid --local \
+>   --command "ALTER TABLE assets ADD COLUMN path TEXT"
+> ```
+>
+> Code should tolerate the column being NULL until then — the assets API falls
+> back to `defaultAssetPath()` rather than showing a broken tree.
+
 ## Daily loop
 
 ```sh
@@ -110,6 +123,7 @@ every run** — re-run and re-paste after restarting.
 | `smoke-captions.ts` | cue generation at both fidelities, SRT/VTT formatting |
 | `smoke-tts.ts [--live]` | TTS alignment → word timings (free; `--live` makes one real call) |
 | `smoke-texmorph.ts` | glyph matching + morph interpolation, on real MathJax coordinates (free) |
+| `smoke-assets.ts` | asset paths (traversal-safe), virtual folder tree, and which assets the document references (free, no browser) |
 | `smoke-mux.ts` | narration placement + ffmpeg args: offsets, trims, silent path (free) |
 | `shot.ts <t...>` | pixel-accurate frames of the demo doc through the export surface |
 | `shot-project.ts <projectId> <t...>` | the same, for a **real project** at global seconds — how every milestone run has actually found its visual bugs (`OUT_DIR=` to choose where; needs `dev:api` + `dev:web`). Superseded once `preview_frames` lands (plans/007) |

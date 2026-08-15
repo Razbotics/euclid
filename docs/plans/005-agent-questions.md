@@ -25,9 +25,17 @@ in a web panel is a question nobody is asked.
 So chat is the surface that always exists. `ask_user` returns a
 ready-to-paste block — question, numbered options, "reply with a number" —
 and instructs the agent to put it in its next reply and stop. The DO copy is
-what gives it persistence, an audit trail, and a **second** surface for
-whoever does have the editor open, where the `atSec` seek button still adds
-the context chat can't.
+what gives it persistence and an audit trail.
+
+> **The editor's questions panel was removed on 2026-08-15.** With MCP
+> elicitation as the preferred path and chat as the fallback, a third surface
+> in the side panel earned less than the space it took — the side panel is
+> wanted for a per-project asset explorer instead (see
+> [plans/003](003-general-video.md#1-assets-become-first-class)). Questions
+> still ride the DO and are still answered from chat via `record_answer`;
+> `Decisions.tsx` and `answerDecision` remain, unmounted, so restoring the
+> panel is one JSX line. What is lost is the `atSec` seek button — the one
+> thing the editor added that chat cannot.
 
 MCP's `elicitation` capability is now the **preferred** path: `ask_user`
 calls `server.elicitInput()` when the client advertises support, so the human

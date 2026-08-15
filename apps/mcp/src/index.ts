@@ -2,12 +2,15 @@ import { McpAgent } from 'agents/mcp'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import {
+  buildAssetTree,
   formatDecision,
   formatQuestionForChat,
   newId,
   op,
   outlineDoc,
   findNode,
+  type AssetFolder,
+  type AssetRecord,
   type Easing,
   type Decision,
   type EuclidDoc,
@@ -714,6 +717,75 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
         if (!res.ok) throw new Error(`record_answer failed (${res.status}): ${await res.text()}`)
         const { decision } = (await res.json()) as { decision: Decision }
         return text(formatDecision(decision))
+      },
+    )
+
+    this.server.tool(
+      'list_assets',
+      "The project's files as a tree — narration audio today, footage and images later. Free. Paths are virtual (folders are derived), so `move_asset` renames by writing a new path. Marks which files the document depends on: those are the ones remove_asset refuses to delete.",
+      { projectId: z.string() },
+      async ({ projectId }) => {
+        const res = await this.api(`/api/projects/${projectId}/assets`)
+        if (!res.ok) throw new Error(await res.text())
+        const { assets } = (await res.json()) as { assets: (AssetRecord & { usedBy: boolean })[] }
+        if (assets.length === 0) return text('no assets in this project')
+
+        const used = new Map(assets.map((a) => [a.id, a.usedBy]))
+        const lines: string[] = []
+        const walk = (folder: AssetFolder, depth: number) => {
+          const pad = '  '.repeat(depth)
+          for (const f of folder.folders) {
+            lines.push(`${pad}${f.name}/`)
+            walk(f, depth + 1)
+          }
+          for (const file of folder.files) {
+            const kb = `${Math.round(file.bytes / 1024)}KB`
+            const dur = file.durationSec ? ` ${file.durationSec.toFixed(2)}s` : ''
+            const mark = used.get(file.id) ? ' [in use]' : ' [unused]'
+            lines.push(`${pad}${file.name}  ${kb}${dur}${mark}  ${file.id}`)
+          }
+        }
+        walk(buildAssetTree(assets), 0)
+        const unused = assets.filter((a) => !a.usedBy).length
+        return text(
+          `${assets.length} file(s)${unused ? `, ${unused} unused` : ''}\n${lines.join('\n')}`,
+        )
+      },
+    )
+
+    this.server.tool(
+      'move_asset',
+      'Rename or move a file to a new virtual path (e.g. "/narration/hook.mp3"). Free. Folders are created implicitly by the path and disappear when empty; there is nothing to mkdir.',
+      { projectId: z.string(), assetId: z.string(), path: z.string().min(1) },
+      async ({ assetId, path }) => {
+        const res = await this.api(`/api/assets/${assetId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ path }),
+        })
+        if (!res.ok) throw new Error(await res.text())
+        const out = (await res.json()) as { path: string }
+        return text(`moved ${assetId} → ${out.path}`)
+      },
+    )
+
+    this.server.tool(
+      'remove_asset',
+      'Delete a file. Free. Refuses if the document still references it — a scene would be left pointing at nothing — and names the scenes; pass force to delete anyway.',
+      { projectId: z.string(), assetId: z.string(), force: z.boolean().default(false) },
+      async ({ assetId, force }) => {
+        const res = await this.api(`/api/assets/${assetId}${force ? '?force=1' : ''}`, {
+          method: 'DELETE',
+        })
+        if (res.status === 409) {
+          const body = (await res.json()) as { scenes?: string[] }
+          throw new Error(
+            `${assetId} is still used by: ${(body.scenes ?? []).join(', ') || 'the document'}. ` +
+              'Re-generate or repoint that scene first, or call again with force: true.',
+          )
+        }
+        if (!res.ok) throw new Error(await res.text())
+        const out = (await res.json()) as { wasInUse: boolean }
+        return text(`deleted ${assetId}${out.wasInUse ? ' (was in use — a scene now points at nothing)' : ''}`)
       },
     )
 

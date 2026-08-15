@@ -22,8 +22,12 @@ export function buildFfmpegArgs(
   const inputs = ['-y', '-f', 'image2pipe', '-framerate', String(fps), '-i', '-']
   for (const clip of clips) inputs.push('-i', clip.path)
   const video = ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '18']
+  // Move the moov atom to the front. Written last by default, which means a
+  // browser streaming the URL cannot describe *any* track — including audio —
+  // until it has the whole file. Costs one extra pass over the output.
+  const web = ['-movflags', '+faststart']
 
-  if (clips.length === 0) return [...inputs, ...video, outPath]
+  if (clips.length === 0) return [...inputs, ...video, ...web, outPath]
 
   // Normalize every clip to one format first: amix misbehaves when inputs
   // disagree on sample rate or channel layout.

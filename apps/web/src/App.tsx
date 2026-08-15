@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { docDuration, globalToScene } from '@euclid/dsl'
+import { assetIdsInDoc, docDuration, globalToScene } from '@euclid/dsl'
 import { useProject } from './useProject'
 import { Preview } from './Preview'
 import { Timeline } from './Timeline'
 import { Inspector } from './Inspector'
+import { Assets } from './Assets'
 import { CaptionOverlay, NarrationTrack } from './Narration'
-import { Decisions } from './Decisions'
 import { ProjectList } from './ProjectList'
 
 /**
@@ -23,7 +23,10 @@ export function App() {
 }
 
 function Editor({ projectId }: { projectId: string | null }) {
-  const { doc, offline, error, submit, decisions, answerDecision } = useProject(projectId)
+  // `decisions`/`answerDecision` are intentionally not consumed here: the
+  // questions panel was removed from the side panel. The loop still works —
+  // questions ride the DO and are answered in chat via record_answer.
+  const { doc, offline, error, submit } = useProject(projectId)
 
   const [time, setTime] = useState(0)
   const [playing, setPlaying] = useState(false)
@@ -79,14 +82,11 @@ function Editor({ projectId }: { projectId: string | null }) {
           {captions && <CaptionOverlay doc={doc} time={time} />}
         </div>
         <div className="side">
-          <Decisions
-            decisions={decisions}
-            onAnswer={answerDecision}
-            onSeek={(t) => {
-              setPlaying(false)
-              setTime(t)
-            }}
-          />
+          {/* Reload when the document's asset references change — that is what a
+              new narration clip looks like from here. */}
+          {projectId && (
+            <Assets projectId={projectId} reloadKey={[...assetIdsInDoc(doc)].sort().join(',')} />
+          )}
           <Inspector
             doc={doc}
             currentScene={at?.scene ?? null}

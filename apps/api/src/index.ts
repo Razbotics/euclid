@@ -2,8 +2,11 @@ import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import {
   CREDIT_COSTS,
+  assetIdsInDoc,
+  defaultAssetPath,
   docDuration,
   documentCues,
+  normalizeAssetPath,
   op,
   toSRT,
   toVTT,
@@ -200,6 +203,9 @@ app.post('/api/projects/:id/scenes/:sceneId/narration/generate', async (c) => {
         kind: 'audio',
         mime: synthesis.mime,
         durationSec: synthesis.durationSec,
+        // Named after the scene, so the explorer reads as a project's files
+        // rather than a pile of uuids.
+        path: `/narration/${slugify(scene.name)}.mp3`,
         body: synthesis.audio,
       })
     ).assetId
@@ -343,6 +349,60 @@ function publicOrigin(c: { env: Env; req: { url: string } }): string {
   return c.env.PUBLIC_API_ORIGIN ?? new URL(c.req.url).origin
 }
 
+/**
+ * Serve an R2 object with HTTP range support.
+ *
+ * Not an optimisation — it is what makes media *seekable*. Without
+ * `Accept-Ranges` + `206`, Chrome reports `audio.seekable.end(0) === 0` even
+ * for a fully buffered file, and every assignment to `currentTime` is silently
+ * ignored. That looked like "the editor has no sound": scrubbing could not move
+ * the narration, so it played from the wrong place or not at all.
+ */
+async function serveR2Range(
+  bucket: R2Bucket,
+  key: string,
+  rangeHeader: string | undefined,
+  headers: Record<string, string>,
+): Promise<Response | null> {
+  const head = await bucket.head(key)
+  if (!head) return null
+  const total = head.size
+  const base = { ...headers, 'accept-ranges': 'bytes' }
+
+  const match = /^bytes=(\d*)-(\d*)$/.exec((rangeHeader ?? '').trim())
+  if (match) {
+    const [, rawStart, rawEnd] = match
+    let start: number
+    let end: number
+    if (rawStart === '') {
+      const suffix = Number(rawEnd)
+      if (!suffix) return new Response(null, { status: 416, headers: { ...base, 'content-range': `bytes */${total}` } })
+      start = Math.max(0, total - suffix)
+      end = total - 1
+    } else {
+      start = Number(rawStart)
+      end = rawEnd === '' ? total - 1 : Math.min(Number(rawEnd), total - 1)
+    }
+    if (!Number.isFinite(start) || start > end || start >= total) {
+      return new Response(null, { status: 416, headers: { ...base, 'content-range': `bytes */${total}` } })
+    }
+    const part = await bucket.get(key, { range: { offset: start, length: end - start + 1 } })
+    if (!part) return null
+    return new Response(part.body, {
+      status: 206,
+      headers: {
+        ...base,
+        'content-length': String(end - start + 1),
+        'content-range': `bytes ${start}-${end}/${total}`,
+      },
+    })
+  }
+
+  const object = await bucket.get(key)
+  if (!object) return null
+  return new Response(object.body, { headers: { ...base, 'content-length': String(total) } })
+}
+
 /** Service-to-service calls only (render worker), not just any authenticated user. */
 function isInternal(c: { req: { header: (k: string) => string | undefined }; env: Env }): boolean {
   const key = c.req.header('x-internal-key')
@@ -398,14 +458,37 @@ app.put('/api/jobs/:jobId/output', async (c) => {
   const jobId = c.req.param('jobId')
   const job = await loadJob(c.env, jobId)
   if (!job) return c.json({ error: 'job_not_found' }, 404)
+  if (!job.project_id) return c.json({ error: 'job_missing_project' }, 500)
   if (!c.req.raw.body) return c.json({ error: 'empty_body' }, 400)
 
-  const key = `renders/${job.project_id}/${jobId}.mp4`
-  await c.env.ASSETS.put(key, c.req.raw.body, {
+  const projectId = job.project_id
+  const key = `renders/${projectId}/${jobId}.mp4`
+  const object = await c.env.ASSETS.put(key, c.req.raw.body, {
     httpMetadata: { contentType: 'video/mp4' },
   })
   await c.env.DB.prepare('UPDATE render_jobs SET output_key = ?, updated_at = ? WHERE id = ?')
     .bind(key, Date.now(), jobId)
+    .run()
+
+  // A finished render is a file the project holds, so it joins the asset tree
+  // rather than being reachable only through a job id. The row *points at the
+  // render's existing R2 key* — the bytes are not copied, so the download
+  // route and the explorer serve the same object.
+  const doc = await docOf(c.env, projectId)
+  await c.env.DB.prepare(
+    `INSERT OR REPLACE INTO assets
+       (id, project_id, kind, r2_key, mime, bytes, duration_sec, path, created_at)
+     VALUES (?, ?, 'video', ?, 'video/mp4', ?, ?, ?, ?)`,
+  )
+    .bind(
+      `render-${jobId}`,
+      projectId,
+      key,
+      object?.size ?? 0,
+      doc ? docDuration(doc) : null,
+      `/renders/${doc ? slugify(doc.name) : 'render'}-${jobId.slice(0, 8)}.mp4`,
+      Date.now(),
+    )
     .run()
   return c.json({ key })
 })
@@ -417,15 +500,15 @@ app.get('/api/jobs/:jobId/download', async (c) => {
   if (job.user_id !== userId && userId !== 'internal') return c.json({ error: 'forbidden' }, 403)
   if (!job.output_key) return c.json({ error: 'not_ready', status: job.status }, 409)
 
-  const object = await c.env.ASSETS.get(job.output_key)
-  if (!object) return c.json({ error: 'output_missing' }, 410)
-  return new Response(object.body, {
-    headers: {
-      'content-type': 'video/mp4',
-      'content-length': String(object.size),
-      'content-disposition': `attachment; filename="euclid-${job.id}.mp4"`,
-    },
+  // `inline` so pasting the URL in a browser *plays* it; ?download=1 still
+  // forces the save dialog. As an attachment it could only ever be downloaded.
+  const disposition = `${c.req.query('download') ? 'attachment' : 'inline'}; filename="euclid-${job.id}.mp4"`
+  const ranged = await serveR2Range(c.env.ASSETS, job.output_key, c.req.header('range'), {
+    'content-type': 'video/mp4',
+    'content-disposition': disposition,
   })
+  if (!ranged) return c.json({ error: 'output_missing' }, 410)
+  return ranged
 })
 
 // ---------- assets ----------
@@ -487,6 +570,25 @@ app.post('/api/projects/:id/assets', async (c) => {
 })
 
 /**
+ * Suffix a path until it is free, so a regenerated narration clip sits beside
+ * the old one instead of colliding with it (the explorer is what finally makes
+ * those leftovers visible).
+ */
+async function uniqueAssetPath(env: Env, projectId: string, wanted: string): Promise<string> {
+  const dot = wanted.lastIndexOf('.')
+  const stem = dot > wanted.lastIndexOf('/') ? wanted.slice(0, dot) : wanted
+  const ext = dot > wanted.lastIndexOf('/') ? wanted.slice(dot) : ''
+  for (let n = 0; n < 50; n++) {
+    const candidate = n === 0 ? wanted : `${stem}-${n + 1}${ext}`
+    const clash = await env.DB.prepare('SELECT id FROM assets WHERE project_id = ? AND path = ?')
+      .bind(projectId, candidate)
+      .first<{ id: string }>()
+    if (!clash) return candidate
+  }
+  return `${stem}-${Date.now()}${ext}`
+}
+
+/**
  * Shared by the upload route and the in-worker producers (TTS today). The row
  * is written only once the bytes are really in R2, and a zero-byte put is
  * removed before any row exists — a document must never hold an assetId that
@@ -499,9 +601,11 @@ async function storeAsset(
     kind: string
     mime: string
     durationSec?: number | null
+    /** Virtual path; defaults to /<kind>/<id>.<ext> when the caller has no better name. */
+    path?: string | null
     body: ReadableStream | ArrayBuffer
   },
-): Promise<{ assetId: string; bytes: number }> {
+): Promise<{ assetId: string; bytes: number; path: string }> {
   const assetId = crypto.randomUUID()
   const key = `assets/${projectId}/${assetId}`
   const object = await env.ASSETS.put(key, input.body, {
@@ -511,14 +615,182 @@ async function storeAsset(
     await env.ASSETS.delete(key)
     throw new Error('empty_asset_body')
   }
+  let path = defaultAssetPath(input.kind, input.mime, assetId)
+  if (input.path) {
+    try {
+      path = await uniqueAssetPath(env, projectId, normalizeAssetPath(input.path))
+    } catch {
+      // A bad suggested name must not lose the bytes we already stored.
+    }
+  }
   await env.DB.prepare(
-    `INSERT INTO assets (id, project_id, kind, r2_key, mime, bytes, duration_sec, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO assets (id, project_id, kind, r2_key, mime, bytes, duration_sec, path, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
-    .bind(assetId, projectId, input.kind, key, input.mime, object.size, input.durationSec ?? null, Date.now())
+    .bind(assetId, projectId, input.kind, key, input.mime, object.size, input.durationSec ?? null, path, Date.now())
     .run()
-  return { assetId, bytes: object.size }
+  return { assetId, bytes: object.size, path }
 }
+
+/**
+ * The project's document, straight from the DO. Callers here have already
+ * checked ownership, so this deliberately skips the auth forwarding.
+ */
+async function docOf(env: Env, projectId: string): Promise<EuclidDoc | null> {
+  const res = await projectStub(env, projectId).fetch('https://do/doc')
+  if (!res.ok) return null
+  return ((await res.json()) as { doc: EuclidDoc }).doc
+}
+
+/** R2 keys that finished render jobs still hand out download URLs for. */
+async function renderOutputKeys(env: Env, projectId: string): Promise<Set<string>> {
+  const rows = await env.DB.prepare(
+    'SELECT output_key FROM render_jobs WHERE project_id = ? AND output_key IS NOT NULL',
+  )
+    .bind(projectId)
+    .all<{ output_key: string }>()
+  return new Set(rows.results.map((r) => r.output_key))
+}
+
+/** Owner-or-internal lookup shared by the asset routes. */
+async function loadAsset(env: Env, assetId: string) {
+  return env.DB.prepare(
+    `SELECT a.*, p.user_id AS owner FROM assets a
+     JOIN projects p ON p.id = a.project_id
+     WHERE a.id = ?`,
+  )
+    .bind(assetId)
+    .first<AssetRow & { owner: string; path: string | null }>()
+}
+
+/**
+ * A project's files. `path` is a virtual path — folders are derived from it,
+ * never stored — so the editor and the MCP tools build the same tree from
+ * these rows with `buildAssetTree`.
+ *
+ * `usedBy` marks assets the document depends on, which is what makes deletion
+ * refusable rather than silently breaking a scene.
+ */
+app.get('/api/projects/:id/assets', async (c) => {
+  const projectId = c.req.param('id')
+  const project = await c.env.DB.prepare('SELECT user_id FROM projects WHERE id = ?')
+    .bind(projectId)
+    .first<{ user_id: string }>()
+  if (!project) return c.json({ error: 'project_not_found' }, 404)
+  const userId = c.get('userId')
+  if (project.user_id !== userId && userId !== 'internal') return c.json({ error: 'forbidden' }, 403)
+
+  const rows = await c.env.DB.prepare(
+    'SELECT id, kind, mime, bytes, duration_sec, path, r2_key, created_at FROM assets WHERE project_id = ? ORDER BY created_at',
+  )
+    .bind(projectId)
+    .all<{
+      id: string
+      kind: string
+      mime: string
+      bytes: number
+      duration_sec: number | null
+      path: string | null
+      r2_key: string
+      created_at: number
+    }>()
+
+  const doc = await docOf(c.env, projectId)
+  const used = doc ? assetIdsInDoc(doc) : new Set<string>()
+  // A render output is not referenced by the *document* but is very much in
+  // use — its job hands out a download URL for it. Without this every render
+  // would read as "unused", which is exactly the wrong nudge.
+  const renderKeys = await renderOutputKeys(c.env, projectId)
+
+  return c.json({
+    assets: rows.results.map((r) => ({
+      id: r.id,
+      kind: r.kind,
+      mime: r.mime,
+      bytes: r.bytes,
+      durationSec: r.duration_sec,
+      // Rows predating the path column still resolve to a sensible place.
+      path: r.path || defaultAssetPath(r.kind, r.mime, r.id),
+      createdAt: r.created_at,
+      usedBy: used.has(r.id) || renderKeys.has(r.r2_key),
+    })),
+  })
+})
+
+/** Rename or move — both are just a new virtual path. */
+app.patch('/api/assets/:assetId', async (c) => {
+  const asset = await loadAsset(c.env, c.req.param('assetId'))
+  if (!asset) return c.json({ error: 'asset_not_found' }, 404)
+  const userId = c.get('userId')
+  if (asset.owner !== userId && userId !== 'internal') return c.json({ error: 'forbidden' }, 403)
+
+  const body = (await c.req.json().catch(() => null)) as { path?: unknown } | null
+  if (!body || typeof body.path !== 'string') return c.json({ error: 'path_required' }, 400)
+
+  let path: string
+  try {
+    path = normalizeAssetPath(body.path)
+  } catch (e) {
+    return c.json({ error: 'invalid_path', detail: (e as Error).message }, 400)
+  }
+
+  // Two files sharing a path would render an ambiguous tree.
+  const clash = await c.env.DB.prepare(
+    'SELECT id FROM assets WHERE project_id = ? AND path = ? AND id != ?',
+  )
+    .bind(asset.project_id, path, asset.id)
+    .first<{ id: string }>()
+  if (clash) return c.json({ error: 'path_taken', detail: path, assetId: clash.id }, 409)
+
+  await c.env.DB.prepare('UPDATE assets SET path = ? WHERE id = ?').bind(path, asset.id).run()
+  return c.json({ assetId: asset.id, path })
+})
+
+/**
+ * Delete, unless the document still points at it.
+ *
+ * Phase 2 established that a document must never hold an assetId resolving to
+ * nothing; that invariant is worth as much on the way out as on the way in.
+ * `?force=1` is the deliberate override, and it reports what it broke.
+ */
+app.delete('/api/assets/:assetId', async (c) => {
+  const asset = await loadAsset(c.env, c.req.param('assetId'))
+  if (!asset) return c.json({ error: 'asset_not_found' }, 404)
+  const userId = c.get('userId')
+  if (asset.owner !== userId && userId !== 'internal') return c.json({ error: 'forbidden' }, 403)
+
+  const doc = await docOf(c.env, asset.project_id)
+  const used = doc ? assetIdsInDoc(doc) : new Set<string>()
+  const force = !!c.req.query('force')
+  const renderKeys = await renderOutputKeys(c.env, asset.project_id)
+  const isRenderOutput = renderKeys.has(asset.r2_key)
+  const inUse = used.has(asset.id) || isRenderOutput
+
+  if (inUse && !force) {
+    const scenes = (doc?.scenes ?? [])
+      .filter((s) => s.narration?.audio?.assetId === asset.id)
+      .map((s) => s.name)
+    return c.json(
+      {
+        error: 'asset_in_use',
+        scenes,
+        ...(isRenderOutput ? { reason: 'a finished render job still serves this file' } : {}),
+        hint: 'pass ?force=1 to delete anyway',
+      },
+      409,
+    )
+  }
+
+  await c.env.ASSETS.delete(asset.r2_key)
+  await c.env.DB.prepare('DELETE FROM assets WHERE id = ?').bind(asset.id).run()
+  // Don't leave a job advertising a download that now 410s.
+  if (isRenderOutput) {
+    await c.env.DB.prepare('UPDATE render_jobs SET output_key = NULL WHERE output_key = ?')
+      .bind(asset.r2_key)
+      .run()
+  }
+  return c.json({ deleted: asset.id, wasInUse: inUse })
+})
 
 /**
  * Readable by the owning user or by an internal caller — the render worker
@@ -538,15 +810,14 @@ app.get('/api/assets/:assetId', async (c) => {
   const userId = c.get('userId')
   if (asset.owner !== userId && userId !== 'internal') return c.json({ error: 'forbidden' }, 403)
 
-  const object = await c.env.ASSETS.get(asset.r2_key)
-  if (!object) return c.json({ error: 'asset_missing' }, 410)
-  return new Response(object.body, {
-    headers: {
-      'content-type': asset.mime,
-      'content-length': String(object.size),
-      'cache-control': 'private, max-age=31536000, immutable',
-    },
+  // Range-aware: narration audio must be seekable or the editor cannot line it
+  // up with the playhead (see serveR2Range).
+  const ranged = await serveR2Range(c.env.ASSETS, asset.r2_key, c.req.header('range'), {
+    'content-type': asset.mime,
+    'cache-control': 'private, max-age=31536000, immutable',
   })
+  if (!ranged) return c.json({ error: 'asset_missing' }, 410)
+  return ranged
 })
 
 function projectStub(env: Env, projectId: string): DurableObjectStub {
