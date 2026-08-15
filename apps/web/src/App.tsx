@@ -79,7 +79,7 @@ function Editor({ projectId }: { projectId: string | null }) {
       <main>
         <div className="stage">
           <Preview doc={doc} time={time} />
-          {captions && <CaptionOverlay doc={doc} time={time} />}
+          {captions && <CaptionOverlay doc={doc} time={time} playing={playing} />}
         </div>
         <div className="side">
           {/* Reload when the document's asset references change — that is what a
