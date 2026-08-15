@@ -27,7 +27,7 @@ const HIGHLIGHT_RAMP = 0.18
 export interface HighlightState {
   /** LaTeX of the sub-expression to mark; whole node when absent. */
   tex?: string
-  style: 'box' | 'underline'
+  style: 'box' | 'underline' | 'color' | 'spotlight'
   color: string
   /** 0 → invisible, 1 → fully drawn. Ramps up, holds, ramps down. */
   strength: number

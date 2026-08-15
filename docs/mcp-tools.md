@@ -24,7 +24,7 @@ The agent-facing API (`apps/mcp/src/index.ts`). Design rules:
 | `animate` | keyframes one property from its **current value sampled at `start`** to `to` over `duration` — animations always chain continuously; replaces that property's keyframes after `start` |
 | `morph_latex` | queues a `texMorph` transition; multiple morphs chain in start-time order |
 | `write_on` | draw-on reveal; node invisible before `start` |
-| `highlight` | box or underline a node, or one term inside an equation named by its LaTeX (`tex: "\\frac{b}{a}"`) — located by glyph codes, so no coordinates are needed. Sequential highlights on one node accumulate; a call overlapping an existing highlight's window replaces it. Free |
+| `highlight` | emphasise a node, or one term inside an equation named by its LaTeX (`tex: "\\frac{b}{a}"`) — located by glyph codes, so no coordinates are needed. Styles: `color` recolours the term (default), `spotlight` dims everything else, `box`/`underline` draw a marker. Sequential highlights on one node accumulate; a call overlapping an existing window replaces it. Free |
 | `set_narration` | per-scene narration script. Free — writes text only |
 | `generate_narration` | **spends credits** (priced by script length). Synthesizes the scene's narration, stores the audio, and writes word timings into the document as a `system` op. Reports — but does not reject — speech that overruns the scene |
 | `fit_scene_to_narration` | set a scene's duration to its speech plus a held tail — the one-call fix for the dead air `get_project` flags as `(long)` |

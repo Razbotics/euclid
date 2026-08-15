@@ -98,7 +98,13 @@ export interface HighlightTransition {
   duration: number
   /** LaTeX of the sub-expression to mark; the whole node when absent. */
   tex?: string
-  style: 'box' | 'underline'
+  /**
+   * `box` / `underline` draw a marker around the term. `color` recolours the
+   * term itself and `spotlight` dims everything except it — both need
+   * per-glyph rendering, so they apply only to a `tex`-targeted latex node
+   * and fall back to `box` otherwise.
+   */
+  style: 'box' | 'underline' | 'color' | 'spotlight'
   color: Color
 }
 export type Transition = WriteTransition | TexMorphTransition | HighlightTransition
@@ -120,7 +126,7 @@ export const TransitionSchema: z.ZodType<Transition> = z.discriminatedUnion('typ
     start: z.number().min(0),
     duration: z.number().positive(),
     tex: z.string().min(1).optional(),
-    style: z.enum(['box', 'underline']),
+    style: z.enum(['box', 'underline', 'color', 'spotlight']),
     color: ColorSchema,
   }),
 ])

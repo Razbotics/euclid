@@ -28,6 +28,9 @@ export interface TexProvider {
   getGlyphs?(tex: string, color: Color, fontSize: number): Promise<TexGlyphRender[]>
 }
 
+/** How far `spotlight` fades the glyphs it is not emphasising. */
+const SPOTLIGHT_DIM = 0.78
+
 /** A glyph with the texture to draw it with. Geometry is centre-relative px. */
 export interface TexGlyphRender extends TexGlyph {
   texture: Texture
@@ -63,6 +66,8 @@ interface Item {
   highlight?: Graphics
   /** true when a write is being drawn per-glyph, so applyWrite skips its mask */
   glyphWrite?: boolean
+  /** true when color/spotlight emphasis was drawn per-glyph this frame */
+  glyphEmphasis?: boolean
 }
 
 /**
@@ -182,6 +187,13 @@ export class EuclidStage {
   private updateHighlight(item: Item, res: ResolvedNode): void {
     const hl = res.highlight
     if (!hl || hl.strength <= 0) {
+      if (item.highlight) item.highlight.visible = false
+      return
+    }
+    // `color`/`spotlight` are drawn by the glyph path; a marker on top would
+    // be saying the same thing twice. They fall through to a box only when
+    // the glyph path declined (no tex, not latex, fragment not found).
+    if ((hl.style === 'color' || hl.style === 'spotlight') && item.glyphEmphasis) {
       if (item.highlight) item.highlight.visible = false
       return
     }
@@ -351,12 +363,40 @@ export class EuclidStage {
     // applyWrite skips its mask in that case (see item.glyphWrite).
     const wp = res.writeProgress
     item.glyphWrite = false
+    item.glyphEmphasis = false
     if (toTex === fromTex && wp !== null && wp > 0 && wp < 1 && this.texProvider?.getGlyphs) {
       const glyphs = this.requestGlyphs(fromTex, color, fontSize)
       if (glyphs && glyphs.length > 0) {
         item.glyphWrite = true
         this.updateGlyphWrite(item, glyphs, wp)
         return
+      }
+    }
+
+    // `color` and `spotlight` act on the type itself rather than drawing a
+    // marker around it, so the equation has to be rendered per glyph.
+    const hl = res.highlight
+    if (
+      hl &&
+      hl.strength > 0 &&
+      (hl.style === 'color' || hl.style === 'spotlight') &&
+      hl.tex &&
+      toTex === fromTex &&
+      this.texProvider?.getGlyphs
+    ) {
+      const glyphs = this.requestGlyphs(fromTex, color, fontSize)
+      const fragment = this.requestGlyphs(hl.tex, color, fontSize)
+      // The recoloured set is the same equation rasterized in the highlight
+      // colour: identical geometry, different ink. Tinting would be cheaper
+      // but multiplies, so it can only ever darken a non-white equation.
+      const inked = hl.style === 'color' ? this.requestGlyphs(fromTex, hl.color, fontSize) : []
+      if (glyphs && fragment && inked && glyphs.length > 0) {
+        const run = findGlyphRun(glyphs, fragment.map((f) => f.code))
+        if (run) {
+          item.glyphEmphasis = true
+          this.updateGlyphEmphasis(item, glyphs, inked, run, hl.style, hl.strength)
+          return
+        }
       }
     }
 
@@ -429,6 +469,52 @@ export class EuclidStage {
         alpha: alphas[i]!,
       })),
     )
+  }
+
+  /**
+   * Emphasis that acts on the type rather than around it.
+   *
+   * `color` cross-fades the targeted glyphs to a recoloured copy, so the term
+   * changes ink while everything else holds. `spotlight` fades everything
+   * *except* the term, which is the stronger effect on a busy equation
+   * because it removes competition instead of adding decoration.
+   *
+   * Both ride `strength`, so they ramp in and out with the pulse rather than
+   * snapping.
+   */
+  private updateGlyphEmphasis(
+    item: Item,
+    glyphs: TexGlyphRender[],
+    inked: TexGlyphRender[],
+    run: [number, number],
+    style: 'color' | 'spotlight',
+    strength: number,
+  ): void {
+    if (item.fromSprite) item.fromSprite.visible = false
+    if (item.toSprite) item.toSprite.visible = false
+
+    const [start, end] = run
+    const entries: { texture: Texture; x: number; y: number; scale: number; alpha: number }[] = []
+    for (let i = 0; i < glyphs.length; i++) {
+      const g = glyphs[i]!
+      const targeted = i >= start && i < end
+      entries.push({
+        texture: g.texture,
+        x: g.x,
+        y: g.y,
+        scale: 1,
+        // Dimming the rest never touches the term itself, so the emphasised
+        // text stays at full strength rather than the whole thing fading.
+        alpha: style === 'spotlight' && !targeted ? 1 - SPOTLIGHT_DIM * strength : 1,
+      })
+    }
+    if (style === 'color') {
+      for (let i = start; i < end && i < inked.length; i++) {
+        const g = inked[i]!
+        entries.push({ texture: g.texture, x: g.x, y: g.y, scale: 1, alpha: strength })
+      }
+    }
+    this.drawGlyphs(item, entries)
   }
 
   /** Shared sprite pool: one sprite per drawn glyph, reused across frames. */

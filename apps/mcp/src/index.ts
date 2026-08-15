@@ -405,7 +405,7 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
 
     this.server.tool(
       'highlight',
-      'Draw attention to a node, or to one term inside an equation, for a stretch of time. Free. Give `tex` to mark a sub-expression — e.g. tex="\\\\frac{b}{a}" boxes just that term, located by its glyphs, so you never need screen coordinates. Use it when the narration dwells on something and nothing else is moving. Sequential highlights on one node accumulate; a call whose window overlaps an existing highlight replaces it, and one highlight renders at a time.',
+      'Draw attention to a node, or to one term inside an equation, for a stretch of time. Free. Give `tex` to mark a sub-expression — e.g. tex="\\\\frac{b}{a}" marks just that term, located by its glyphs, so you never need screen coordinates. Styles: `color` recolours the term (default, usually the cleanest), `spotlight` dims everything else and reads strongest on a busy equation, `box` and `underline` draw a marker around it. `color`/`spotlight` need `tex` on a latex node and fall back to a box otherwise. Use it when the narration dwells on something and nothing else is moving. Sequential highlights on one node accumulate; a call whose window overlaps an existing highlight replaces it, and one highlight renders at a time.',
       {
         projectId: z.string(),
         sceneId: z.string(),
@@ -413,7 +413,7 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
         start: z.number().min(0).describe('scene-local seconds'),
         duration: z.number().positive(),
         tex: z.string().optional().describe('sub-expression to mark; whole node if omitted'),
-        style: z.enum(['box', 'underline']).default('box'),
+        style: z.enum(['box', 'underline', 'color', 'spotlight']).default('color'),
         color: COLOR.default('#e8c74a'),
       },
       async ({ projectId, sceneId, nodeId, start, duration, tex, style, color }) => {

@@ -77,6 +77,16 @@ Three pieces:
   glyph keeps the same sprite across frames, so an unchanged term is
   genuinely still rather than redrawn.
 
+Glyph addressing also gives `highlight` two styles that act on the type
+rather than around it: `color` cross-fades the targeted glyphs to a copy
+rasterized in the highlight colour (a recoloured render rather than a tint,
+which multiplies and so can only darken a non-white equation), and
+`spotlight` fades everything *except* the term — usually the stronger effect
+on a busy equation, because it removes competition instead of adding
+decoration. `box` and `underline` remain for non-latex nodes and for
+whole-node emphasis, and are the fallback whenever the glyph run can't be
+located.
+
 The same glyph data powers two more effects. `write` reveals an equation
 symbol by symbol in reading order instead of sweeping a mask edge across it,
 which used to slice glyphs in half mid-stroke; non-latex nodes still use the

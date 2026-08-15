@@ -7,6 +7,7 @@
  * rather than a convenient fiction.
  */
 import assert from 'node:assert'
+import { applyOps, emptyDoc, op } from '@euclid/dsl'
 import {
   findGlyphRun,
   glyphBounds,
@@ -180,6 +181,26 @@ assert.ok(rising > 0 && rising < 1, `ramps in rather than snapping (got ${rising
 assert.ok(strengthAt(2.12)! > rising, 'strength increases while ramping in')
 assert.ok(strengthAt(2.95)! < strengthAt(2.9)!, 'strength decreases while ramping out')
 assert.equal(resolveNode(node, 2.5).highlight?.tex, 'a', 'the target survives resolution')
+
+// All four emphasis styles round-trip through the schema and the sampler.
+// `color` and `spotlight` act on the type itself and need per-glyph
+// rendering; `box` and `underline` draw a marker around it.
+for (const style of ['box', 'underline', 'color', 'spotlight'] as const) {
+  const doc = applyOps(
+    applyOps(emptyDoc('h', 'Styles'), [
+      op.addScene({ id: 'h1', name: 'S', duration: 5, background: '#000000', nodes: [] }),
+    ]),
+    [
+      op.addNode('h1', {
+        ...node,
+        id: `eq_${style}`,
+        transitions: [{ type: 'highlight', start: 1, duration: 2, tex: 'a', style, color: '#e8c74a' }],
+      }),
+    ],
+  )
+  const resolved = resolveNode(doc.scenes[0]!.nodes[0]!, 2)
+  assert.equal(resolved.highlight?.style, style, `${style} survives validation and resolution`)
+}
 
 // ---------- write: glyph-by-glyph reveal ----------
 // The old write swept one mask edge across, slicing glyphs in half as it
