@@ -621,7 +621,7 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
 
     this.server.tool(
       'ask_user',
-      'Put a choice to the human IN CHAT and wait for their reply. Free. Use when a decision is genuinely theirs — pacing, style, how to resolve a narration overrun, whether a scene change needs explaining — not for things you can determine yourself. This is blocking by intention. If your client supports MCP elicitation you will be shown the answer directly; otherwise it returns a ready-to-paste block — put it in your very next reply and stop. Do not keep building against a guess, and do not defer the question to a summary at the end — an unanswered question that you worked around was not a question. Chat is the surface that always exists — the system may run headless with no editor open, so never wait on the browser. The question is also mirrored into the editor for anyone who does have it open, and get_answer reports that; the normal path is that they reply to you and you call record_answer.',
+      'Put a choice to the human IN CHAT and wait for their reply. Free. Use when a decision is genuinely theirs — pacing, style, how to resolve a narration overrun, whether a scene change needs explaining — not for things you can determine yourself. This is blocking by intention. If your client supports MCP elicitation you will be shown the answer directly; otherwise it returns a ready-to-paste block — put it in your very next reply and stop. Do not keep building against a guess, and do not defer the question to a summary at the end — an unanswered question that you worked around was not a question. Chat is the surface that always exists — the system may run headless with no editor open, so never wait on a browser. When they reply, close the question with record_answer.',
       {
         projectId: z.string(),
         question: z.string().min(1).describe('one clear question'),
@@ -670,39 +670,16 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
             `────────────────────────────\n\n` +
             `When they reply to you, call record_answer with optionId ${decision.options
               .map((o, i) => `${i + 1}→${o.id}`)
-              .join(' ')} (or note=<their words>). If they happen to have the editor ` +
-            `open they can answer there instead and get_answer will report it — but ` +
-            `never rely on that: the system may be running headless.`,
+              .join(' ')} (or note=<their words>). Nothing else closes this question and ` +
+            `nothing will remind you: continuing without an answer means you ` +
+            `decided it yourself.`,
         )
       },
     )
 
     this.server.tool(
-      'get_answer',
-      'Check whether the human has answered. Free — poll it. A question still open means you are still blocked: ask again in your reply rather than proceeding. With no decisionId, lists every question and its status.',
-      { projectId: z.string(), decisionId: z.string().optional() },
-      async ({ projectId, decisionId }) => {
-        const res = await this.api(`/api/projects/${projectId}/decisions`)
-        if (!res.ok) throw new Error(`get_answer failed (${res.status}): ${await res.text()}`)
-        const { decisions } = (await res.json()) as { decisions: Decision[] }
-        const wanted = decisionId ? decisions.filter((d) => d.id === decisionId) : decisions
-        if (wanted.length === 0) {
-          return text(decisionId ? `no decision ${decisionId}` : 'no questions asked yet')
-        }
-        // Still-open questions repeat the instruction: polling and then
-        // carrying on regardless is the exact failure this guards against.
-        const open = wanted.filter((d) => d.status === 'open')
-        const header = open.length
-          ? `STILL WAITING on ${open.length} question(s). Ask the human again in your ` +
-            `reply and stop; do not proceed until they answer.\n\n`
-          : ''
-        return text(header + wanted.map(formatDecision).join('\n'))
-      },
-    )
-
-    this.server.tool(
       'record_answer',
-      "Record an answer the human gave you in conversation rather than in the editor. Free. Only for what they actually said — never guess on their behalf; if they haven't answered, keep waiting.",
+      "Record the answer the human gave you in conversation, closing the question ask_user opened. Free. Only for what they actually said — never guess on their behalf, and if they have not answered, keep waiting rather than choosing for them.",
       {
         projectId: z.string(),
         decisionId: z.string(),

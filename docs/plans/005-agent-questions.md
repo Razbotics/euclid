@@ -79,7 +79,11 @@ answer is worse than a clear refusal.
 - [x] DO: `GET/POST /decisions`, `POST /decisions/:id`, broadcast on both
 - [x] API: `/api/projects/:id/decisions` (+ `/:decisionId/answer`), ownership
       gated through the existing `forwardToDO`
-- [x] MCP: `ask_user`, `get_answer`, `record_answer` — all **free**
+- [x] MCP: `ask_user` and `record_answer` — both **free**. `get_answer` was
+      built for polling and removed on 2026-08-15 once no path needed it:
+      elicitation returns the answer, and the fallback's answer arrives as the
+      human's next conversation turn. Nothing polls, so a poller was surface
+      the agent had to read on every call for no gain.
 - [x] Editor: `Decisions.tsx` panel above the inspector, with per-option
       buttons, a free-text escape hatch, and a seek-to-moment button
 - [x] `check-decisions.ts` drives the whole loop

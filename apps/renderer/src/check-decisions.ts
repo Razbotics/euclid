@@ -70,8 +70,21 @@ await fetch(MCP_URL, {
 })
 
 const tools = (await rpc('tools/list')).result.tools as { name: string }[]
-for (const t of ['ask_user', 'get_answer', 'record_answer']) {
+for (const t of ['ask_user', 'record_answer']) {
   assert.ok(tools.map((x) => x.name).includes(t), `${t} must be registered`)
+}
+// get_answer was removed: polling had no path left once ask_user either
+// elicited the answer or told the agent to relay it. Its absence is asserted
+// so it cannot drift back in as a "cheap to keep" convenience.
+assert.ok(!tools.map((x) => x.name).includes('get_answer'), 'get_answer should be gone')
+
+/** Read decisions straight from the API — the state the tools write to. */
+const decisions = async (): Promise<any[]> => {
+  const r = await fetch(`${API_URL}/api/projects/${project.id}/decisions`, {
+    headers: { 'x-internal-key': KEY, 'x-user-id': 'dev-user' },
+  })
+  assert.ok(r.ok, `decisions fetch failed: ${r.status}`)
+  return ((await r.json()) as { decisions: any[] }).decisions
 }
 
 const project = JSON.parse(await call('create_project', { name: 'Decision Check' })) as { id: string }
@@ -101,17 +114,19 @@ for (const label of ['Extend the scene', 'Shorten the script', 'Let it cut']) {
   assert.ok(asked.includes(label), `the pasteable block names option "${label}"`)
 }
 assert.match(asked, /1→opt1/, 'it maps reply numbers back to option ids for record_answer')
-assert.match(asked, /headless/, 'it warns not to wait on a browser')
+// With get_answer gone, record_answer is the only thing that closes a
+// question and nothing will chase it — so the result has to say that
+// continuing regardless is a decision, not an oversight.
+assert.match(asked, /Nothing else closes this question/, 'it names the only way to close it')
+assert.match(asked, /decided it yourself/, 'it names the cost of continuing without an answer')
 
 const decisionId = asked.match(/STOP — WAITING ON THE HUMAN \(([^)]+)\)/)![1]!
 console.log(`asked ${decisionId}`)
 
-// ---------- 2. polling keeps saying "blocked" ----------
-// Quietly returning [open] and letting the agent carry on is the same failure
-// as never asking, one step later.
-const polled = await call('get_answer', { projectId: project.id, decisionId })
-assert.match(polled, /^\[open\]/m, 'the question reads as open')
-assert.match(polled, /STILL WAITING on \d+ question/, 'polling repeats that it is blocking')
+// ---------- 2. the question is open and stored ----------
+const open = (await decisions()).find((d) => d.id === decisionId)
+assert.equal(open.status, 'open', 'the question is recorded as open')
+assert.equal(open.options.length, 3, 'options are stored with it')
 
 // ---------- 3. the editor surface still answers ----------
 const viaEditor = await fetch(
@@ -124,10 +139,10 @@ const viaEditor = await fetch(
 )
 assert.ok(viaEditor.ok, `editor answer endpoint failed: ${viaEditor.status}`)
 
-const answer = await call('get_answer', { projectId: project.id, decisionId })
-assert.match(answer, /^\[answered\]/m, 'the agent sees the resolved status')
-assert.match(answer, /answered via editor: Extend the scene/, 'which option, and from where')
-assert.ok(!/STILL WAITING/.test(answer), 'nothing blocks once it is answered')
+const settled = (await decisions()).find((d) => d.id === decisionId)
+assert.equal(settled.status, 'answered', 'the answer is recorded')
+assert.equal(settled.answer.optionId, 'opt1', 'the chosen option is kept')
+assert.equal(settled.answer.via, 'editor', 'provenance says which surface answered')
 
 // ---------- 4. answering twice is refused ----------
 await assert.rejects(
@@ -159,10 +174,15 @@ await assert.rejects(
   'a single option is not a choice',
 )
 
-const all = await call('get_answer', { projectId: project.id })
-assert.equal((all.match(/^\[answered\]/gm) ?? []).length, 2, 'both questions read as answered')
+const all = await decisions()
+assert.equal(all.filter((d) => d.status === 'answered').length, 2, 'both questions are answered')
+assert.deepEqual(
+  all.map((d) => d.answer.via).sort(),
+  ['agent', 'editor'],
+  'the two answers keep distinct provenance',
+)
 
 console.log(
-  'decisions OK — pasteable block asked over MCP, polling stays blocking, editor endpoint ' +
-    'and chat relay answer with distinct provenance, double-answer refused',
+  'decisions OK — pasteable block asked over MCP, stored open, editor endpoint and chat ' +
+    'relay answer with distinct provenance, double-answer refused, get_answer gone',
 )
