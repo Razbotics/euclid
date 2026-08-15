@@ -3,3 +3,4 @@
 export * from './easing'
 export * from './sampler'
 export * from './texmorph'
+export * from './path'

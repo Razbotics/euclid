@@ -11,7 +11,7 @@ import {
   type EuclidDoc,
   type Track,
 } from '@euclid/dsl'
-import { resolveNode, sampleKeyframes } from '../../../packages/engine/src/index'
+import { pathAtProgress, pathLength, resolveNode, sampleKeyframes } from '../../../packages/engine/src/index'
 
 let doc = emptyDoc('p1', 'smoke')
 doc = applyOps(doc, [
@@ -192,4 +192,49 @@ assert.ok(capped.at(-1)!.t > 5, 'a capped set still reaches the back half of the
 assert.equal(keyMoments({ ...sighted, scenes: [] }).length, 0, 'an empty document has no moments')
 assert.match(formatMoments(moments), /t=\s*2\.50\s+texMorph/, 'formatting is one compact line each')
 
-console.log('smoke OK — reducer, sampler, morph resolution and key moments all behave')
+// ---------- arc-length write-on ----------
+// A curve must reveal ALONG ITS LENGTH, not by a sweeping mask edge: a mask
+// reveals by x-position, so a steep section appears all at once and a path
+// that doubles back reveals its later half first.
+// An L: 100 across, then 100 down. Half the arc length is exactly the corner.
+const L = [
+  { x: 0, y: 0 },
+  { x: 100, y: 0 },
+  { x: 100, y: 100 },
+]
+assert.equal(pathLength(L, false), 200, 'arc length is the sum of the segments')
+assert.deepEqual(pathAtProgress(L, false, 0), [], 'nothing is drawn at 0')
+assert.deepEqual(pathAtProgress(L, false, 1), L, 'the whole path is drawn at 1')
+assert.deepEqual(
+  pathAtProgress(L, false, 0.5),
+  [{ x: 0, y: 0 }, { x: 100, y: 0 }],
+  'half the ARC LENGTH is the corner — not half the bounding box',
+)
+// The last segment is cut proportionally, or a 9-point curve reveals in 9
+// visible steps instead of flowing.
+assert.deepEqual(
+  pathAtProgress(L, false, 0.75),
+  [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 50 }],
+  'the final segment is interpolated, not snapped to a vertex',
+)
+// Uneven segments: the reveal must track length, so a long segment takes
+// proportionally longer — which is the whole point on a plotted curve where
+// steep sections have longer chords.
+const uneven = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 110, y: 0 }]
+assert.deepEqual(
+  pathAtProgress(uneven, false, 0.5),
+  [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 55, y: 0 }],
+  'a long segment consumes proportionally more of the reveal',
+)
+// Closed paths walk the closing segment too.
+const tri = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }]
+assert.ok(
+  pathLength(tri, true) > pathLength(tri, false),
+  'closing the path adds the return segment to its length',
+)
+// Degenerate input must not divide by zero or hang.
+const dot = [{ x: 5, y: 5 }, { x: 5, y: 5 }]
+assert.deepEqual(pathAtProgress(dot, false, 0.5), dot, 'a zero-length path is all-or-nothing')
+assert.deepEqual(pathAtProgress([{ x: 0, y: 0 }], false, 0.5), [], 'one point draws nothing')
+
+console.log('smoke OK — reducer, sampler, morph resolution, key moments and path reveal all behave')

@@ -104,6 +104,30 @@ simultaneous cross-fade is the muddy look being replaced. The provider seam
 keeps `getGlyphs` optional: a provider without it still renders correctly via
 the original cross-fade.
 
+## Curves
+
+A `path` node holds sampled points and draws them as one polyline. It exists
+because a curve was otherwise one `line` node per segment: milestone run 4's
+parabola was 9 of its scene's 22 nodes, moved as nine things, and had to be
+re-laid nine times when the scale changed.
+
+It is deliberately **dumb** — points, not a formula. Anything that *produces*
+the points (plotting `y = f(x)`, mapping a domain onto the canvas) is
+agent-facing sugar that compiles down to this, the same split as `animate`
+baking keyframes from a sampled current value. The document therefore never
+holds an expression, and the purity invariant needs no argument.
+
+Write-on is where a path differs from every other node. The generic reveal
+sweeps a rectangular mask across the node's bounds, which is right for a line
+of text and wrong for a curve: a mask edge reveals by *x position*, so a steep
+section appears all at once and a path that doubles back reveals its later half
+first. A path instead draws the prefix of itself up to `progress` measured by
+**arc length** (`packages/engine/src/path.ts`, pure and browser-free), with the
+final segment cut proportionally so a 60-point curve does not reveal in 60
+visible steps. Because the reveal is geometry rather than a mask, a partially
+drawn path is an open curve — it is never closed or filled until it is whole,
+or the fill would grow as a wedge.
+
 ## Captions
 
 Subtitles are a **pure function of the document**, the same discipline as

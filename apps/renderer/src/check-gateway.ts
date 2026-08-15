@@ -142,6 +142,50 @@ const shadowed = await exec('update_node', {
 assert.match(shadowed, /animated on this node/, 'a shadowed patch must warn')
 console.log('errors OK — bad args, unknown names, credit gate and both update_node traps')
 
+// ---------- an argument the capability does not have is an ERROR ----------
+// Zod strips unknown keys by default, which turns a typo into a success:
+// milestone run 4 passed `tail:` to fit_scene_to_narration three times and got
+// the 0.8s default reported back each time as though it were the value asked
+// for. That is the update_node trap in a second place, and it was found by
+// luck — the response happened to print the tail it used.
+//
+// Enforced centrally in the executor, so these cases stand in for all of the
+// catalog: a capability cannot opt out, and a new one cannot forget.
+for (const [name, args, bad] of [
+  ['add_scene', { projectId, name: 'T', duration: 3, bckground: '#ff0000' }, 'bckground'],
+  ['animate', { projectId, sceneId, nodeId, property: 'opacity', to: 0, start: 0, duration: 1, ease: 'linear' }, 'ease'],
+  ['highlight', { projectId, sceneId, nodeId, start: 0, duration: 1, colour: '#ff0000' }, 'colour'],
+  ['fit_scene_to_narration', { projectId, sceneId, tail: 1.2 }, 'tail'],
+  ['preview_frames', { projectId, times: [1, 2] }, 'times'],
+] as const) {
+  const r = await post(`/api/agent/tools/${name}/execute`, args)
+  assert.equal(r.status, 400, `${name} must reject the unknown argument "${bad}", got ${r.status}`)
+  assert.match(r.body, new RegExp(`unknown argument.*\`${bad}\``), `${name} must name "${bad}"`)
+  // Naming what *was* expected is the whole point: the mistake is nearly
+  // always a near-miss for a real argument.
+  assert.match(r.body, /Accepts: /, `${name}'s refusal must list the arguments it does take`)
+}
+// The correct spelling still works — strictness must not cost a valid call.
+assert.match(
+  await exec('highlight', { projectId, sceneId, nodeId, start: 0, duration: 1, color: '#ff0000' }),
+  /highlighting/,
+  'a correctly-spelled argument is unaffected',
+)
+console.log('unknown args OK — rejected by name across the catalog, valid calls unaffected')
+
+// ---------- rotation is radians, and says so ----------
+// `animate` reported `rotation 0 → 11.46` truthfully in run 4 and was wrong by
+// 25x: the agent sent degrees. The value is correct as far as the document is
+// concerned, so only the units documentation can prevent it.
+const rot = await post('/api/agent/tools/describe', { names: ['animate'] })
+assert.match(rot.body, /RADIANS/, 'animate must state the unit of rotation')
+assert.match(rot.body, /1\.5708|π/, 'and give a conversion the caller can use')
+assert.match(
+  (await get('/api/agent/tools')).body,
+  /rotation in radians/,
+  'the one-line summary must carry it too — most calls never reach describe',
+)
+
 // ---------- capabilities that only read ----------
 const outline = await exec('get_project', { projectId })
 assert.match(outline, /scene sc_/, 'get_project must outline scenes')
@@ -240,6 +284,33 @@ const paidPath = await post(
 assert.equal(paidPath.status, 400, 'the paid executor must reach the capability')
 assert.match(paidPath.body, /set_narration/, 'and fail with the remedy, before any charge')
 console.log('capabilities OK — nodes, transitions, overlap-replace, and the paid path (unspent)')
+
+// ---------- path: one node for a curve ----------
+// Run 4 built a parabola as 9 separate `line` nodes — 9 of that scene's 22.
+const curve = Array.from({ length: 40 }, (_, i) => ({ x: i * 10, y: -(((i / 39) * 2) ** 2) * 100 }))
+const pathId = (await exec('add_path', { projectId, sceneId, points: curve, x: 200, y: 800 }))
+  .match(/node (\S+)/)![1]!
+const withPath = JSON.parse(await exec('get_scene', { projectId, sceneId })) as {
+  nodes: { id: string; type: string; points?: unknown[]; closed?: boolean }[]
+}
+const stored = withPath.nodes.find((n) => n.id === pathId)!
+assert.equal(stored.type, 'path', 'a curve is one node, not one per segment')
+assert.equal(stored.points!.length, 40, 'every sample is kept')
+assert.equal(stored.closed, false, 'a plotted curve is open by default')
+
+// Two points is the floor: one point is a dot, which is a circle.
+const tooFew = await post('/api/agent/tools/add_path/execute', {
+  projectId, sceneId, points: [{ x: 0, y: 0 }],
+})
+assert.equal(tooFew.status, 400, 'a one-point path must be refused')
+
+// The stringified-number habit reaches nested arrays too.
+assert.match(
+  await exec('add_path', { projectId, sceneId, points: [{ x: '0', y: '0' }, { x: '50', y: '25' }] }),
+  /created path node/,
+  'points accept the stringified numbers a real client sends',
+)
+console.log('path OK — one node per curve, samples preserved, degenerate input refused')
 
 // ---------- assets ----------
 // Producers are server-side, so the fixture is uploaded the way TTS does it.

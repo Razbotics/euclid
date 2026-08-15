@@ -134,12 +134,14 @@ the catalog (~90 lines total).
 - [x] `ask_user` keeps elicitation and the STOP-block fallback; its closing
       instruction now names `execute(name="record_answer")`
 
-## Phase 4: Verify and document (status: in progress)
+## Phase 4: Verify and document (status: done)
 - [x] `check-gateway.ts`: instructions → describe → execute round trip
       against a scratch project, plus the credit gate, both `update_node`
       traps, arg coercion, and first-answer-wins on `record_answer`
-- [ ] Re-run the 60s milestone over the gateway (this is the feasibility
-      gate — compare tool-call count and failure loops against the old run)
+- [x] Re-run the 60s milestone over the gateway (this is the feasibility
+      gate — compare tool-call count and failure loops against the old run).
+      Run 4, 2026-08-16 — verdict below: the indirection is close to free,
+      and one silent-drop bug was found.
 - [x] `check-mcp-tools.ts` rewritten for the gateway: asserts the tool list is
       **exactly** the five (a capability leaking back in as its own tool would
       reinstate the restart problem), and keeps the JSON-RPC argument-coercion
@@ -162,10 +164,119 @@ the catalog (~90 lines total).
       gone, since `instructions` is the copy that cannot go stale
 - [x] Update `docs/architecture.md` (capability catalog section),
       `docs/dev-setup.md` and `000-roadmap.md`
-- [ ] Re-run the milestone over the gateway — **the feasibility gate**. Compare
+- [x] Re-run the milestone over the gateway — **the feasibility gate**. Compare
       tool-call count and failure loops against the third run. Everything above
       proves the mechanism works; only this says whether a generic `execute`
-      helps or hurts an agent's reliability.
+      helps or hurts an agent's reliability. **Done, run 4 — see below.**
+
+## The feasibility gate: milestone run 4 (2026-08-16)
+
+"The Derivative as a Limit" (`2ba2fa0f`), 59.74s, 3 scenes, 71 credits.
+~160 gateway calls total: 1 `instructions`, 1 `describe`, 4 `execute_paid`
+(3 TTS + 1 render), and the rest `execute` — of which 12 were
+`preview_frames` and ~9 were `get_render_status` polls. Counted from the
+transcript by hand, so treat as ±5.
+
+**Bootstrap compliance: clean.** `instructions` was the first Euclid call in
+the thread, before any project existed. The risk the plan flagged — nothing
+forces a client to call it — did not materialise here, though one compliant
+agent is weak evidence and the tool descriptions carrying the bootstrap
+instruction is still what's load-bearing.
+
+**`describe` round trips: 1, batched over 6 capabilities.** The design goal
+was zero for common work, and the one call was not a failure of the summaries.
+It was a genuine capability question the one-liners could not answer: *is
+there a curve primitive?* `add_shape`'s summary says "Add a rect, circle or
+line", which is exactly enough to raise the question and not enough to settle
+whether a polyline/path exists. Everything after that — 20-odd distinct
+capabilities across ~137 calls — ran from the `instructions` one-liners plus
+error text alone. **The summaries are not too thin.**
+
+**Failure loops: none.** 10 calls failed, in 4 distinct argument-shape
+mistakes, and *every one was corrected on the very next attempt*:
+
+| Mistake | What taught the fix |
+|---|---|
+| `set_narration(text:)` | error named `narrationText` |
+| `add_text(text:)` | error named `textContent` |
+| `update_node` flat props | error named `patch` |
+| `update_node(x2/y2)` | error said line nodes have no `x2`/`y2` **and** pre-empted the position trap in the same sentence |
+
+That last one is the design working as intended: a single error message
+carried both the immediate fix and the *adjacent* trap the agent had not hit
+yet. Server-side Zod as "the only teacher" holds up — no error needed a
+follow-up `describe`.
+
+**Call count vs run 3: no baseline exists.** Run 3's record in
+[002](002-render-pipeline.md) does not log a tool-call count, so the
+comparison this checkbox asks for cannot be made numerically, and inventing
+one would be worse than admitting it. What *can* be compared: run 3 spent 76
+credits (15 TTS + 61 render) for 60.9s; run 4 spent 71 (11 + 60) for 59.74s.
+**Log the call count in future runs** so this gate has a baseline next time.
+
+Qualitatively the indirection cost nothing observable. There is no round trip
+the old per-tool surface would have avoided: the failures were argument-shape
+mistakes that a hand-written MCP tool schema would have caught *client-side*
+rather than server-side — which is a real difference, but it cost one retry
+each, not a loop. Set against that, the gateway's own benefit showed up
+mid-run: `preview_frames` was reached as a plain catalog entry, exactly as
+Phase 3 predicted, with no new tool and no reconnect.
+
+### The one real defect found
+
+**`fit_scene_to_narration` silently ignores an unknown `tail` argument.** The
+agent passed `tail: 1.2 / 1.2 / 4` to three scenes; all three used the 0.8s
+default and reported `(10.82s speech + 0.8s tail)`. No error, no warning.
+
+This is the **same class of bug as run 3's `update_node` trap** — a call that
+reports success while doing something other than what was asked — in a
+capability that was never converted to reject unknown keys. It was caught only
+because the response text prints the tail it actually used, so the agent
+noticed the mismatch and set the duration explicitly instead. That is luck
+dressed up as a safeguard: a terser response would have shipped three
+wrong-length scenes.
+
+The `update_node` fix (loud refusal naming the real property) is clearly the
+right pattern and it worked perfectly in this same run. **It should be applied
+across the catalog, not just to `update_node`** — unknown keys in any
+capability's args should be an error, not a strip. Worth an audit: `tail` is
+unlikely to be the only one.
+
+**Fixed 2026-08-16, and it was worse than one capability.** An audit found
+*zero* of the 27 capabilities rejected unknown keys — every one used a plain
+`z.object()`, which strips by default. Four more were reproduced immediately:
+`add_scene(bckground:)` created a scene with the default background,
+`animate(ease:)` silently used `smooth`, `preview_frames(times:)` ignored the
+times and captured key moments instead, and `highlight(colour:)` returned
+"highlighting … (color)" — a reply containing the word *color*, which reads
+like confirmation of the argument it just dropped.
+
+The fix is one function in `executeCapability`, not 27 schema edits: the
+executor `.strict()`s any object schema before parsing. That is the catalog
+design paying off — a single chokepoint means no entry can opt out and no
+future entry can forget. The refusal names the offending key, says why it is
+not being dropped, and lists what the capability *does* accept, because these
+are near-misses (`tail`→`tailSec`, `colour`→`color`) rather than inventions.
+Pinned by `check-gateway.ts` using the exact typos from this run.
+
+### Secondary finding: `add_shape` and `update_node` disagree about lines
+
+`add_shape` *takes* `x2`/`y2`; the line node *stores* `from`/`to`. Patching a
+line therefore needs property names that appear nowhere in the creation API,
+and cost 6 failed calls plus a `get_scene` to discover. This is precisely the
+run-3 `update_node` complaint ("the tool that creates a node and the tool that
+moves it disagree about the shape") surviving in a second place, for lines
+instead of positions. The refusal message is good enough that it cost one
+retry — but the asymmetry is the underlying bug, and the catalog is now the
+single place to fix it.
+
+### Verdict
+
+**The generic executor is not costing agent reliability.** One `describe`, no
+failure loops, every error self-correcting in one attempt, and the bootstrap
+honored. The escape hatch (register catalog entries as per-tool MCP tools) is
+not needed. The two defects found are both *catalog validation* bugs that the
+gateway makes cheaper to fix, not consequences of the indirection.
 
 ## Notes / gotchas
 

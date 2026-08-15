@@ -606,6 +606,74 @@ The distance to *beautiful* is unchanged from the re-run and now better
 localised: **glyph correspondence through a layout change** is the one piece
 of engine work that would lift every derivation video at once.
 
+### The fourth run (2026-08-16)
+
+"The Derivative as a Limit" (`2ba2fa0f`) — the secant→tangent limit on
+`y = x²`, for a viewer who has done algebra but no calculus. 3 scenes, 160
+words, 59.75s h264+aac 1080p60, 2.3MB, **71 credits** (11 TTS + 60 render).
+`pnpm -r typecheck` green. The first run built with the agent able to *see*
+([plans/007](007-agent-sight.md)) and the first over the gateway
+([plans/008](008-mcp-gateway.md)); both are written up there. This section is
+only the video.
+
+**Verdict: the best of the four, and for a new reason — the flaws that
+shipped in runs 1–3 were caught during the build instead of after it.**
+
+What went right that had not before:
+- **The geometry is correct because a frame said it wasn't.** First layout put
+  the parabola at a uniform 150 px/unit, where over x∈[1,2] the curve rises 3
+  units for 1 across — so the secant *visually hugged the curve* and the one
+  contrast the video teaches was invisible. Re-laid onto a non-uniform scale
+  (290 px/unit x, 105 y). Affine scaling preserves tangency and chords, so
+  this is a plotting convention, not a distortion of the math.
+- **The morph flaw from run 3 did not recur, and that was verified rather
+  than hoped.** Run 3's worst moment was a fraction collapse illegible for
+  ~0.6s. This run split `(2h+h²)/h → 2+h` into *factor* (`h(2+h)/h`) then
+  *cancel*, then sampled all six morph midpoints to check. All six legible —
+  including the fraction→inline collapse that is the hardest case. Splitting
+  the leap is now a repeatable technique, not a lucky escape.
+- **Word-level timings drove every cue.** `get_scene` returns per-word start/
+  end from the TTS; each reveal, morph and highlight is pinned to the word
+  that motivates it (the secant is drawn on "draw the line through them", the
+  slope morphs on "the h's cancel"). Earlier runs eyeballed sentence-level
+  timing. This is the cheapest quality win in the run and it cost one call.
+
+Flaws, in rough order of impact:
+1. **The parabola is nine straight chords, not a curve.** There is no
+   polyline/path primitive — `add_shape` is rect/circle/line — so a curve
+   costs one node per segment. At 0.25-unit steps the chord sag is ~2px,
+   invisible under a 5px stroke, and it reads as smooth at full resolution.
+   But it cost 9 creation calls plus 9 more to re-lay after the rescale, and
+   a curvier function or a wider domain would show corners. **A `path` or
+   `plot` node is the single highest-value primitive still missing** — it
+   would have removed ~20 calls from this run alone.
+2. **A line's endpoint cannot be animated.** `animate`'s property enum has no
+   `x2`/`y2`, so the rise/run triangle could not follow the sliding point and
+   had to be faded out before the slide began. It works — the triangle has
+   done its job by then — but "fade it rather than move it" was forced, not
+   chosen. Q's path is likewise a 3-segment chord approximation of the
+   parabola, exact at each stop and a few px off mid-flight.
+3. **5.1s of silence on the end card** (8.5% of runtime), flagged `(long)` by
+   `get_project`. The frame is not static — the payoff line writes on and the
+   `lim` highlight runs to 59.4s — but a reviewer would reasonably trim ~2s.
+   It exists because `fit_scene_to_narration` ignored the `tail` argument
+   (see plans/008) and the duration was set by hand afterwards.
+4. **Scene 1 holds a static straight-line figure for ~4s** while the narration
+   talks about curves. Mitigated by dimming the triangle and writing on the
+   question text, but the honest fix is showing a curve, which cost more nodes
+   than it was worth given flaw 1.
+
+Measured, not eyeballed: `silencedetect` puts scene 2's audio **29ms** after
+its scene boundary and scene 3's **18ms** (run 3: 19/38ms). Six frames pulled
+out of the finished MP4 with `ffmpeg` are identical to the `preview_frames`
+tiles at the same timestamps — the purity invariant holding in practice, and
+the reason build-time previews are trustworthy at all.
+
+The distance to *beautiful* is now **a curve primitive** and the animatable
+line endpoint, ahead of glyph correspondence. Run 3 named glyph
+correspondence because its subject was a derivation; the moment a video needs
+*geometry*, the missing primitive is the thing that bites.
+
 ## Deferred on purpose
 - **Cloudflare Queues + Containers.** The flagged infra risk, and it's
   orchestration for a pipeline that hasn't yet proven it makes a *good*

@@ -112,6 +112,28 @@ pnpm dev:web    # :5173 — `/` lists projects; ?project=<id> opens one; ?demo=1
 pnpm --filter @euclid/renderer exec tsx src/preview-server.ts   # :8790
 ```
 
+### Renders do not start themselves in dev
+
+`render_video` debits credits and creates a **`queued`** job, then returns
+"poll `get_render_status` for the download URL". In production a render worker
+picks the job up. **In dev nothing does** — the Queues/Containers work is
+still deferred ([plans/002](plans/002-render-pipeline.md)) — so the job stays
+`queued` forever and the poll never resolves. Drive it by hand:
+
+```sh
+pnpm --filter @euclid/renderer exec tsx src/render.ts \
+  --project <projectId> --job <jobId>
+```
+
+It marks the job `rendering`, uploads to R2 and marks it `done`; a crash marks
+it `failed`, which refunds the credits automatically. Needs `dev:web` (it
+drives `render.html`). Without `--job` it ignores the job lifecycle and just
+writes a local MP4 via `--out`.
+
+This bit milestone run 4: the agent polled a `queued` job repeatedly with no
+indication that the queue had no consumer. If you are adding a dev-loop
+checklist anywhere, this belongs on it.
+
 `dev:api` prints the tunnel URL before wrangler takes over the console (also
 recorded as `TUNNEL_ORIGIN` in `.env.local`). It changes on every restart —
 re-paste it wherever an external service points at your dev backend.

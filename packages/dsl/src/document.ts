@@ -138,6 +138,7 @@ interface NodeBase {
   name?: string
   position: Vec2
   scale: number
+  /** Radians, about `position` — not degrees, and not about the node's bounds. */
   rotation: number
   opacity: number
   tracks: Track[]
@@ -167,6 +168,29 @@ export interface LineNode extends NodeBase {
   stroke: Color
   strokeWidth: number
 }
+/**
+ * A polyline through `points`, which are relative to `position` — the same
+ * convention as a line's `from`/`to`.
+ *
+ * Exists because a curve was otherwise nine separate `line` nodes: run 4's
+ * parabola was 9 of its scene's 22 nodes, moved as nine things, and had to be
+ * re-laid nine times when the scale changed. Deliberately dumb — it holds
+ * sampled points, not a formula. Anything that *produces* those points
+ * (plotting `y = f(x)`, mapping a domain to the canvas) is agent-facing sugar
+ * that compiles down to this, which keeps the formula out of the document and
+ * the purity invariant untouched.
+ */
+export interface PathNode extends NodeBase {
+  type: 'path'
+  /** At least two points, relative to `position`. */
+  points: Vec2[]
+  stroke: Color
+  strokeWidth: number
+  /** Join the last point back to the first. */
+  closed: boolean
+  /** Filled only when set; a plotted curve normally is not. */
+  fill?: Color
+}
 export interface TextNode extends NodeBase {
   type: 'text'
   text: string
@@ -184,7 +208,7 @@ export interface GroupNode extends NodeBase {
   type: 'group'
   children: EuclidNode[]
 }
-export type EuclidNode = RectNode | CircleNode | LineNode | TextNode | LatexNode | GroupNode
+export type EuclidNode = RectNode | CircleNode | LineNode | PathNode | TextNode | LatexNode | GroupNode
 
 const NodeBaseShape = {
   id: z.string().min(1),
@@ -224,6 +248,17 @@ export const NodeSchema: z.ZodType<EuclidNode> = z.lazy(() =>
       to: Vec2Schema,
       stroke: ColorSchema,
       strokeWidth: z.number().positive(),
+    }),
+    z.object({
+      ...NodeBaseShape,
+      type: z.literal('path'),
+      // Two points is the minimum that draws anything; below that a path is a
+      // point, which is a circle.
+      points: z.array(Vec2Schema).min(2),
+      stroke: ColorSchema,
+      strokeWidth: z.number().positive(),
+      closed: z.boolean(),
+      fill: ColorSchema.optional(),
     }),
     z.object({
       ...NodeBaseShape,

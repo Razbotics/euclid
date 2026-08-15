@@ -134,6 +134,38 @@ assert.ok(
 )
 await ok('delete_project', { projectId: otherId, confirm: true })
 
+// ---------- a path reveals along its length ----------
+// The generic write-on sweeps a mask by x-position; a curve has to be drawn
+// along its arc instead, or a steep section appears all at once. Measured
+// rather than eyeballed: the lit fraction must grow monotonically through the
+// reveal, which a mask sweep of a *steep* curve would not do evenly.
+const pathScene = (await ok('add_scene', { projectId, name: 'Curve', duration: 6 })).data.sceneId
+const samples = Array.from({ length: 50 }, (_, i) => ({ x: i * 14, y: -(((i / 49) * 2) ** 2) * 180 }))
+const curveId = (
+  await ok('add_path', { projectId, sceneId: pathScene, points: samples, x: 300, y: 900, strokeWidth: 6 })
+).data.nodeId
+await ok('write_on', { projectId, sceneId: pathScene, nodeId: curveId, start: 0, duration: 4 })
+
+// Global time: this scene starts after the first one.
+const base = 8 + 4 // scene 1 is 8s, plus the 4s "Two" scene added earlier
+const reveal = await ok('preview_frames', {
+  projectId,
+  at: [base + 0.5, base + 2, base + 3.9],
+  columns: 3,
+})
+const revealInk = reveal.data.ink as number[]
+assert.equal(revealInk.length, 3, 'three points across the reveal')
+assert.ok(revealInk[0]! > 0, 'the curve has started early in the write')
+assert.ok(
+  revealInk[1]! > revealInk[0]!,
+  `the reveal must grow: ${revealInk.map((v) => v.toFixed(4)).join(' < ')}`,
+)
+assert.ok(revealInk[2]! > revealInk[1]!, 'and keep growing to the end')
+writeFileSync(`${OUT}/check-preview-path.png`, Buffer.from(reveal.image!.base64, 'base64'))
+console.log(
+  `path reveal OK — lit fraction ${revealInk.map((v) => (v * 100).toFixed(2) + '%').join(' → ')}`,
+)
+
 // ---------- explicit times, and the drill-down ----------
 const at = await ok('preview_frames', { projectId, at: [0.5, 3], columns: 2 })
 assert.equal(pngSize(Buffer.from(at.image!.base64, 'base64')).width, 2 * 480, 'columns are honoured')

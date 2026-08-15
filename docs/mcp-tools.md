@@ -66,6 +66,11 @@ shape as `remove_asset`'s `force`.
   succeed in ways that change nothing on screen — a patch shadowed by a track,
   narration cut at a scene edge — and say so in the result rather than leaving
   it to be discovered in a render.
+- **Unknown arguments are refused, not dropped.** The executor rejects any key
+  a capability does not declare, naming it and listing what is accepted. Zod
+  strips by default, which turned a typo into a success — `highlight(colour:)`
+  used to reply "highlighting … (color)" while silently using the default.
+  Enforced centrally, so no capability can opt out.
 - **Errors are the documentation.** Validation is server-side now, so a
   rejection names the argument to fix, the capability to call next, or what
   *does* exist ("scene sc_1 not found. This project has: …"). Responses carry

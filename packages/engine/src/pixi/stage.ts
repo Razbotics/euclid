@@ -1,5 +1,6 @@
 import { Container, Graphics, Sprite, Text, Texture, type Renderer } from 'pixi.js'
 import { globalToScene, type Color, type EuclidDoc, type LatexNode, type Vec2 } from '@euclid/dsl'
+import { pathAtProgress } from '../path'
 import { resolveScene, type ResolvedNode } from '../sampler'
 import {
   findGlyphRun,
@@ -263,6 +264,7 @@ export class EuclidStage {
       case 'rect':
       case 'circle':
       case 'line':
+      case 'path':
         content = new Graphics()
         break
       case 'text': {
@@ -311,6 +313,27 @@ export class EuclidStage {
         g.moveTo(node.from.x, node.from.y)
           .lineTo(node.to.x, node.to.y)
           .stroke({ width: p.strokeWidth as number, color: p.stroke as string })
+        return
+      }
+      case 'path': {
+        const g = item.content as Graphics
+        g.clear()
+        // Write-on is expressed as geometry rather than a mask: only the drawn
+        // prefix exists, so the reveal follows the curve instead of a sweeping
+        // edge. `applyWrite` leaves path nodes alone for exactly this reason.
+        const drawn =
+          res.writeProgress === null
+            ? node.points
+            : pathAtProgress(node.points, node.closed, res.writeProgress)
+        if (drawn.length < 2) return
+        g.moveTo(drawn[0]!.x, drawn[0]!.y)
+        for (let i = 1; i < drawn.length; i++) g.lineTo(drawn[i]!.x, drawn[i]!.y)
+        // A partially drawn shape is an open curve, so it must not be closed
+        // or filled until it is whole — otherwise the fill grows as a wedge.
+        const whole = res.writeProgress === null || res.writeProgress >= 1
+        if (node.closed && whole) g.closePath()
+        if (node.fill && whole) g.fill(node.fill)
+        g.stroke({ width: p.strokeWidth as number, color: p.stroke as string })
         return
       }
       case 'text': {
@@ -593,6 +616,13 @@ export class EuclidStage {
   }
 
   private applyWrite(item: Item, res: ResolvedNode): void {
+    // A path draws its own prefix in updateContent, by arc length. Masking it
+    // as well would reveal by x-position and undo the point of doing it in
+    // geometry — visibility is still handled below by the progress <= 0 case.
+    if (res.source.type === 'path' && res.writeProgress !== null) {
+      item.view.visible = res.writeProgress > 0
+      return
+    }
     if (res.writeProgress === null) {
       if (item.mask) {
         item.view.mask = null

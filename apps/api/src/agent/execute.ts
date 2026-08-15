@@ -1,6 +1,6 @@
-import { ZodError } from 'zod'
+import { z, type ZodError } from 'zod'
 import { CATALOG_REVISION, argsSchemaOf, capabilities, getCapability } from './catalog'
-import { CapabilityError, type AgentCtx, type CapabilityResult } from './types'
+import { CapabilityError, type AgentCtx, type Capability, type CapabilityResult } from './types'
 
 /** The orientation block. Read once per thread; it is the whole tool list. */
 export function buildInstructions(): string {
@@ -144,10 +144,10 @@ export async function executeCapability(
     )
   }
 
-  const parsed = cap.args.safeParse(rawArgs ?? {})
+  const parsed = strictArgs(cap).safeParse(rawArgs ?? {})
   if (!parsed.success) {
     throw new CapabilityError(
-      `invalid arguments for ${name}:\n${formatZodIssues(parsed.error)}\n` +
+      `invalid arguments for ${name}:\n${formatZodIssues(parsed.error, cap)}\n` +
         `Call describe(["${name}"]) for the full argument contract ` +
         `(catalog revision ${CATALOG_REVISION} — if you are working from an ` +
         `earlier describe, it may have moved).`,
@@ -158,9 +158,50 @@ export async function executeCapability(
   return { ...result, name, revision: CATALOG_REVISION }
 }
 
-function formatZodIssues(error: ZodError): string {
+/** Built once per capability; `.strict()` rebuilds the schema each call. */
+const STRICT = new WeakMap<Capability, z.ZodType>()
+
+/**
+ * Reject arguments the capability does not have, rather than dropping them.
+ *
+ * Zod strips unknown keys by default, which turns a typo into a *success* —
+ * `highlight(colour:)` cheerfully returned "highlighting … (color)" while using
+ * the default, and `fit_scene_to_narration(tail:)` reported the 0.8s default
+ * back as though it were the value asked for. That is the same class of defect
+ * as the `update_node` trap: a call that reports doing one thing and does
+ * another, which no amount of reading the response can catch.
+ *
+ * Enforced here rather than on each schema because the catalog is the single
+ * chokepoint — this covers all 27 capabilities and every future one, and no
+ * entry can forget it.
+ */
+function strictArgs(cap: Capability): z.ZodType {
+  const cached = STRICT.get(cap)
+  if (cached) return cached
+  const strict = cap.args instanceof z.ZodObject ? cap.args.strict() : cap.args
+  STRICT.set(cap, strict)
+  return strict
+}
+
+/** Valid argument names, for an error that can say what *was* expected. */
+function argNames(cap: Capability): string[] {
+  return cap.args instanceof z.ZodObject ? Object.keys(cap.args.shape) : []
+}
+
+function formatZodIssues(error: ZodError, cap: Capability): string {
   return error.issues
     .map((i) => {
+      // An unrecognised key has an empty path, so the generic form would render
+      // it as "(root): Unrecognized key" — true, and useless. Name the accepted
+      // arguments instead: the mistake is nearly always a near-miss.
+      if (i.code === 'unrecognized_keys') {
+        const bad = (i as unknown as { keys: string[] }).keys
+        return (
+          `  unknown argument${bad.length > 1 ? 's' : ''} ${bad.map((k) => `\`${k}\``).join(', ')} — ` +
+          `not dropped, because a silently ignored argument reports success while ` +
+          `doing something else. Accepts: ${argNames(cap).join(', ')}.`
+        )
+      }
       const path = i.path.length ? i.path.join('.') : '(root)'
       return `  ${path}: ${i.message}`
     })

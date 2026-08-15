@@ -11,11 +11,14 @@ const outside = (t: Transition, start: number, duration: number): boolean =>
 export const animTools = [
   capability({
     name: 'animate',
-    summary: 'Keyframe one property from its current value to `to` over `duration`.',
+    summary:
+      'Keyframe one property from its current value to `to` over `duration` (rotation in radians).',
     doc: [
       'The generic motion primitive. The start value is **sampled from the document at `start`**, never assumed — so animations chain continuously and you never have to restate where something already is.',
       '',
       'Properties: `position` ({x,y}), `scale`/`rotation`/`opacity`/`width`/`height`/`radius`/`fontSize`/`strokeWidth` (number), `fill`/`stroke`/`color` (#rrggbb).',
+      '',
+      '**`rotation` is in RADIANS, not degrees** — a quarter turn is 1.5708, not 90. Degrees are the natural guess and the call will succeed with a wildly wrong value: 90 wraps more than fourteen full turns. Convert with `degrees × π / 180`. A node rotates about its own `position`, so a line pivots about its anchor rather than its midpoint.',
       '',
       'Existing keyframes for that property **after `start` are replaced**, so re-calling to revise a move works; keyframes before `start` are kept, which is what makes a chain of calls compose.',
       '',

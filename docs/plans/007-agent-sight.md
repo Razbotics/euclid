@@ -100,8 +100,9 @@ resolution when a tile looks wrong.
 - [x] Full-res drill-down for a single frame (`full: <index>`)
 - [x] `check-preview.ts` — driven through the gateway as an agent receives it
 - [x] `preview-server.ts` — the capture backend a Worker cannot be
-- [ ] **Use it in a milestone run.** Everything above is machinery; none of it
-      proves an agent *acts* on what it sees.
+- [x] **Use it in a milestone run.** Everything above is machinery; none of it
+      proves an agent *acts* on what it sees. Run 4 (below) says it does: 12
+      preview calls, 4 of which changed the video.
 
 ### 3. Pricing: free, deliberately
 
@@ -211,6 +212,98 @@ and a hand-rolled script to find the first time.
   function, drawn as clickable markers on the scrubber, so "tile [6] looks
   wrong" is one click from watching it move. That is the half a human needs;
   the sheet exists because the agent cannot scrub.
+
+## Milestone run 4 (2026-08-16) — did it look, and did it act?
+
+"The Derivative as a Limit" (`2ba2fa0f`) — secant slope becoming tangent slope
+on `y = x²`, aimed at a pre-calculus viewer. 3 scenes, 160 words, 59.74s,
+71 credits (11 TTS + 60 render).
+
+**Caveat on this evidence.** The operator pasted the full run brief, including
+the "do not tell the agent any of this" watch list, into the agent's first
+turn. So *that it called `preview_frames` at all* is not uncoached, and should
+not be counted as proof of unprompted use. What the contamination does **not**
+reach is the four findings below: knowing you are supposed to look does not
+tell you what you will see, and each of these changed the document.
+
+**It looked 12 times, and it looked while building.** The first call came after
+scene 1's static layout and *before a single animation existed* — the
+build-time use the plan wanted, not a cheap render at the end. Distribution:
+2 calls in scene 1, 8 during scene 2 (the hard scene), 2 at the end. Four were
+`full:` drill-downs, always after a tile looked suspicious — the intended
+tile→full escalation, never as the first look.
+
+**Four times it acted on what it saw.**
+
+1. **The scale of the whole video changed because of one frame.** The parabola
+   was first laid out with a uniform 150 px/unit. The tile looked cramped; the
+   `full` drill-down showed why — over x∈[1,2] the curve rises 3 units for 1
+   across, so the secant *hugged the curve*, destroying the one contrast the
+   video exists to teach. The fix was a non-uniform scale (290 px/unit in x,
+   105 in y) and a re-lay of **15 nodes**. Nothing in `get_project` could have
+   surfaced this: the outline was correct, the geometry was correct, the
+   *picture* was useless. This is the single biggest quality decision in the
+   run and it was invisible to every text tool.
+2. **`animate` reported success and was wrong by 25×.** Probing the secant's
+   pivot, the agent sent `rotation → 11.46` (degrees, from slope 3 to slope 2)
+   and got back a truthful `animating line_4f1efa3d.rotation 0 → 11.46`. The
+   frame showed the line swung up-and-*left*, well past vertical: rotation is
+   **radians**, and 11.46 rad wraps to ≈ −63°. The same frame answered the
+   second unknown for free — the pivot is the line's `position`, not its
+   midpoint, which is what makes "secant pivots about the fixed point P"
+   expressible at all. Correct value: 0.2000 rad. **This is the run-3 pattern
+   exactly** — a success message about the document that says nothing about
+   the render — and it is the cleanest case yet for why text is not enough.
+3. **Two labels occupying the same frame.** A layout check showed "secant" and
+   "tangent" both visible, because "tangent" had no reveal gating it. Fixed
+   with a `write_on` at 35.3s. A pure-text read would have shown two text
+   nodes at two different positions and looked entirely fine.
+4. **The equation was overrunning the right edge**, found on the same frame,
+   fixed by dropping it to 52px and re-centering.
+
+**It also used sight to confirm a fix, not just to find faults.** Run 3's
+sharpest quality flaw was a fraction morph illegible for ~0.6s. This run split
+`(2h+h²)/h → 2+h` into *factor* then *cancel* (`h(2+h)/h` in between) and then
+sampled all six morph midpoints specifically to check the collapse. All six
+were legible. That is the defect not recurring, verified rather than assumed —
+and it is the loop the plan was arguing for: cheap enough to check a
+hypothesis about appearance mid-build.
+
+**Follow-up fixed 2026-08-16: `rotation` now documents its unit.** The 25×
+error was not a bug in `animate` — the document really did get 11.46, and the
+tool said so. Only the units could have prevented it, and they were nowhere:
+`animate` listed `rotation` among the plain "(number)" properties. It now says
+**RADIANS** in the doc with the conversion and the pivot rule, carries
+"rotation in radians" in the one-line summary (most calls never reach
+`describe`), and `packages/dsl` records it on the field itself. Pinned by
+`check-gateway.ts`, which asserts both the doc and the summary.
+
+**Motion caveat, honored.** The agent stated in its own report that the
+legibility verdict came from stills and that a still cannot judge whether the
+0.5s morph *reads* in motion. The one frame it flagged as odd-looking
+(`h + h/h`, mid-factor) it explicitly declined to call a defect for that
+reason. The `Remember stills cannot show motion` line in the tool response is
+doing real work.
+
+**Cost.** 12 preview calls against 1 render. Had the same four findings been
+chased the run-3 way — render, download, `ffmpeg` — they would have cost ~4
+renders (~240 credits) and ~12 minutes, and findings 2 and 3 would more
+likely have shipped than been found.
+
+### What sight did not fix
+
+- It makes flaws findable, not fixed — as predicted. Every one of the four
+  still needed the agent to know what to do about it, and finding 1 cost 15
+  correction calls to act on.
+- **The `full` drill-down is doing more work than the contact sheet.** Three
+  of the four findings were only *confirmed* at full resolution; at tile size
+  the secant-hugs-curve problem read as "looks a bit thin". The 4×3 sheet is
+  the right default for *scanning*, but the plan's token argument (a sheet
+  instead of N full frames) understates how often a real defect needs the
+  drill-down. Both are cheap, so this is a note, not a problem.
+- No preview call caught a *timing* error, because stills cannot. Timing was
+  gotten right by reading word-level timings out of `get_scene` — a text tool.
+  Sight and pacing text are complements, not substitutes.
 
 ## Notes / gotchas
 

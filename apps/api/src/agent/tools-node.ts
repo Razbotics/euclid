@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { newId, op, type EuclidNode, type Track, type Transition, type Vec2 } from '@euclid/dsl'
-import { COLOR, NODE_ID, PROJECT_ID, SCENE_ID } from './schemas'
+import { COLOR, NODE_ID, NUMBERISH, PROJECT_ID, SCENE_ID } from './schemas'
 import { capability, said, CapabilityError } from './types'
 
 /** Defaults every node carries, so a caller only supplies what it cares about. */
@@ -124,6 +124,54 @@ export const nodeTools = [
       }
       await ctx.submit(a.projectId, [op.addNode(a.sceneId, node)])
       return said(`created ${a.shape} node ${id}`, { nodeId: id })
+    },
+  }),
+
+  capability({
+    name: 'add_path',
+    summary: 'Add a curve through a list of points — one node, not one line per segment.',
+    doc: [
+      'A polyline through `points`, which are **relative to** `x`/`y`. Use it for anything a straight `line` cannot express: a plotted function, an arc, an outline.',
+      '',
+      'Sample the curve as finely as you like — 40 points costs the same to render as 4 and reads as smooth. This is one node, so it moves, fades and reveals as a single thing; the previous alternative was one `line` node per segment, which in a real run made a parabola 9 of a scene\'s 22 nodes and had to be re-laid nine times when the scale changed.',
+      '',
+      '`write_on` a path draws it **along its length**, like drawing the curve by hand, rather than sweeping a mask across it — so a steep section does not appear all at once. That is the usual way to bring a curve on.',
+      '',
+      'Set `closed` to join the last point to the first, and `fill` to fill it (a plotted curve normally wants neither). A partially drawn path is never filled — the fill appears once it is whole.',
+    ].join('\n'),
+    args: z.object({
+      projectId: PROJECT_ID,
+      sceneId: SCENE_ID,
+      points: z
+        .array(z.object({ x: NUMBERISH, y: NUMBERISH }))
+        .min(2)
+        .max(2000)
+        .describe('points relative to x/y, in order'),
+      x: z.number().default(0).describe('origin the points are relative to'),
+      y: z.number().default(0),
+      stroke: COLOR.default('#58c4dd'),
+      strokeWidth: z.number().positive().default(4),
+      closed: z.boolean().default(false),
+      fill: COLOR.optional(),
+    }),
+    async handler(ctx, { projectId, sceneId, points, x, y, stroke, strokeWidth, closed, fill }) {
+      const id = newId('path')
+      await ctx.submit(projectId, [
+        op.addNode(sceneId, {
+          ...baseNode({ x, y }),
+          id,
+          type: 'path',
+          points,
+          stroke,
+          strokeWidth,
+          closed,
+          ...(fill ? { fill } : {}),
+        }),
+      ])
+      return said(`created path node ${id} (${points.length} points)`, {
+        nodeId: id,
+        points: points.length,
+      })
     },
   }),
 

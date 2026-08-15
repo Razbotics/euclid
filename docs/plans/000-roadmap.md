@@ -55,8 +55,12 @@ could not have found the first one.
 - [x] `check-preview.ts`; editor marks the same moments on the scrubber
 - [ ] Bind capture to the render backend — **no second renderer**. Runs against
       a local `preview-server.ts` today; `PREVIEW_ORIGIN` is the only seam.
-- [ ] Use it in a milestone run — the machinery is built and verified, but
-      nothing yet proves an agent *acts* on what it can now see.
+- [x] Use it in a milestone run — **done, run 4 (2026-08-16)**. 12 preview
+      calls, 4 of which changed the video: the parabola's whole coordinate
+      scale (the secant visually hugged the curve, invisible in any text
+      tool), a `rotation` animation that reported success while being wrong
+      by 25× (radians, not degrees), and two layout collisions. Sight now
+      finds the class of bug that used to need a shell. See plans/007.
 
 Preview frames are only trustworthy because of the purity invariant: a
 preview frame is not an approximation of the export, it *is* the export.
@@ -110,7 +114,14 @@ plus a docs row — and a tool edit no longer needs a client restart.
 - [x] Gateway endpoints: instructions / describe / execute (+ paid executor)
 - [x] `apps/mcp` rewritten onto it: 807 lines → 295, five fixed tools
       (`instructions`, `describe`, `execute`, `execute_paid`, `ask_user`)
-- [ ] Re-run the milestone over the gateway — the feasibility gate
+- [x] Re-run the milestone over the gateway — the feasibility gate. **Passed,
+      run 4 (2026-08-16):** `instructions` called first unprompted, exactly
+      **one** `describe` (batched, and for a question the summaries genuinely
+      could not answer), and **zero failure loops** — 10 failed calls in 4
+      distinct argument-shape mistakes, every one corrected on the next
+      attempt from the error text alone. The generic executor is not costing
+      reliability; the escape hatch stays unused. Two catalog *validation*
+      bugs found — see plans/008.
 
 ## Parallel track: agent asks the human → plans/005-agent-questions.md
 - [x] `ask_user` / `get_answer` / `record_answer`; questions ride the project
@@ -139,5 +150,9 @@ check its own output.
 
 ## Deferred: Vertical depth (folded into the animation-depth plan)
 - [x] Matched-glyph LaTeX morphing (upgrade inside texMorph seam)
-- [ ] Graphs/axes/function-plot primitives
+- [~] Graphs/axes/function-plot primitives — `path` node with arc-length
+      write-on shipped 2026-08-16 (run 4 spent ~20 calls and 9 nodes on one
+      parabola). `plot_function` sugar — sample an expression, map a domain to
+      the canvas — is the follow-up; the mapping is where run 4's cost actually
+      was, not the drawing
 - [ ] Code-block primitive with line-highlight animations
