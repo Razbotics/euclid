@@ -107,8 +107,20 @@ main { display: flex; flex: 1; min-height: 0; }
 
 /* The side column now stacks questions above the inspector; an unanswered
    question means an agent is stalled, so it sits at the top and is loud. */
-.side { display: flex; flex-direction: column; min-width: 0; overflow-y: auto; }
-.side .inspector { flex: 1; }
+/*
+ * The side column owns the width now that it holds more than the inspector.
+ * `flex: none` is load-bearing: without it this is a content-sized flex item,
+ * and one long agent question stretches it across the window, squeezing the
+ * canvas to a sliver.
+ */
+.side {
+  width: 320px; flex: none;
+  display: flex; flex-direction: column; min-width: 0;
+  border-left: 1px solid #1d2229; overflow-y: auto;
+}
+.side .inspector { width: auto; flex: 1; border-left: none; overflow-y: visible; }
+/* Agent questions are prose and can be long; never let one widen the column. */
+.decisions { overflow-wrap: anywhere; }
 
 .decisions { border-bottom: 1px solid #1d2229; padding: 12px 14px; }
 .decisions h3 {

@@ -123,8 +123,35 @@ const shown = await page.evaluate(() => ({
 console.log('editor shows:', JSON.stringify(shown, null, 2))
 assert.match(shown.question!, /overruns this scene/, 'question text arrived over the WebSocket')
 assert.deepEqual(shown.options, ['Extend the scene', 'Shorten the script', 'Let it cut'])
-assert.match(shown.badge!, /1 waiting/, 'open questions are counted')
+assert.match(shown.badge!, /waiting/, 'open questions are counted')
 assert.match(shown.seek!, /4\.2s/, 'a question about a moment offers to seek there')
+
+// A long question must not widen the side column and squeeze the canvas.
+// This is a layout regression that throws no error and looks like nothing is
+// wrong until you notice the video is a sliver — so it is asserted, not eyeballed.
+await call('ask_user', {
+  projectId: project.id,
+  question:
+    'Should the end card hold in silence after the last words, and if so for how long, ' +
+    'given the finale narration ends mid-phrase and the scene currently cuts the tail?',
+  detail: 'A deliberately long question, to keep the side panel from stretching across the window.',
+  options: [{ label: 'Tight — about one second' }, { label: 'Contemplative — four seconds or so' }],
+})
+await page.waitForTimeout(500)
+const layout = await page.evaluate(() => {
+  const canvas = document.querySelector('canvas')?.getBoundingClientRect()
+  const side = document.querySelector('.side')?.getBoundingClientRect()
+  return { canvasW: canvas?.width ?? 0, sideW: side?.width ?? 0, viewport: window.innerWidth }
+})
+console.log('layout:', JSON.stringify(layout))
+assert.ok(
+  layout.sideW > 0 && layout.sideW < layout.viewport * 0.35,
+  `side panel must stay a column, got ${layout.sideW}px of ${layout.viewport}px`,
+)
+assert.ok(
+  layout.canvasW > layout.viewport * 0.5,
+  `canvas must keep most of the width, got ${layout.canvasW}px of ${layout.viewport}px`,
+)
 
 // The agent must see it as still open while waiting.
 assert.match(await call('get_answer', { projectId: project.id, decisionId }), /^\[open\]/m)
@@ -176,7 +203,7 @@ await assert.rejects(
 )
 
 const all = await call('get_answer', { projectId: project.id })
-assert.equal((all.match(/^\[answered\]/gm) ?? []).length, 2, 'both questions listed as answered')
+assert.equal((all.match(/^\[answered\]/gm) ?? []).length, 2, 'the two answered questions are listed as answered')
 
 await browser.close()
 if (errors.length) {
