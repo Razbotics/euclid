@@ -206,12 +206,17 @@ schema and the render endpoint (`packages/dsl/src/limits.ts`). v1 primitives
 are LaTeX plus shapes/text/groups. These bound render cost, which is what
 credits are priced against.
 
-Note the document model is **not** math-specific: nodes are a discriminated
-union, so `video` and `audio` clip types extend it without a rewrite. That
-matters because the product direction now targets general video and reels —
-see [plans/003-general-video.md](plans/003-general-video.md), which also
-covers the one piece that genuinely must be replaced (per-frame screenshot
-capture, which cannot composite decoded video at usable speed).
+The active direction is **depth before breadth**: richer animation in the
+math vertical — a scene camera, matrices and other structured primitives,
+and pseudo-3D — before widening to general video. See
+[plans/006](plans/006-animation-depth.md); general video is deferred but not
+abandoned in [plans/003](plans/003-general-video.md).
+
+Two properties of the model make both directions cheap. Nodes are a
+discriminated union, so `video` and `audio` clip types extend it without a
+rewrite. And depth is projection, not a second renderer: `(x, y, z)` → screen
+is pure math in the sampler, so it keeps the purity invariant, needs no GPU
+(the render container has none), and leaves preview and export identical.
 
 ## Render path
 

@@ -41,12 +41,31 @@ after the milestone — see plans/002 for the reasoning.
       response); create/delete and the credits page still to do
 - [ ] Deploy: workers, D1, R2, Containers; production secrets
 
-## Phase 4: General video → plans/003-general-video.md
-Direction change: not limited to educational math animation. Math is the
-first vertical; the target is a general agentic video editor including
-reel/clip workflows.
+## Phase 4: Complex animation and depth → plans/006-animation-depth.md
+Direction decided 2026-08-15: go **deep on the math vertical before going
+wide**. The Phase 2 milestone showed the pipeline reliably makes a *correct,
+synced* video while the ceiling on whether it is a *good* one sits entirely
+in the animation primitives. Going general first would ship an editor that
+makes mediocre video in every vertical rather than excellent video in one.
+Target: the visual vocabulary of 3Blue1Brown's transformer series.
+- [ ] Camera on the scene (position/zoom/rotation), animated by ordinary tracks
+- [ ] Structured primitives: `matrix`, `tokens`, cell-level addressing
+- [ ] Generalise stagger + element matching out of the glyph work in 002
+- [ ] Pseudo-3D by projection: optional `z`, camera yaw/pitch, depth cues
+- [ ] Flows: arrows anchored to nodes, path-following
+
+Pseudo-3D by projection rather than a 3D engine — it stays a pure function of
+(document, time), needs no GPU (the container has none), and keeps preview
+and export identical. See plans/006 for why that is load-bearing.
+
+## Deferred: General video → plans/003-general-video.md
+Superseded as the active direction by Phase 4 above, **not** abandoned — the
+market analysis behind it stands and the plan is unchanged. Resume once the
+vertical is genuinely good. Work already done for it keeps its value: the
+WebCodecs benchmark, the container codec findings, and the asset registry
+built in Phase 2.
 - [ ] Replace per-frame screenshot capture with WebCodecs (wins on the current path too)
-- [ ] Assets as first-class (registry, proxies, thumbnails)
+- [x] Assets as first-class (registry) — done in Phase 2; proxies/thumbnails still to do
 - [ ] `video` / `audio` node types; tracks and layering within a scene
 - [ ] Multi-track timeline UI
 - [ ] Ingest + analysis (fetch → transcode → STT → shot detection → segments)
@@ -64,7 +83,7 @@ local rendering inverts the cost model. Revisit when the general-video
 direction is confirmed, container render cost becomes a constraint, or users
 prove unwilling to upload source footage.
 
-## Phase 5: Vertical depth (deprioritized by the Phase 4 change)
+## Phase 5: Vertical depth (folded into Phase 4 above)
 - [x] Matched-glyph LaTeX morphing (upgrade inside texMorph seam)
 - [ ] Graphs/axes/function-plot primitives
 - [ ] Code-block primitive with line-highlight animations

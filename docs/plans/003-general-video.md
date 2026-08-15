@@ -1,4 +1,11 @@
-# 003 — General video: assets, clips, reels (status: planned)
+# 003 — General video: assets, clips, reels (status: deferred)
+
+> **Superseded as the active direction on 2026-08-15** by
+> [plans/006](006-animation-depth.md) — depth in the math vertical first,
+> one problem at a time. Deferred, not abandoned: the analysis below stands
+> unchanged, and the WebCodecs and container-codec findings in it are
+> prerequisites for general video whenever it resumes. The reasoning for the
+> switch is in 006 under "What this replaces, and why".
 
 Direction change (decided 2026-08-14): Euclid is **not** limited to
 educational math animation. The target is a general agentic video editor —
