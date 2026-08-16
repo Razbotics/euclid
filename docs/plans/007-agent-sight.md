@@ -365,6 +365,30 @@ reading anything into what the agent does.
   where the pixels are, and returned as `x-preview-ink`. That turned a test
   hack into a product safeguard: an all-blank sheet is refused as a capture
   fault rather than handed to an agent that would read it as a broken video.
+- **Two more, found while building the camera** ([plans/006](006-animation-depth.md)
+  Phase A, 2026-08-16) — the first feature where "the document changed" and
+  "the picture changed" come apart cleanly. Both are now asserted in
+  `check-preview.ts`, which previously could not have caught either.
+  1. **The blank guard above was dead on arrival.** Ink was measured *after*
+     the tile's hairline separator was drawn, and that hairline is inside the
+     measured rect — a ~1.2% floor on every tile. A genuinely blank frame
+     scored 1.15% against the 0.02% threshold, so "every frame came back
+     empty" could never fire. Measure before decorating. Worth noting the
+     shape: the safeguard was correct, its input was not, and nothing in the
+     system disagreed with itself loudly enough to say so.
+  2. **The capture cache was keyed on the document's JSON length**
+     (`JSON.stringify(doc).length + ':' + scenes.length`). Any length-preserving
+     edit was invisible and the agent got the *previous* frame back, presented
+     as current: `(960,540)` → `(200,200)`, `#ffffff` → `#101418`, a duration
+     of 6 → 8. Found because a camera pan to (200,200) rendered identically to
+     the frame before it. A content hash now — the `JSON.stringify` was already
+     being paid for, and then thrown away in favour of one number off it.
+- With the floor gone, the all-blank guard began firing on frames that are
+  **legitimately** empty, so it now applies only to key-moment sheets. An
+  explicit `at` is a question and "nothing here" can be its true answer —
+  before a write-on starts, or when a camera frames part of the scene where
+  nothing is. Erroring there would report a broken backend for a framing
+  mistake, which is the exact confusion the guard exists to prevent.
 - Capture and rendering are **one process** as of 2026-08-16
   (`render-worker.ts`), which is what this plan meant by binding capture to the
   render backend: one warm page for previews, a child process per render job,

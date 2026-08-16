@@ -60,14 +60,22 @@ export class PreviewCapturer {
   /**
    * Load a document, unless the page already holds this exact one.
    *
-   * Keyed on a cheap structural fingerprint rather than the id alone: an agent
-   * previews the *same* project repeatedly while editing it, and reloading a
-   * document that has not changed is the difference between a preview that
-   * feels free and one that does not.
+   * Keyed on a content hash rather than the id alone: an agent previews the
+   * *same* project repeatedly while editing it, and reloading a document that
+   * has not changed is the difference between a preview that feels free and
+   * one that does not.
+   *
+   * It must be a hash and not the JSON *length*, which is what this was. Any
+   * edit that preserves the length was then invisible to the preview and the
+   * agent got the previous frame back: moving a node from (960,540) to
+   * (200,200), recolouring #ffffff to #000000, swapping a tex string for one
+   * the same size, changing a duration from 6 to 8. Serving a stale frame is
+   * the worst thing this path can do — it is the one surface an agent trusts
+   * over its own reasoning.
    */
   private async load(doc: EuclidDoc): Promise<{ width: number; height: number }> {
     const page = this.page!
-    const version = JSON.stringify(doc).length + ':' + doc.scenes.length
+    const version = fingerprint(JSON.stringify(doc))
     if (this.loadedDocId !== doc.id || this.loadedVersion !== version) {
       await page.setViewportSize({ width: doc.canvas.width, height: doc.canvas.height })
       await page.evaluate((d) => window.__euclid.load(d), doc as unknown)
@@ -139,6 +147,28 @@ export class PreviewCapturer {
           const x = col * s.tileW
           const y = row * (s.tileH + s.labelH)
           s.g.drawImage(src, x, y, s.tileW, s.tileH)
+
+          // How much of this tile is actually lit, measured here because this
+          // is the only place the pixels exist — a PNG cannot be asked the
+          // question cheaply, since row filtering turns flat regions into zero
+          // bytes and makes a busy frame look emptier than a blank one.
+          //
+          // Measured BEFORE the tile is decorated. The hairline below is drawn
+          // inside the tile rect and is far brighter than the threshold, so
+          // measuring afterwards added a constant ~1.2% to every tile — enough
+          // that a genuinely blank frame scored 1.15% against a 0.02% blank
+          // threshold, and the capture-fault guard in preview_frames could
+          // never fire. The guard was there to catch exactly the black-tile
+          // bug the comment above describes.
+          const px = s.g.getImageData(x, y, s.tileW, s.tileH).data
+          let lit = 0
+          for (let p = 0; p < px.length; p += 4) {
+            // Rec. 601 luma, cheap integer form. The canvas background sits
+            // around 20, so the threshold counts marks rather than backdrop.
+            if ((px[p] * 299 + px[p + 1] * 587 + px[p + 2] * 114) / 1000 > 24) lit++
+          }
+          s.ink.push(lit / (s.tileW * s.tileH))
+
           // A hairline keeps adjacent dark tiles from reading as one image.
           s.g.strokeStyle = '#2a3038'
           s.g.lineWidth = 1
@@ -153,20 +183,6 @@ export class PreviewCapturer {
             text = text.slice(0, -2) + '…'
           }
           s.g.fillText(text, x + 8, y + s.tileH + s.labelH / 2)
-
-          // How much of this tile is actually lit, measured here because this
-          // is the only place the pixels exist — a PNG cannot be asked the
-          // question cheaply, since row filtering turns flat regions into zero
-          // bytes and makes a busy frame look emptier than a blank one.
-          // Excludes the label strip, which is never blank.
-          const px = s.g.getImageData(x, y, s.tileW, s.tileH).data
-          let lit = 0
-          for (let p = 0; p < px.length; p += 4) {
-            // Rec. 601 luma, cheap integer form. The canvas background sits
-            // around 20, so the threshold counts marks rather than backdrop.
-            if ((px[p] * 299 + px[p + 1] * 587 + px[p + 2] * 114) / 1000 > 24) lit++
-          }
-          s.ink.push(lit / (s.tileW * s.tileH))
         },
         { index: i, label: `[${i}] ${tile.t.toFixed(2)}s  ${tile.label}`, t: tile.t },
       )
@@ -191,4 +207,15 @@ export class PreviewCapturer {
     await page.evaluate((tt) => window.__euclid.renderFrame(tt), t)
     return page.locator('#euclid-canvas').screenshot({ type: 'png' })
   }
+}
+
+/**
+ * djb2 over the serialized document, paired with its length. Cheap next to the
+ * `JSON.stringify` that produced the string — which was being paid anyway, and
+ * then thrown away in favour of one number off it.
+ */
+function fingerprint(json: string): string {
+  let h = 5381
+  for (let i = 0; i < json.length; i++) h = ((h << 5) + h + json.charCodeAt(i)) | 0
+  return `${json.length}:${(h >>> 0).toString(36)}`
 }

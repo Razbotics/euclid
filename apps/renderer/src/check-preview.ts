@@ -135,6 +135,62 @@ assert.ok(
 )
 await ok('delete_project', { projectId: otherId, confirm: true })
 
+// ---------- the two ways this path can lie ----------
+// Both were live at once, and each on its own makes a preview untrustworthy in
+// a way no amount of reading the response can catch. Found while building the
+// camera (plans/006 Phase A), which is the first feature where "the document
+// changed" and "the picture changed" come apart cleanly.
+
+// 1. An empty frame must measure as empty. The tile's own hairline border used
+//    to be inside the measured region, putting a ~1.2% floor under every tile
+//    — so a blank frame scored 1.15% against a 0.02% threshold and the
+//    capture-fault guard above could never fire.
+const blankId = (await ok('create_project', { name: 'Preview Blank Frame' })).data.id
+const blankScene = (await ok('add_scene', { projectId: blankId, name: 'Nothing', duration: 4 })).data
+  .sceneId
+await ok('add_text', {
+  projectId: blankId, sceneId: blankScene, textContent: 'LATER', x: 960, y: 540, fontSize: 120,
+})
+await ok('write_on', {
+  projectId: blankId, sceneId: blankScene, nodeId: (
+    await ok('get_project', { projectId: blankId })
+  ).data.doc.scenes[0].nodes[0].id, start: 2, duration: 1,
+})
+const beforeWrite = (await ok('preview_frames', { projectId: blankId, at: [1] })).data.ink[0] as number
+assert.equal(
+  beforeWrite,
+  0,
+  `a frame with nothing drawn yet must measure 0, not ${(beforeWrite * 100).toFixed(2)}% — ` +
+    `anything above the blank threshold disables the capture-fault guard entirely`,
+)
+
+// 2. An edit that happens to preserve the document's JSON length must still
+//    reach the page. The capture cache was keyed on that length, so recolouring
+//    #ffffff to #101418 — or moving a node from (960,540) to (200,200) — served
+//    the previous frame back and reported it as current.
+const staleId = (await ok('create_project', { name: 'Preview Stale Cache' })).data.id
+const staleScene = (await ok('add_scene', { projectId: staleId, name: 'One', duration: 4 })).data
+  .sceneId
+const dot = (
+  await ok('add_shape', {
+    projectId: staleId, sceneId: staleScene, shape: 'circle', x: 960, y: 540, radius: 200,
+    fill: '#ffffff',
+  })
+).data.nodeId
+const litBefore = (await ok('preview_frames', { projectId: staleId, at: [1] })).data.ink[0] as number
+assert.ok(litBefore > 0.01, 'the dot is visible to start with')
+await ok('update_node', {
+  projectId: staleId, sceneId: staleScene, nodeId: dot, patch: { fill: '#101418' },
+})
+const litAfter = (await ok('preview_frames', { projectId: staleId, at: [1] })).data.ink[0] as number
+assert.ok(
+  litAfter < litBefore * 0.05,
+  `an edit that preserves the JSON length must still reload the document: ` +
+    `${(litBefore * 100).toFixed(2)}% → ${(litAfter * 100).toFixed(2)}% (a stale frame would be unchanged)`,
+)
+await ok('delete_project', { projectId: blankId, confirm: true })
+await ok('delete_project', { projectId: staleId, confirm: true })
+
 // ---------- a path reveals along its length ----------
 // The generic write-on sweeps a mask by x-position; a curve has to be drawn
 // along its arc instead, or a steep section appears all at once. Measured

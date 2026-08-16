@@ -138,11 +138,20 @@ export const previewTools = [
       // a black image without comment invites it to conclude the *video* is
       // broken.
       const blank = image.ink.map((v, i) => ({ v, i })).filter((x) => x.v < 0.0002)
-      if (image.ink.length > 0 && blank.length === image.ink.length) {
+      const allBlank = image.ink.length > 0 && blank.length === image.ink.length
+      // Only a fault when the times came from key moments: the document said
+      // something was happening at every one of them, so all-blank means the
+      // capture failed. An explicitly requested time is a question, and "empty"
+      // is a legitimate answer to it — a node that has not been written on yet,
+      // or a camera framing part of the scene where nothing is. Erroring there
+      // would tell the agent its backend is broken when its framing is wrong,
+      // which is the exact confusion this guard exists to prevent.
+      if (allBlank && !at?.length) {
         throw new CapabilityError(
           `every frame came back empty, which is a capture fault rather than a verdict on ` +
             `the video — do not conclude anything about the project from it. The preview ` +
-            `backend rendered ${tiles.length} frame(s) and all were blank.`,
+            `backend rendered ${tiles.length} frame(s) at moments the document says are ` +
+            `busy, and all were blank.`,
           502,
         )
       }
@@ -151,9 +160,10 @@ export const previewTools = [
         ? tiles.map((t, i) => `[${i}] t=${t.t.toFixed(2)}s`).join('\n')
         : formatMoments(moments)
       const emptyNote = blank.length
-        ? `\n\nTile(s) ${blank.map((b) => `[${b.i}]`).join(' ')} are empty. That is ` +
-          `normal before a write-on begins or after a node is removed, but if you expected ` +
-          `something there, check the node's timing.`
+        ? `\n\n${allBlank ? 'EVERY frame is' : `Tile(s) ${blank.map((b) => `[${b.i}]`).join(' ')} are`} ` +
+          `empty. That is normal before a write-on begins or after a node is removed, but if ` +
+          `you expected something there, check the node's timing, its position, and — if the ` +
+          `scene has a camera — whether the camera is framing it (get_project shows \`cam@\`).`
         : ''
       return {
         text:
