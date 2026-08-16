@@ -342,11 +342,28 @@ playhead, the fitting scene shows no warning, the overrunning one is flagged
 with the right delta, and the fit button extended a 1s scene to 2.7s through
 the normal ops path.
 
-## Phase 5: The milestone  (status: in progress)
+## Phase 5: The milestone  (status: done, with one item deferred)
 - [x] Agent builds the full 60s narrated equation-morph video over MCP
-- [ ] Human tweak in the editor lands mid-build (live sync)
+- [~] Human tweak in the editor lands mid-build (live sync) — **deferred
+      2026-08-16**, see below
 - [x] Export, download, watch — and record what the result actually looks
       like, honestly
+
+**On the deferred item.** The milestone was written assuming the valuable loop
+was agent-and-human-together: the agent builds, the human nudges, the change
+lands live. Five runs in, that is not where the value has been. Every quality
+improvement across runs 1–5 came from the *agent* being able to check its own
+work — `preview_frames`, word-level narration timings, the primitives added
+after a run showed they were missing — and none came from a human editing
+mid-build. The mechanism for it exists and is verified at a lower level:
+`check-live.ts` proves an external op reaches the open editor over the
+WebSocket, so this is an unproven *workflow*, not an unproven capability.
+
+Deferred rather than dropped, and cheap to pick up: the ops path, the live
+sync and the editor's inspector all already work. What is missing is a run
+that actually does it, and a reason to want one. The likely reason is a real
+user who cannot express what they want in a sentence — which is a Phase 5
+question, not a pipeline question.
 
 ### The run (2026-08-15)
 
