@@ -3,6 +3,8 @@ import assert from 'node:assert'
 import {
   applyOps,
   cellCenter,
+  edgePoint,
+  nodeExtent,
   cellsInRange,
   defaultCamera,
   describeRange,
@@ -25,6 +27,7 @@ import {
   columnMajorRank,
   isFlatCamera,
   matchByKey,
+  pointAtProgress,
   project3,
   pathAtProgress,
   pathLength,
@@ -611,8 +614,171 @@ assert.ok(
   'a camera distance keyframed into the scene is clamped, not rendered inside out',
 )
 
+
+// ---------- flows: anchored arrows and path following ----------
+// An arrow that stops at the centre of what it points at is a line through a
+// diagram; stopping at the edge is what makes it read as a connection.
+assert.deepEqual(
+  edgePoint({ x: 0, y: 0 }, { halfWidth: 50, halfHeight: 20 }, { x: 1, y: 0 }, 10),
+  { x: 60, y: 0 },
+  'a horizontal ray leaves through the side, plus the gap',
+)
+assert.deepEqual(
+  edgePoint({ x: 0, y: 0 }, { halfWidth: 50, halfHeight: 20 }, { x: 0, y: -1 }, 0),
+  { x: 0, y: -20 },
+  'and a vertical one through the top — the nearer edge wins, not the corner',
+)
+assert.deepEqual(
+  edgePoint({ x: 100, y: 100 }, { halfWidth: 0, halfHeight: 0 }, { x: 1, y: 1 }, 0),
+  { x: 100, y: 100 },
+  'an extentless anchor is just the point',
+)
+
+// Extents are estimated, never measured — measuring LaTeX means waiting for
+// MathJax, which would make an arrow's geometry depend on what is cached.
+const circleNode = {
+  id: 'c', type: 'circle' as const, radius: 60, fill: '#ffffff', strokeWidth: 0,
+  position: { x: 0, y: 0 }, scale: 2, rotation: 0, opacity: 1, tracks: [], transitions: [],
+}
+assert.deepEqual(
+  nodeExtent(circleNode),
+  { halfWidth: 120, halfHeight: 120, shape: 'ellipse' },
+  'a scaled node is bigger to point at, and a circle is round rather than boxy',
+)
+// A ray at 45 degrees must meet the rim at r, not the bounding box at r*sqrt2.
+const diagonal = edgePoint(
+  { x: 0, y: 0 },
+  { halfWidth: 100, halfHeight: 100, shape: 'ellipse' },
+  { x: 1, y: 1 },
+  0,
+)
+assert.ok(Math.abs(Math.hypot(diagonal.x, diagonal.y) - 100) < 1e-9, 'the circle case is round')
+assert.ok(
+  nodeExtent({ ...circleNode, type: 'matrix', cells: [['1', '2']], cellWidth: 100,
+    cellHeight: 80, fontSize: 40, color: '#ffffff', brackets: 'square' } as never).halfWidth > 0,
+  'a matrix knows its own size exactly',
+)
+
+// Travel along a path is by arc length, so a follower keeps a steady speed on
+// an unevenly sampled curve. An L of 100 across then 100 down: half way is the
+// corner, three quarters is half way down the second leg.
+const legs = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }]
+assert.deepEqual(
+  pointAtProgress(legs, false, 0.5),
+  { x: 100, y: 0, angle: 0 },
+  'half the arc length is the corner, and it is still heading right',
+)
+const down = pointAtProgress(legs, false, 0.75)!
+assert.ok(Math.abs(down.x - 100) < 1e-9 && Math.abs(down.y - 50) < 1e-9, 'three quarters is mid-descent')
+assert.ok(Math.abs(down.angle - Math.PI / 2) < 1e-9, 'and the angle is the leg being travelled')
+assert.deepEqual(pointAtProgress(legs, false, 0), { x: 0, y: 0, angle: 0 }, 'clamped at the start')
+assert.deepEqual(pointAtProgress(legs, false, 2), { x: 100, y: 100, angle: Math.PI / 2 }, 'and the end')
+assert.equal(pointAtProgress([], false, 0.5), null, 'an empty path has nowhere to be')
+assert.deepEqual(
+  pointAtProgress([{ x: 5, y: 5 }, { x: 5, y: 5 }], false, 0.5),
+  { x: 5, y: 5, angle: 0 },
+  'a zero-length path does not divide by zero',
+)
+
+// ---------- resolved end to end ----------
+let flows = applyOps(emptyDoc('fl', 'Flows'), [
+  op.addScene({ id: 'f1', name: 'Flow', duration: 6, background: '#101418', nodes: [] }),
+  op.addNode('f1', {
+    id: 'box', type: 'rect', width: 200, height: 100, fill: '#58c4dd', cornerRadius: 8,
+    strokeWidth: 0, position: { x: 300, y: 300 }, scale: 1, rotation: 0, opacity: 1,
+    tracks: [
+      { property: 'position', keyframes: [
+        { t: 0, value: { x: 300, y: 300 }, easing: 'linear' },
+        { t: 4, value: { x: 1500, y: 300 }, easing: 'linear' },
+      ] },
+    ],
+    transitions: [],
+  }),
+  op.addNode('f1', {
+    id: 'target', type: 'circle', radius: 80, fill: '#fc6255', strokeWidth: 0,
+    position: { x: 900, y: 800 }, scale: 1, rotation: 0, opacity: 1, tracks: [], transitions: [],
+  }),
+  op.addNode('f1', {
+    id: 'link', type: 'arrow', from: { node: 'box' }, to: { node: 'target' },
+    stroke: '#c9ced4', strokeWidth: 5, headSize: 26, curve: 0, gap: 10,
+    position: { x: 0, y: 0 }, scale: 1, rotation: 0, opacity: 1, tracks: [], transitions: [],
+  }),
+])
+const canvasF = { width: 1920, height: 1080, fps: 60 } as const
+const arrowAt = (t: number) => resolveScene(flows.scenes[0]!, t, canvasF).nodes[2]!.arrow!
+const linkStart = arrowAt(0)
+const linkEnd = arrowAt(4)
+assert.ok(
+  linkEnd.from.x > linkStart.from.x + 1000,
+  'the arrow tail follows the node it is anchored to as that node moves',
+)
+// The head does NOT stay put even though the target did: it stops at the edge
+// of the circle *facing the source*, so it slides around the rim as the source
+// travels. That is the behaviour worth having, and the invariant is the
+// distance from the centre — radius 80 plus the 10px gap.
+for (const [when, end] of [['start', linkStart], ['end', linkEnd]] as const) {
+  const reach = Math.hypot(end.to.x - 900, end.to.y - 800)
+  assert.ok(
+    Math.abs(reach - 90) < 1e-6,
+    `at ${when} the head sits on the target's rim plus the gap, not at its centre (${reach})`,
+  )
+}
+assert.notDeepEqual(linkEnd.to, linkStart.to, 'and it slides around that rim as the source moves')
+
+// A dangling reference draws nothing rather than pointing at the origin.
+const dangling = applyOps(flows, [op.removeNode('f1', 'target')])
+assert.equal(
+  resolveScene(dangling.scenes[0]!, 0, canvasF).nodes.find((n) => n.source.id === 'link')!.arrow,
+  null,
+  'an arrow to a deleted node stops drawing',
+)
+
+// A node inside a group is anchored by its WORLD position: the group's own
+// transform has to be composed in, or the arrow points into empty space.
+const grouped = applyOps(emptyDoc('gr', 'Grouped'), [
+  op.addScene({ id: 'g1', name: 'G', duration: 4, background: '#101418', nodes: [] }),
+  op.addNode('g1', {
+    id: 'grp', type: 'group', children: [], position: { x: 1000, y: 500 }, scale: 1,
+    rotation: 0, opacity: 1, tracks: [], transitions: [],
+  }),
+  op.addNode('g1', {
+    id: 'kid', type: 'circle', radius: 30, fill: '#ffffff', strokeWidth: 0,
+    position: { x: 200, y: 0 }, scale: 1, rotation: 0, opacity: 1, tracks: [], transitions: [],
+  }, 'grp'),
+])
+const kidWorld = resolveScene(grouped.scenes[0]!, 0, canvasF)
+  .nodes[0]!.children[0]!.world
+assert.deepEqual(kidWorld, { x: 1200, y: 500 }, 'a child knows where it really is')
+
+// ---------- following a path ----------
+flows = applyOps(flows, [
+  op.addNode('f1', {
+    id: 'wire', type: 'path', points: [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 400 }],
+    stroke: '#4a545f', strokeWidth: 3, closed: false,
+    position: { x: 200, y: 200 }, scale: 1, rotation: 0, opacity: 1, tracks: [], transitions: [],
+  }),
+  op.addNode('f1', {
+    id: 'token', type: 'circle', radius: 20, fill: '#e8c74a', strokeWidth: 0,
+    position: { x: 0, y: 0 }, scale: 1, rotation: 0, opacity: 1, tracks: [],
+    transitions: [{ type: 'follow', start: 1, duration: 2, pathId: 'wire', easing: 'linear', orient: true }],
+  }),
+])
+const tokenAt = (t: number) =>
+  resolveScene(flows.scenes[0]!, t, canvasF).nodes.find((n) => n.source.id === 'token')!
+assert.deepEqual(tokenAt(0.5).props.position, { x: 0, y: 0 }, 'before the flow it is where it was')
+// Path points are relative to the path node, so the follower has to be placed
+// in world space — half way along the L is its corner, at (200,200)+(400,0).
+assert.deepEqual(tokenAt(2).props.position, { x: 600, y: 200 }, 'half way is the corner, in world space')
+assert.equal(tokenAt(2).props.rotation, 0, 'still heading along the first leg')
+assert.deepEqual(tokenAt(3).props.position, { x: 600, y: 600 }, 'and it holds at the end')
+assert.ok(Math.abs((tokenAt(3).props.rotation as number) - Math.PI / 2) < 1e-9, 'facing down it')
+assert.ok(
+  keyMoments(flows).some((m) => m.kind === 'follow'),
+  'a flow is a key moment — mid-flight is the frame worth seeing',
+)
+
 console.log(
   'smoke OK — reducer, sampler, morph resolution, key moments, camera framing, ' +
-    'grid layout, stagger, cell matching, projection, path reveal, expressions and ' +
-    'plot mapping all behave',
+    'grid layout, stagger, cell matching, projection, flows, path reveal, ' +
+    'expressions and plot mapping all behave',
 )

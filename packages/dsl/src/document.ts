@@ -144,11 +144,29 @@ export interface CellMorphTransition {
   toCells: string[][]
   easing: Easing
 }
+/**
+ * Ride a `path` node from one end to the other.
+ *
+ * The position it produces **overrides** the node's own from `start` onward,
+ * which is what makes a token flowing along a curve one call instead of a
+ * keyframe per bend.
+ */
+export interface FollowTransition {
+  type: 'follow'
+  start: number
+  duration: number
+  /** id of the `path` node to travel along. */
+  pathId: string
+  easing: Easing
+  /** Turn the node to face the direction of travel. */
+  orient: boolean
+}
 export type Transition =
   | WriteTransition
   | TexMorphTransition
   | HighlightTransition
   | CellMorphTransition
+  | FollowTransition
 
 const CellRangeSchema: z.ZodType<CellRange> = z.object({
   rows: z.tuple([z.number().int().min(0), z.number().int().min(0)]).optional(),
@@ -203,6 +221,14 @@ export const TransitionSchema: z.ZodType<Transition> = z.discriminatedUnion('typ
     duration: z.number().positive(),
     toCells: CellsSchema,
     easing: EasingSchema,
+  }),
+  z.object({
+    type: z.literal('follow'),
+    start: z.number().min(0),
+    duration: z.number().positive(),
+    pathId: z.string().min(1),
+    easing: EasingSchema,
+    orient: z.boolean(),
   }),
 ])
 
@@ -374,6 +400,36 @@ export interface Points3Node extends NodeBase {
   fill: Color
 }
 
+/**
+ * Either end of an arrow: a node to track, or a fixed point.
+ *
+ * Anchoring to a node is the whole point — the arrow recomputes its endpoints
+ * every frame from where the node actually *is*, so a diagram whose parts move
+ * keeps its connections instead of leaving them behind.
+ */
+export type ArrowEnd = { node: string } | { at: Vec2 }
+const ArrowEndSchema: z.ZodType<ArrowEnd> = z.union([
+  z.object({ node: z.string().min(1) }),
+  z.object({ at: Vec2Schema }),
+])
+
+export interface ArrowNode extends NodeBase {
+  type: 'arrow'
+  from: ArrowEnd
+  to: ArrowEnd
+  stroke: Color
+  strokeWidth: number
+  /** Arrowhead length in px; 0 draws a bare connector. */
+  headSize: number
+  /**
+   * Sideways bow as a fraction of the straight-line distance. 0 is straight;
+   * ±0.2 is a gentle arc. Two arrows between the same pair curve apart.
+   */
+  curve: number
+  /** Clearance left between the arrow and the edge of an anchored node. */
+  gap: number
+}
+
 export interface GroupNode extends NodeBase {
   type: 'group'
   children: EuclidNode[]
@@ -390,6 +446,7 @@ export type EuclidNode =
   | Vector3Node
   | Axes3dNode
   | Points3Node
+  | ArrowNode
   | GroupNode
 
 const NodeBaseShape = {
@@ -506,6 +563,17 @@ export const NodeSchema: z.ZodType<EuclidNode> = z.lazy(() =>
       points: z.array(Vec3Schema).min(1).max(LIMITS.maxPoints),
       radius: z.number().positive(),
       fill: ColorSchema,
+    }),
+    z.object({
+      ...NodeBaseShape,
+      type: z.literal('arrow'),
+      from: ArrowEndSchema,
+      to: ArrowEndSchema,
+      stroke: ColorSchema,
+      strokeWidth: z.number().positive(),
+      headSize: z.number().min(0),
+      curve: z.number().finite(),
+      gap: z.number().min(0),
     }),
     z.object({
       ...NodeBaseShape,

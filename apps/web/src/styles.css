@@ -252,6 +252,7 @@ header .back h1 { color: inherit; }
 .timeline-bar .moment-highlight { background: #e8c74a; }
 .timeline-bar .moment-write { background: #7fb069; }
 .timeline-bar .moment-camera { background: #c58af9; }
+.timeline-bar .moment-follow { background: #4ec9b0; }
 
 /* Camera mini-map: where the frame sits inside the scene while scrubbing.
    Bottom-left, out of the captions' way, and absent entirely when the scene

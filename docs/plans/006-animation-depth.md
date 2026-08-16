@@ -1,4 +1,4 @@
-# 006 — Complex animation and depth (status: in progress — Phase 4, A+B+C done)
+# 006 — Complex animation and depth (status: done — A, B, C and D)
 
 > **Deferred 2026-08-15, promoted back 2026-08-16.** It was parked for one
 > stated reason: this plan's own verification step — "verify by screenshot at
@@ -23,6 +23,15 @@
 > `add_group` gives a real transform hierarchy (a camera is a scene-level
 > version of it), `path` and `plot_function` did the graph half, and
 > arc-length `write_on` is the start of path-following.
+
+> **All four phases landed 2026-08-16** — camera, structured primitives,
+> pseudo-3D, flows — in that order, C and D out of the roadmap's original
+> sequence at the user's request. Two items on the roadmap's Phase 4 list never
+> had a phase here and remain open: **axes, ticks and labels** for 2D graphs
+> (the rest of the story `plot_function` started, still hand-built today) and a
+> **code-block primitive** with line-highlight animations. What none of this has
+> yet had is a milestone run: every piece is verified in pixels, and none has
+> been asked to carry an explanation end to end.
 
 Direction decided 2026-08-15: go deep on the vertical rather than wide across
 video. This superseded [plans/003](003-general-video.md) as the active
@@ -283,12 +292,56 @@ cloud reveals dot by dot.
   focused on the canvas centre — the focus matters, since (0,0) would slide a
   deep node toward the corner as it came forward.
 
-## Phase D: Flows  (status: planned)
+## Phase D: Flows  (status: done, 2026-08-16)
 
-- [ ] `arrow` primitive that **anchors to nodes**, not coordinates, so it
+- [x] `arrow` primitive that **anchors to nodes**, not coordinates, so it
       tracks endpoints as they move
-- [ ] Curved paths; path-following animation for a token flowing along one
-- [ ] MCP: `connect(fromNodeId, toNodeId)`
+- [x] Curved paths; path-following animation for a token flowing along one
+- [x] MCP: `connect(from, to)` and `flow_along(nodeId, pathId)`
+
+Verified by `check-flows.ts`. Tracking is the claim ink cannot make on its own —
+an arrow is lit whether or not it moved — so the test frames the camera on the
+corridor the arrow must stretch across *after* its anchor has travelled: 0.00%
+before the move, 3.26% after. An arrow baked at creation leaves that frame
+empty. Curved pairs cover more than straight ones (5.09% vs 4.88%) because the
+two bows separate instead of overlapping, and a token reaches the far end of a
+1600px dog-leg on schedule.
+
+### Decisions
+
+- **Anchors are node ids resolved every frame**, against a per-scene index
+  built during resolution. That needs absolute positions, so `resolveScene` now
+  composes each ancestor group's transform into a `world` position — which also
+  means an arrow can point at something nested three groups deep.
+- **Stop at the edge, not the centre**, using estimated extents. Exact for
+  shapes, grids and paths; estimated from font size and length for text and
+  LaTeX, because measuring means waiting for MathJax and would make geometry
+  depend on what is cached. `gap` is the escape hatch. A circle reports as an
+  **ellipse** — its bounding box is 41% further away on the diagonal, which
+  left every diagonal arrow visibly short.
+- **`follow` writes back into the resolved properties.** It is the only
+  transition that does, because "where it is" is what riding a path means. From
+  `start` onward it therefore beats a `position` track — the opposite of the
+  usual shadowing rule — and `flow_along` reports the clash when it sees one.
+- **Resolution order is load-bearing**: compose world → move followers →
+  compose again → project → resolve arrows. An arrow anchored to a follower has
+  to see where the follower ended up, and in a spatial scene it anchors to the
+  *projected* position so connections track their nodes round an orbit.
+- A dangling anchor **draws nothing**. An arrow to the origin looks like a bug
+  in the diagram rather than in the call; the tool refuses unknown ids up front,
+  and this covers the node being deleted later.
+
+### Notes / gotchas
+
+- **The head slides around its target, and that is correct.** The endpoint is
+  the point on the target's boundary *facing the source*, so moving the source
+  moves the head even though the target never moved. The first version of the
+  test asserted the head stayed put and was simply wrong about the feature; the
+  invariant worth asserting is the distance from the target's centre.
+- **Widening a struct needs a sweep of its copies.** `Extent` gained a `shape`
+  field, and the sampler rebuilt the object field by field when scaling it —
+  silently dropping the new one, so every arrow went back to stopping at a
+  circle's bounding corner. Spread, then override.
 
 ## Deliberately not doing
 

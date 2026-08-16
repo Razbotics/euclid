@@ -120,7 +120,12 @@ arc-length `write_on` is the beginning of path-following.
       `writeGlyphAlphas` → `staggerAlphas(count, progress, {rank})` and
       `matchGlyphs` → `matchByKey(from, to, key)`. A `write` on a **group** now
       reveals its children one at a time as a free consequence
-- [ ] Flows: arrows anchored to nodes, path-following along a `path`
+- [x] Flows: arrows anchored to nodes, path-following along a `path` — **done
+      2026-08-16**. `connect` takes node ids and recomputes its endpoints every
+      frame, stopping at the edge of what it points at; `flow_along` rides a
+      path by arc length. Verified by `check-flows.ts`, which proves tracking by
+      framing the camera where the arrow can only reach once its anchor has
+      moved
 - [ ] Axes, ticks and labels — the rest of the graph story `plot_function`
       started; hand-built today
 - [ ] Code-block primitive with line-highlight animations

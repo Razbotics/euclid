@@ -16,7 +16,7 @@ export interface KeyMoment {
   sceneId: string
   /** The node that made this moment interesting; absent for a scene opening. */
   nodeId?: string
-  kind: 'scene' | 'texMorph' | 'cellMorph' | 'write' | 'highlight' | 'camera'
+  kind: 'scene' | 'texMorph' | 'cellMorph' | 'write' | 'follow' | 'highlight' | 'camera'
   /** Where in the effect this lands: '25%', '50%', '75%', 'hold', 'open', 'settled'. */
   phase: string
   /** One short line for a contact-sheet tile label. */
@@ -118,6 +118,18 @@ export function keyMoments(doc: EuclidDoc, options: KeyMomentOptions = {}): KeyM
             kind: 'write',
             phase: '50%',
             label: `write ${describe(node)}`,
+            priority: 2,
+          })
+        } else if (tr.type === 'follow') {
+          // Mid-flight is the frame that shows whether the thing riding the
+          // path is on it, facing the right way, and the right size.
+          picked.push({
+            t: at(0.5),
+            sceneId: scene.id,
+            nodeId: node.id,
+            kind: 'follow',
+            phase: '50%',
+            label: `${describe(node)} along ${tr.pathId}`,
             priority: 2,
           })
         } else if (tr.type === 'highlight') {

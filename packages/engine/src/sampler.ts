@@ -3,6 +3,10 @@ import {
   DEFAULT_CAMERA_DISTANCE,
   LIMITS,
   type Canvas,
+  edgePoint,
+  nodeExtent,
+  type Extent,
+  type ArrowEnd,
   type CellRange,
   type Easing,
   type EuclidNode,
@@ -12,6 +16,7 @@ import {
   type Vec2,
 } from '@euclid/dsl'
 import { clamp01, easings } from './easing'
+import { pointAtProgress } from './path'
 import { isFlatCamera, project3, type Camera3, type Projected } from './project'
 
 /**
@@ -63,6 +68,16 @@ export interface ResolvedNode {
    * the stage draws as invisible rather than as an enormous artifact.
    */
   projection: Projected | null
+  /**
+   * Absolute scene position, with every ancestor group's transform composed
+   * in. `props.position` is relative to the parent; an arrow pointing at a
+   * node three groups deep needs where it actually is.
+   */
+  world: Vec2
+  /** Composed scale, for sizing anything measured against this node. */
+  worldScale: number
+  /** Endpoints of an `arrow`, resolved from whatever it is anchored to. */
+  arrow: { from: Vec2; to: Vec2 } | null
   highlight: HighlightState | null
   children: ResolvedNode[]
 }
@@ -102,6 +117,15 @@ export interface ResolvedScene {
 export function resolveScene(scene: Scene, t: number, canvas?: Canvas): ResolvedScene {
   const camera = resolveCamera(scene, t)
   const nodes = scene.nodes.map((n) => resolveNode(n, t))
+
+  // Two passes over the tree, because a follower's position changes where it
+  // is and an arrow anchored to it has to see the new answer: compose world
+  // transforms, move the followers, compose again.
+  const index = new Map<string, ResolvedNode>()
+  composeWorld(nodes, ROOT_FRAME, index)
+  const followed = applyFollows(nodes, index, t)
+  if (followed) composeWorld(nodes, ROOT_FRAME, index)
+
   const anySpatial = nodes.some(hasDepth)
   // A scene can hold a vector without holding a camera, and it must still
   // draw — straight on, which is what a projection with no yaw or pitch is.
@@ -126,7 +150,117 @@ export function resolveScene(scene: Scene, t: number, canvas?: Canvas): Resolved
   if (spatial && cam3) {
     for (const n of nodes) n.projection = projectNode(n, cam3)
   }
+
+  // Last, so an arrow anchored to a node in a projected scene lands where that
+  // node is actually drawn rather than where it would be head-on.
+  resolveArrows(nodes, index)
+
   return { nodes, camera, spatial, cam3: spatial ? cam3 : null }
+}
+
+interface Frame {
+  x: number
+  y: number
+  scale: number
+  rotation: number
+}
+const ROOT_FRAME: Frame = { x: 0, y: 0, scale: 1, rotation: 0 }
+
+/** Compose parent transforms into an absolute position, and index every node by id. */
+function composeWorld(nodes: ResolvedNode[], parent: Frame, index: Map<string, ResolvedNode>): void {
+  const cos = Math.cos(parent.rotation)
+  const sin = Math.sin(parent.rotation)
+  for (const n of nodes) {
+    const p = n.props.position as Vec2
+    const sx = p.x * parent.scale
+    const sy = p.y * parent.scale
+    const frame: Frame = {
+      x: parent.x + sx * cos - sy * sin,
+      y: parent.y + sx * sin + sy * cos,
+      scale: parent.scale * (n.props.scale as number),
+      rotation: parent.rotation + (n.props.rotation as number),
+    }
+    n.world = { x: frame.x, y: frame.y }
+    n.worldScale = frame.scale
+    index.set(n.source.id, n)
+    if (n.source.type === 'group') composeWorld(n.children, frame, index)
+  }
+}
+
+/**
+ * Put every follower on its path. Returns whether anything moved, so the world
+ * pass only runs twice when it has to.
+ *
+ * The follow *overrides* the node's own position from `start` onward — it is
+ * the one transition that writes back into the resolved properties, because
+ * "where it is" is exactly what riding a path means.
+ */
+function applyFollows(nodes: ResolvedNode[], index: Map<string, ResolvedNode>, t: number): boolean {
+  let moved = false
+  for (const n of nodes) {
+    const follow = n.source.transitions.find((tr) => tr.type === 'follow' && t >= tr.start)
+    if (!follow || follow.type !== 'follow') continue
+    const path = index.get(follow.pathId)
+    // A path that has been deleted leaves the follower where it was, rather
+    // than at the origin — silently teleporting to (0,0) reads as a crash.
+    if (!path || path.source.type !== 'path') continue
+    const u = easings[follow.easing](clamp01((t - follow.start) / follow.duration))
+    const at = pointAtProgress(path.source.points, path.source.closed, u)
+    if (!at) continue
+    n.props.position = { x: path.world.x + at.x, y: path.world.y + at.y }
+    if (follow.orient) n.props.rotation = at.angle
+    moved = true
+  }
+  return moved
+}
+
+/** Anchored ends recompute every frame, which is the whole point of anchoring. */
+function resolveArrows(nodes: ResolvedNode[], index: Map<string, ResolvedNode>): void {
+  for (const n of nodes) {
+    if (n.source.type !== 'arrow') continue
+    const from = anchorOf(n.source.from, index)
+    const to = anchorOf(n.source.to, index)
+    // A dangling reference draws nothing. The alternative is an arrow to the
+    // origin, which looks like a bug in the diagram rather than in the call.
+    if (!from || !to) {
+      n.arrow = null
+      continue
+    }
+    const dir = { x: to.at.x - from.at.x, y: to.at.y - from.at.y }
+    const gap = n.source.gap
+    n.arrow = {
+      from: edgePoint(from.at, from.extent, dir, gap),
+      to: edgePoint(to.at, to.extent, { x: -dir.x, y: -dir.y }, gap),
+    }
+  }
+}
+
+function anchorOf(
+  end: ArrowEnd,
+  index: Map<string, ResolvedNode>,
+): { at: Vec2; extent: Extent } | null {
+  if ('at' in end) return { at: end.at, extent: { halfWidth: 0, halfHeight: 0 } }
+  const target = index.get(end.node)
+  if (!target) return null
+  // Where the node is *drawn*: projected when the scene is spatial, so an
+  // arrow between two orbiting nodes tracks them round rather than pointing at
+  // where they would be head-on.
+  const at = target.projection
+    ? { x: target.projection.x, y: target.projection.y }
+    : target.world
+  const extent = nodeExtent(target.source, target.props)
+  const grow = target.projection?.scale ?? 1
+  return {
+    at,
+    // Spread rather than rebuild: `shape` decides whether the boundary is a box
+    // or a rim, and dropping it here silently stopped every arrow at a circle's
+    // bounding corner instead of its edge.
+    extent: {
+      ...extent,
+      halfWidth: extent.halfWidth * grow,
+      halfHeight: extent.halfHeight * grow,
+    },
+  }
 }
 
 /** A node is three-dimensional if it carries a depth or is 3D by type. */
@@ -261,6 +395,9 @@ export function resolveNode(node: EuclidNode, t: number): ResolvedNode {
     texMorph,
     cellMorph,
     projection: null,
+    world: props.position as Vec2,
+    worldScale: props.scale as number,
+    arrow: null,
     highlight,
     children: node.type === 'group' ? node.children.map((c) => resolveNode(c, t)) : [],
   }

@@ -67,6 +67,11 @@ shape as `remove_asset`'s `force`.
   out larger than the canvas. `get_project` prints it as `cam@(x,y) zoom=…`,
   because a framing that hides half the scene makes every coordinate in the
   outline misleading otherwise.
+- Connections are **anchored, not positioned**: `connect` takes node ids and
+  the arrow recomputes its endpoints every frame, stopping at the edge of what
+  it points at. `flow_along` rides a path by arc length and overrides the
+  node's position from `start` onward — the one place a transition beats a
+  track, which the response says out loud.
 - The third dimension is opt-in and inert until asked for: nodes take an
   optional `z` and `add_vector3`/`add_axes3d`/`add_points3` are spatial by
   type, but **nothing is projected until the camera has a `yaw` or `pitch`**

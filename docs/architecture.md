@@ -21,16 +21,16 @@ deterministic function of `t` when it's added.
 
 `packages/dsl` defines the scene document: project → scenes (sequential on
 the global timeline) → nodes (rect/circle/line/path/text/latex/matrix/tokens/
-vector3/axes3d/points3/group), each with an optional `z`, plus an optional
+vector3/axes3d/points3/arrow/group), each with an optional `z`, plus an optional
 per-scene `camera` that can also orbit. Animation:
 
 - **Tracks** — per-property keyframes (`position`, `opacity`, `fill`, …),
   eased per-segment (`smooth` = 3b1b smootherstep). The generic mechanism.
 - **Transitions** — effects not expressible as property keyframes: `write`
   (draw-on reveal), `texMorph` (matched-glyph equation morph — see below),
-  `cellMorph` (the same for a matrix, matched by cell contents) and
-  `highlight` (emphasis, optionally on one term inside an equation or a range
-  of matrix cells).
+  `cellMorph` (the same for a matrix, matched by cell contents), `follow`
+  (ride a path by arc length) and `highlight` (emphasis, optionally on one term
+  inside an equation or a range of matrix cells).
 
 Agent-facing sugar (`animate`, `write_on`, …) lives in the MCP layer and
 compiles to tracks/transitions; the document stays low-level and uniform so
@@ -123,6 +123,48 @@ Worth noting the shape of that failure, because it will recur: an agent cannot
 tell "the system cannot do this" from "the system does not offer this", and
 will design around the limit it infers. Errors are cheap — a wrong guess costs
 one retry — but an inference costs a whole approach.
+
+## Flows: anchored arrows and path following
+
+An `arrow` node holds **node ids**, not coordinates. Its endpoints are
+recomputed every frame from where those nodes actually are, so a diagram whose
+parts move keeps its connections instead of leaving them behind — the whole
+difference between this and drawing a line. Either end can also be a fixed
+point.
+
+Two pieces make it work:
+
+- **World positions.** `resolveScene` composes every ancestor group's transform
+  into an absolute `world` position per node, so an arrow can point at
+  something three groups deep. It also indexes nodes by id, which is what
+  anchors resolve against.
+- **Extents** (`packages/dsl/src/extent.ts`). An arrow stops at the *edge* of
+  what it points at, plus a `gap`. Extents are exact for shapes, grids and
+  paths, and **estimated** from font size and length for text and LaTeX —
+  measuring would mean waiting for MathJax, which is asynchronous and would
+  make an arrow's geometry depend on what happened to be cached. A circle
+  reports itself as an ellipse rather than a box, because a bounding box is 41%
+  further away on the diagonal and leaves the arrow visibly short.
+
+`curve` bows an arrow sideways as a fraction of the distance, and the head
+follows the *curve's* tangent rather than the chord, so it meets its target
+square. Two arrows between the same pair with opposite curves separate.
+
+A `follow` transition rides a `path` node by **arc length**, optionally turning
+to face the direction of travel. It is the one transition that writes back into
+the resolved properties — position, and rotation when oriented — because "where
+it is" is exactly what riding a path means. From `start` onward it therefore
+beats a `position` track, the opposite of the usual shadowing rule, and
+`flow_along` says so when it sees one.
+
+Resolution order in `resolveScene` matters and is deliberate: compose world
+transforms → move the followers → compose again → project → resolve arrows. An
+arrow anchored to a follower has to see where the follower ended up, and in a
+spatial scene it anchors to the *projected* position, so connections track
+their nodes round an orbit.
+
+A dangling anchor draws nothing rather than pointing at the origin, which would
+look like a bug in the diagram instead of in the call.
 
 ## Pseudo-3D by projection
 

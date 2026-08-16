@@ -12,6 +12,7 @@ import {
   type EuclidDoc,
   type GridSpec,
   type LatexNode,
+  type ArrowNode,
   type Axes3dNode,
   type MatrixNode,
   type Points3Node,
@@ -127,7 +128,7 @@ const lerp3 = (a: Vec3, b: Vec3, u: number): Vec3 => ({
 
 /** Node types whose geometry spans depth and is projected vertex by vertex. */
 function isSpatialType(type: string): boolean {
-  return type === 'vector3' || type === 'axes3d' || type === 'points3'
+  return type === 'vector3' || type === 'axes3d' || type === 'points3' || type === 'arrow'
 }
 
 /**
@@ -538,6 +539,7 @@ export class EuclidStage {
       case 'vector3':
       case 'axes3d':
       case 'points3':
+      case 'arrow':
         content = new Graphics()
         break
       case 'text': {
@@ -637,6 +639,9 @@ export class EuclidStage {
         // spatial node without a camera to project through has no position.
         if (this.cam3) this.updateSpatial(item, res, node, this.cam3)
         else (item.content as Graphics).clear()
+        return
+      case 'arrow':
+        this.updateArrow(item, res, node)
         return
       case 'group':
         // A write on a group arrives child by child (applied once the children
@@ -1134,6 +1139,80 @@ export class EuclidStage {
         }
         return
       }
+    }
+  }
+
+  /**
+   * A connector between two things, drawn in absolute scene coordinates
+   * because its endpoints belong to other nodes rather than to itself.
+   *
+   * The endpoints arrive already resolved (see resolveArrows): stopped at the
+   * edge of whatever they point at, and projected when the scene is spatial.
+   * All this does is draw — a straight shaft, or a quadratic bowed sideways by
+   * `curve`, with the head turned along the curve's own tangent so it meets
+   * its target square rather than at the chord angle.
+   */
+  private updateArrow(item: Item, res: ResolvedNode, node: ArrowNode): void {
+    const g = item.content as Graphics
+    g.clear()
+    const ends = res.arrow
+    if (!ends) return
+
+    const p = res.props
+    // `position` offsets the whole connector and `scale` thickens it. Neither
+    // can place it — the endpoints do that — but a property that silently does
+    // nothing is worse than one that does something small.
+    const offset = p.position as Vec2
+    const scale = p.scale as number
+    const a = { x: ends.from.x + offset.x, y: ends.from.y + offset.y }
+    const b = { x: ends.to.x + offset.x, y: ends.to.y + offset.y }
+
+    // A write grows the connector out of its source, like the vector does —
+    // the mask sweep would reveal by x position, which on a connector running
+    // right-to-left uncovers the head first.
+    const grow = res.writeProgress === null ? 1 : res.writeProgress
+    item.glyphWrite = res.writeProgress !== null
+    if (grow <= 0) return
+    b.x = a.x + (b.x - a.x) * grow
+    b.y = a.y + (b.y - a.y) * grow
+
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    const len = Math.hypot(dx, dy)
+    if (len < 1e-6) return
+
+    const width = Math.max(0.5, (p.strokeWidth as number) * scale)
+    const color = p.stroke as string
+    const head = Math.min(node.headSize * scale, len * 0.6)
+    // The control point sits half way along and `curve` of the distance to the
+    // side, so two arrows between the same pair with opposite curves bow apart
+    // instead of overlapping.
+    const cx = (a.x + b.x) / 2 - dy * node.curve
+    const cy = (a.y + b.y) / 2 + dx * node.curve
+    // The tangent at the far end of a quadratic is the control-point-to-end
+    // direction; on a straight arrow that is just the chord.
+    const tx = b.x - cx
+    const ty = b.y - cy
+    const tLen = Math.hypot(tx, ty) || 1
+    const ux = tx / tLen
+    const uy = ty / tLen
+    const tipX = b.x
+    const tipY = b.y
+    const stopX = b.x - ux * head
+    const stopY = b.y - uy * head
+
+    g.moveTo(a.x, a.y)
+    if (node.curve !== 0) g.quadraticCurveTo(cx, cy, stopX, stopY)
+    else g.lineTo(stopX, stopY)
+    g.stroke({ width, color })
+
+    if (head > 0) {
+      const halfW = head * 0.45
+      g.moveTo(tipX, tipY)
+        .lineTo(stopX - uy * halfW, stopY + ux * halfW)
+        .lineTo(stopX + uy * halfW, stopY - ux * halfW)
+        .closePath()
+        .fill({ color })
     }
   }
 
