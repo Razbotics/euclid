@@ -58,9 +58,24 @@ export function defaultCamera(canvas: Canvas): Camera {
     position: { x: canvas.width / 2, y: canvas.height / 2 },
     zoom: 1,
     rotation: 0,
+    // Zero yaw and pitch means "flat": the stage skips projection and depth
+    // sorting entirely, so adding a camera never changes a 2D scene.
+    yaw: 0,
+    pitch: 0,
+    distance: DEFAULT_CAMERA_DISTANCE,
     tracks: [],
   }
 }
+
+/**
+ * How far the camera sits from the z=0 plane by default, in scene px.
+ *
+ * Chosen against the canvas rather than arbitrarily: at 2000 a node 400px
+ * toward the viewer draws 25% larger and one 400px behind draws 17% smaller,
+ * which reads as depth without the wide-angle distortion that makes a diagram
+ * look like it is falling over.
+ */
+export const DEFAULT_CAMERA_DISTANCE = 2000
 
 export interface FoundNode {
   node: EuclidNode
@@ -138,9 +153,16 @@ function outlineCamera(scene: Scene): string {
   const cam = scene.camera
   if (!cam) return ''
   const tracks = cam.tracks.length > 0 ? ` cam-tracks[${cam.tracks.map((t) => t.property).join(',')}]` : ''
+  // yaw/pitch are what turn projection on, so they are worth a column even
+  // when zero would have been the boring answer.
+  const orbit =
+    cam.yaw !== 0 || cam.pitch !== 0
+      ? ` yaw=${round(cam.yaw)} pitch=${round(cam.pitch)} dist=${round(cam.distance)}`
+      : ''
   return (
     ` cam@(${round(cam.position.x)},${round(cam.position.y)}) zoom=${round(cam.zoom)}` +
     (cam.rotation !== 0 ? ` roll=${round(cam.rotation)}rad` : '') +
+    orbit +
     tracks
   )
 }
@@ -164,9 +186,16 @@ function outlineNodes(nodes: import('./document').EuclidNode[], lines: string[],
               `${n.cells.length}x${n.cells[0]?.length ?? 0} [${truncate(n.cells.map((r) => r.join(' ')).join(' ; '), 44)}]`
             : n.type === 'tokens'
               ? `${n.labels.length} ${n.orientation === 'row' ? '→' : '↓'} [${truncate(n.labels.join(' '), 44)}]`
-              : ''
+              : n.type === 'vector3'
+                ? `(${n.from.x},${n.from.y},${n.from.z})→(${n.to.x},${n.to.y},${n.to.z})`
+                : n.type === 'axes3d'
+                  ? `size=${n.size}`
+                  : n.type === 'points3'
+                    ? `${n.points.length} points`
+                    : ''
     lines.push(
-      `${indent}${n.type} ${n.id}${n.name ? ` (${n.name})` : ''} @(${n.position.x},${n.position.y}) ${label}${anim}${trans}`,
+      `${indent}${n.type} ${n.id}${n.name ? ` (${n.name})` : ''} ` +
+        `@(${n.position.x},${n.position.y}${n.z !== undefined ? `,z=${n.z}` : ''}) ${label}${anim}${trans}`,
     )
     if (n.type === 'group') outlineNodes(n.children, lines, indent + '  ')
   }

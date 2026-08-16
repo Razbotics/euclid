@@ -1,6 +1,8 @@
 import {
   ANIMATABLE_PROPS,
+  DEFAULT_CAMERA_DISTANCE,
   LIMITS,
+  type Canvas,
   type CellRange,
   type Easing,
   type EuclidNode,
@@ -10,6 +12,7 @@ import {
   type Vec2,
 } from '@euclid/dsl'
 import { clamp01, easings } from './easing'
+import { isFlatCamera, project3, type Camera3, type Projected } from './project'
 
 /**
  * The core invariant of Euclid: rendering is a pure function of (document, time).
@@ -54,6 +57,12 @@ export interface ResolvedNode {
   writeProgress: number | null
   texMorph: TexMorphState | null
   cellMorph: CellMorphState | null
+  /**
+   * Where this node's anchor projects to, and its depth. null in a flat scene
+   * (no projection ran) or when the node sits at or behind the camera, which
+   * the stage draws as invisible rather than as an enormous artifact.
+   */
+  projection: Projected | null
   highlight: HighlightState | null
   children: ResolvedNode[]
 }
@@ -63,19 +72,84 @@ export interface ResolvedCamera {
   position: Vec2
   zoom: number
   rotation: number
+  /** Orbit about the vertical axis, in radians. */
+  yaw: number
+  /** Orbit about the horizontal axis; positive looks down. */
+  pitch: number
+  /** Camera distance from the z=0 plane, driving the perspective divide. */
+  distance: number
+}
+
+/** The 3D half of the camera, in the form the projection maths wants. */
+export function camera3(cam: ResolvedCamera): Camera3 {
+  return { focus: cam.position, yaw: cam.yaw, pitch: cam.pitch, distance: cam.distance }
 }
 
 export interface ResolvedScene {
   nodes: ResolvedNode[]
   /** null = no camera on this scene; the frame is the canvas, untransformed. */
   camera: ResolvedCamera | null
+  /**
+   * Whether anything in this scene is three-dimensional — an orbiting camera,
+   * a node with a depth, or a node that is 3D by type. False means the stage
+   * draws exactly as it always did: document order, no projection, no sort.
+   */
+  spatial: boolean
+  /** The projection to feed vertex-projecting nodes; null when the scene is flat. */
+  cam3: Camera3 | null
 }
 
-export function resolveScene(scene: Scene, t: number): ResolvedScene {
-  return {
-    nodes: scene.nodes.map((n) => resolveNode(n, t)),
-    camera: resolveCamera(scene, t),
+export function resolveScene(scene: Scene, t: number, canvas?: Canvas): ResolvedScene {
+  const camera = resolveCamera(scene, t)
+  const nodes = scene.nodes.map((n) => resolveNode(n, t))
+  const anySpatial = nodes.some(hasDepth)
+  // A scene can hold a vector without holding a camera, and it must still
+  // draw — straight on, which is what a projection with no yaw or pitch is.
+  // Falling back to the canvas centre matters: focus is the point everything
+  // scales about, and (0,0) would slide a deep node toward the corner.
+  const cam3 =
+    camera !== null
+      ? camera3(camera)
+      : anySpatial
+        ? {
+            focus: canvas
+              ? { x: canvas.width / 2, y: canvas.height / 2 }
+              : { x: 0, y: 0 },
+            yaw: 0,
+            pitch: 0,
+            distance: DEFAULT_CAMERA_DISTANCE,
+          }
+        : null
+  // Projection has to be worth turning on: a flat camera over flat nodes must
+  // leave a 2D scene bit-identical to what it was before this existed.
+  const spatial = cam3 !== null && (anySpatial || !isFlatCamera(cam3))
+  if (spatial && cam3) {
+    for (const n of nodes) n.projection = projectNode(n, cam3)
   }
+  return { nodes, camera, spatial, cam3: spatial ? cam3 : null }
+}
+
+/** A node is three-dimensional if it carries a depth or is 3D by type. */
+function hasDepth(n: ResolvedNode): boolean {
+  return (
+    n.props.z !== undefined ||
+    n.source.type === 'vector3' ||
+    n.source.type === 'axes3d' ||
+    n.source.type === 'points3'
+  )
+}
+
+/**
+ * Where a node's anchor lands, and how near it is.
+ *
+ * One point per node: this is what the painter's sort and the depth cues ride
+ * on. Nodes whose *geometry* spans depth — a vector, a point cloud — project
+ * their own vertices in the stage with the same function; this is their sort
+ * key, not their shape.
+ */
+function projectNode(res: ResolvedNode, cam: Camera3): Projected | null {
+  const p = res.props.position as Vec2
+  return project3({ x: p.x, y: p.y, z: (res.props.z as number | undefined) ?? 0 }, cam)
 }
 
 /**
@@ -88,18 +162,34 @@ export function resolveScene(scene: Scene, t: number): ResolvedScene {
 export function resolveCamera(scene: Scene, t: number): ResolvedCamera | null {
   const cam = scene.camera
   if (!cam) return null
-  const out: ResolvedCamera = { position: cam.position, zoom: cam.zoom, rotation: cam.rotation }
+  const out: ResolvedCamera = {
+    position: cam.position,
+    zoom: cam.zoom,
+    rotation: cam.rotation,
+    yaw: cam.yaw,
+    pitch: cam.pitch,
+    distance: cam.distance,
+  }
   for (const track of cam.tracks) {
     const v = sampleKeyframes(track.keyframes, t)
     if (track.property === 'position') out.position = v as Vec2
     else if (track.property === 'zoom') out.zoom = v as number
-    else out.rotation = v as number
+    else if (track.property === 'rotation') out.rotation = v as number
+    else if (track.property === 'yaw') out.yaw = v as number
+    else if (track.property === 'pitch') out.pitch = v as number
+    else out.distance = v as number
   }
   // The schema bounds the base value but cannot bound a keyframe — KeyValue is
   // one union for every property. A zoom at or below zero is a non-invertible
   // transform: the whole scene collapses and every frame after it is blank,
   // which looks like a broken renderer rather than a bad keyframe.
   out.zoom = Math.min(LIMITS.maxCameraZoom, Math.max(LIMITS.minCameraZoom, out.zoom))
+  // Same argument for distance: a keyframe that walks the camera into the
+  // scene inverts the perspective divide and turns the diagram inside out.
+  out.distance = Math.min(
+    LIMITS.maxCameraDistance,
+    Math.max(LIMITS.minCameraDistance, out.distance),
+  )
   return out
 }
 
@@ -170,6 +260,7 @@ export function resolveNode(node: EuclidNode, t: number): ResolvedNode {
     writeProgress,
     texMorph,
     cellMorph,
+    projection: null,
     highlight,
     children: node.type === 'group' ? node.children.map((c) => resolveNode(c, t)) : [],
   }

@@ -23,7 +23,9 @@ import {
 } from '@euclid/dsl'
 import {
   columnMajorRank,
+  isFlatCamera,
   matchByKey,
+  project3,
   pathAtProgress,
   pathLength,
   resolveCamera,
@@ -341,8 +343,8 @@ let shot = applyOps(emptyDoc('cam', 'Camera'), [
 assert.equal(resolveScene(shot.scenes[0]!, 0).camera, null, 'a scene without a camera resolves none')
 assert.deepEqual(
   defaultCamera(canvas),
-  { position: { x: 960, y: 540 }, zoom: 1, rotation: 0, tracks: [] },
-  'the default camera is the canvas centre at zoom 1 — adding one must move nothing',
+  { position: { x: 960, y: 540 }, zoom: 1, rotation: 0, yaw: 0, pitch: 0, distance: 2000, tracks: [] },
+  'the default camera is the canvas centre at zoom 1, flat — adding one must move nothing',
 )
 
 shot = applyOps(shot, [
@@ -517,7 +519,100 @@ assert.throws(
 )
 assert.match(outlineDoc(grid), /matrix m .* 2x2 \[1 2 ; 3 4\]/, 'the outline names the shape and contents')
 
+
+// ---------- pseudo-3D: projection ----------
+// The whole third dimension is this function plus three cues. Pure arithmetic
+// on (point, camera), so it is checkable without a browser — and it has to be,
+// because the cues are what the eye judges and the maths is what the eye
+// cannot.
+const flatCam = { focus: { x: 960, y: 540 }, yaw: 0, pitch: 0, distance: 2000 }
+const at0 = project3({ x: 1000, y: 500, z: 0 }, flatCam)!
+assert.deepEqual(
+  { x: at0.x, y: at0.y, scale: at0.scale, depth: at0.depth, dim: at0.dim },
+  { x: 1000, y: 500, scale: 1, depth: 0, dim: 1 },
+  'the z=0 plane through the focus is untouched — a flat scene must stay flat',
+)
+assert.ok(isFlatCamera(flatCam), 'no yaw and no pitch is a flat camera')
+
+// Nearer is bigger and brighter; further is smaller and dimmer. Distance 2000
+// with z=+500 gives 2000/1500 = 1.33.
+const near = project3({ x: 960, y: 540, z: 500 }, flatCam)!
+const far = project3({ x: 960, y: 540, z: -500 }, flatCam)!
+assert.ok(Math.abs(near.scale - 4 / 3) < 1e-9, 'perspective scale is distance/(distance − z)')
+assert.ok(Math.abs(far.scale - 0.8) < 1e-9)
+assert.ok(near.depth > far.depth, 'depth orders the painter\'s sort, near last')
+assert.ok(far.dim < 1 && far.dim < near.dim, 'distance dims — without the cue it reads flat')
+assert.equal(near.dim, 1, 'nearer than the focus plane is never dimmed, only enlarged')
+
+// A point at the camera cannot be projected. Left undrawn rather than flung
+// across the frame at enormous scale, which is what the divide would do.
+assert.equal(project3({ x: 960, y: 540, z: 2000 }, flatCam), null, 'at the camera: culled')
+assert.equal(project3({ x: 960, y: 540, z: 5000 }, flatCam), null, 'behind it: culled')
+
+// A quarter turn swaps x for depth: a point 300 to the right ends up 300
+// toward the viewer, and stops being to the right at all.
+const turned = project3({ x: 1260, y: 540, z: 0 }, { ...flatCam, yaw: Math.PI / 2 })!
+assert.ok(Math.abs(turned.x - 960) < 1e-9, 'x collapses to the focus at a quarter turn')
+assert.ok(Math.abs(turned.depth + 300) < 1e-9, 'and becomes depth — away from the viewer')
+assert.ok(turned.scale < 1, 'so it is further away and draws smaller')
+
+// Pitch: positive lifts the camera and looks DOWN, so something toward the
+// viewer appears lower on screen. The sign is the easy thing to get backwards
+// and impossible to argue about from the code alone.
+const tipped = project3({ x: 960, y: 540, z: 400 }, { ...flatCam, pitch: 0.4 })!
+assert.ok(tipped.y > 540, 'a positive pitch pushes near things down the frame')
+const behind = project3({ x: 960, y: 540, z: -400 }, { ...flatCam, pitch: 0.4 })!
+assert.ok(behind.y < 540, 'and far things up it — that is a ground plane receding')
+
+// ---------- the scene only goes 3D when it has reason to ----------
+const spatialDoc = applyOps(emptyDoc('sp', 'Space'), [
+  op.addScene({ id: 'v1', name: 'Void', duration: 5, background: '#101418', nodes: [] }),
+  op.addNode('v1', {
+    id: 'dot', type: 'circle', radius: 40, fill: '#ffffff', strokeWidth: 0,
+    position: { x: 960, y: 540 }, scale: 1, rotation: 0, opacity: 1, tracks: [], transitions: [],
+  }),
+])
+const canvas3 = { width: 1920, height: 1080, fps: 60 } as const
+assert.equal(
+  resolveScene(spatialDoc.scenes[0]!, 0, canvas3).spatial,
+  false,
+  'a flat scene must not be projected or depth-sorted at all',
+)
+assert.equal(resolveScene(spatialDoc.scenes[0]!, 0, canvas3).nodes[0]!.projection, null)
+
+// Give the same node a depth and it starts being projected.
+const withZ = applyOps(spatialDoc, [op.updateNode('v1', 'dot', { z: 400 })])
+const resolvedZ = resolveScene(withZ.scenes[0]!, 0, canvas3)
+assert.ok(resolvedZ.spatial, 'a node with a depth makes the scene spatial')
+assert.ok(resolvedZ.nodes[0]!.projection!.scale > 1, 'and it projects nearer than the plane')
+// No camera on the scene, so the fallback focus is the canvas centre: a node
+// already at the centre must not slide sideways as it comes forward.
+assert.equal(resolvedZ.nodes[0]!.projection!.x, 960, 'the fallback focus is the canvas centre')
+
+// A camera with a yaw makes even flat nodes spatial, because the whole scene
+// is being looked at from an angle.
+const orbited = applyOps(spatialDoc, [
+  op.setCamera('v1', { ...defaultCamera(canvas3), yaw: 0.5 }),
+])
+assert.ok(resolveScene(orbited.scenes[0]!, 0, canvas3).spatial, 'a turned camera is spatial')
+assert.match(outlineDoc(orbited), /yaw=0\.5 pitch=0 dist=2000/, 'the outline reports the orbit')
+
+// Distance is clamped at sample time for the same reason zoom is: a keyframe
+// that walks the camera inside the diagram inverts the projection.
+const tooClose = applyOps(spatialDoc, [
+  op.setCamera('v1', {
+    ...defaultCamera(canvas3),
+    yaw: 0.3,
+    tracks: [{ property: 'distance', keyframes: [{ t: 0, value: 1, easing: 'linear' }] }],
+  }),
+])
+assert.ok(
+  resolveCamera(tooClose.scenes[0]!, 0)!.distance >= 200,
+  'a camera distance keyframed into the scene is clamped, not rendered inside out',
+)
+
 console.log(
   'smoke OK — reducer, sampler, morph resolution, key moments, camera framing, ' +
-    'grid layout, stagger, cell matching, path reveal, expressions and plot mapping all behave',
+    'grid layout, stagger, cell matching, projection, path reveal, expressions and ' +
+    'plot mapping all behave',
 )

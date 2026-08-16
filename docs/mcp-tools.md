@@ -67,6 +67,12 @@ shape as `remove_asset`'s `force`.
   out larger than the canvas. `get_project` prints it as `cam@(x,y) zoom=…`,
   because a framing that hides half the scene makes every coordinate in the
   outline misleading otherwise.
+- The third dimension is opt-in and inert until asked for: nodes take an
+  optional `z` and `add_vector3`/`add_axes3d`/`add_points3` are spatial by
+  type, but **nothing is projected until the camera has a `yaw` or `pitch`**
+  (`orbit_camera` is the shorthand). Straight on, a cube is a square. Angles
+  are radians everywhere except `orbit_camera`, whose argument is named
+  `degrees` because an orbit is naturally "a quarter turn".
 - Structured content is addressed by **what it is, not where it is**: `tex`
   names a sub-expression of an equation, `cells` names a row, column, cell or
   band of a `matrix`/`tokens` node (`{"rows":1}`, `{"rows":[0,1],"cols":2}`,

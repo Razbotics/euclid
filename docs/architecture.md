@@ -21,7 +21,8 @@ deterministic function of `t` when it's added.
 
 `packages/dsl` defines the scene document: project → scenes (sequential on
 the global timeline) → nodes (rect/circle/line/path/text/latex/matrix/tokens/
-group), plus an optional per-scene `camera`. Animation:
+vector3/axes3d/points3/group), each with an optional `z`, plus an optional
+per-scene `camera` that can also orbit. Animation:
 
 - **Tracks** — per-property keyframes (`position`, `opacity`, `fill`, …),
   eased per-segment (`smooth` = 3b1b smootherstep). The generic mechanism.
@@ -122,6 +123,60 @@ Worth noting the shape of that failure, because it will recur: an agent cannot
 tell "the system cannot do this" from "the system does not offer this", and
 will design around the limit it infers. Errors are cheap — a wrong guess costs
 one retry — but an inference costs a whole approach.
+
+## Pseudo-3D by projection
+
+Very little of what reads as three dimensions in a 3blue1brown video is a 3D
+engine: it is projected coordinates plus **depth cues**. That matters more here
+than it would elsewhere, because projection is arithmetic on (document, time) —
+it slots into the sampler, keeps the purity invariant, needs no GPU (the render
+container has none), and adds no second renderer.
+
+`packages/engine/src/project.ts` is the whole of it:
+`screen = focus + R(pitch)·R(yaw)·(p − focus) · distance/(distance − depth)`.
+Axes are **x right, y down, z toward the viewer**, so a larger z is nearer.
+
+The camera gained `yaw`, `pitch` and `distance` alongside its 2D framing, and
+the two compose rather than competing: **projection decides where a point lands
+on the z=0 plane, framing decides which part of that plane you are looking at.**
+Nodes gained an optional `z`.
+
+Three cues carry it, and the cues are what sell it — a projection without them
+reads as flat overlapping lines:
+
+- **Painter's order.** Root siblings are sorted far-to-near, stably, with a
+  node that has no depth counting as z=0, so a flat label keeps its document
+  order among its peers.
+- **Scale.** The perspective divide multiplies the node's own scale.
+- **Dimming.** Tied to that same divide rather than to raw depth, so one number
+  controls the strength of everything and a flatter camera dims less — which is
+  what an orthographic view should do.
+
+Geometry that *spans* depth — `vector3`, `axes3d`, `points3` — projects its own
+**vertices** instead of riding the node-level projection, because an arrow from
+here to there is not one point with one depth. Those nodes keep their view
+transform at identity and draw in absolute projected scene space; a point cloud
+also sorts within itself.
+
+Two rules fall out and are worth knowing:
+
+- **Nothing is projected until there is a reason.** A scene with a flat camera
+  and no depths is drawn exactly as before: document order, no projection, no
+  sort. Turning on 3D is `yaw`/`pitch`, a node with a `z`, or a spatial node
+  type.
+- **Spatial nodes belong at the scene root.** A group applies its own 2D
+  transform to its children, so projecting inside one would apply the camera
+  twice. Groups are drawn flat.
+
+A point at or behind the camera is **culled**, not drawn: the perspective
+divide flips sign there and the node would land hugely magnified on the wrong
+side of the frame. Camera `distance` is bounded and clamped again at sample
+time, for the same reason `zoom` is.
+
+Deliberately still not a 3D backend. three.js is justified by lighting,
+occlusion or meshes, and by then [plans/004](plans/004-desktop.md) argues the
+desktop app has the GPU to make it cheap. Deciding later costs nothing;
+deciding now costs the purity invariant.
 
 ## Structured primitives: matrix and tokens
 

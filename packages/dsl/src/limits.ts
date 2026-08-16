@@ -20,6 +20,15 @@ export const LIMITS = {
    * per-scene node cap would not notice.
    */
   maxCells: 400,
+  /** Points in one cloud. Drawn as one Graphics, so the cost is per point, not per node. */
+  maxPoints: 2000,
+  /**
+   * Camera distance from the focus plane. The floor keeps the perspective
+   * divide away from the scene itself — a camera 10px from a diagram turns it
+   * inside out — and the ceiling is orthographic for all practical purposes.
+   */
+  minCameraDistance: 200,
+  maxCameraDistance: 1e6,
 } as const
 
 /**

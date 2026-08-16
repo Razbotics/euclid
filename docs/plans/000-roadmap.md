@@ -124,9 +124,14 @@ arc-length `write_on` is the beginning of path-following.
 - [ ] Axes, ticks and labels — the rest of the graph story `plot_function`
       started; hand-built today
 - [ ] Code-block primitive with line-highlight animations
-- [ ] Pseudo-3D by projection: optional `z`, camera yaw/pitch, depth cues.
-      Last on purpose — the pseudo-3D-by-projection analysis in plans/006
-      stands unchanged, but it is the least certain to earn its place
+- [x] Pseudo-3D by projection: optional `z`, camera yaw/pitch, depth cues —
+      **done 2026-08-16**, out of order at the user's request. `vector3`,
+      `axes3d`, `points3`, `orbit_camera`; projection composes with the Phase A
+      camera rather than replacing it, and nothing is projected until a yaw,
+      pitch or `z` asks for it. Verified by `check-3d.ts`, which settles
+      occlusion with a background-coloured mask: the same two discs read 6.11%
+      lit and 0.00% with only their depths swapped. Whether it earns its place
+      is still a question for a milestone run, not for the code
 
 Done already, and kept here because it is the same plan: matched-glyph LaTeX
 morphing, and the `path`/`plot_function` half of the graph primitives.

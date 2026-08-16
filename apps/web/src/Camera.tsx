@@ -6,6 +6,8 @@ interface Props {
   time: number
 }
 
+const deg = (radians: number): string => ((radians * 180) / Math.PI).toFixed(0)
+
 /**
  * Where the camera is looking, while you scrub.
  *
@@ -51,6 +53,7 @@ export function CameraFrame({ doc, time }: Props) {
   const maxY = Math.max(H, ...corners.map((c) => c.y)) + pad
 
   const degrees = (cam.rotation * 180) / Math.PI
+  const orbiting = cam.yaw !== 0 || cam.pitch !== 0
   return (
     <div className="camera-frame" title="camera framing — outer box is the canvas">
       <svg viewBox={`${minX} ${minY} ${maxX - minX} ${maxY - minY}`} aria-hidden="true">
@@ -64,6 +67,10 @@ export function CameraFrame({ doc, time }: Props) {
       <span className="camera-readout">
         ⛶ ({Math.round(cam.position.x)}, {Math.round(cam.position.y)}) · {cam.zoom.toFixed(2)}×
         {Math.abs(degrees) >= 0.5 ? ` · ${degrees.toFixed(0)}°` : ''}
+        {/* Without this a scene being orbited reads as an ordinary 2D framing,
+            and the map below — which is a plan view of the z=0 plane — would be
+            the only thing on screen not mentioning the third dimension. */}
+        {orbiting ? ` · ⟳${deg(cam.yaw)}° ↕${deg(cam.pitch)}°` : ''}
       </span>
     </div>
   )

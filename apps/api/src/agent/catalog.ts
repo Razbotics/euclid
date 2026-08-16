@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { spatialTools } from './tools-3d'
 import { animTools } from './tools-anim'
 import { cameraTools } from './tools-camera'
 import { decisionTools } from './tools-decision'
@@ -13,6 +14,7 @@ const ALL: Capability[] = [
   ...projectTools,
   ...nodeTools,
   ...gridTools,
+  ...spatialTools,
   ...animTools,
   ...cameraTools,
   ...mediaTools,

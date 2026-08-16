@@ -15,6 +15,19 @@ export const Vec2Schema: z.ZodType<Vec2> = z.object({
   y: z.number().finite(),
 })
 
+/**
+ * A point in the pseudo-3D space: scene pixels, `y` down, `z` **toward the
+ * viewer**. Larger z is nearer, so it draws bigger and on top.
+ */
+export interface Vec3 extends Vec2 {
+  z: number
+}
+export const Vec3Schema: z.ZodType<Vec3> = z.object({
+  x: z.number().finite(),
+  y: z.number().finite(),
+  z: z.number().finite(),
+})
+
 /** '#rrggbb' hex. */
 export type Color = string
 export const ColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'expected #rrggbb hex color')
@@ -46,6 +59,10 @@ export const KeyframeSchema: z.ZodType<Keyframe> = z.object({
 
 export const ANIMATABLE_PROPS = [
   'position',
+  // Depth, so a node can fly toward the camera on an ordinary track. Absent on
+  // every node that has not opted into the third dimension, and `animate`
+  // refuses a property the node does not have.
+  'z',
   'scale',
   'rotation',
   'opacity',
@@ -195,6 +212,11 @@ interface NodeBase {
   id: string
   name?: string
   position: Vec2
+  /**
+   * Depth, toward the viewer. Omitted means the node lives on the z=0 plane —
+   * which is where every 2D node lives, so plain scenes are unaffected.
+   */
+  z?: number
   scale: number
   /** Radians, about `position` — not degrees, and not about the node's bounds. */
   rotation: number
@@ -312,6 +334,46 @@ export interface TokensNode extends NodeBase {
   boxFill?: Color
 }
 
+/**
+ * An arrow in space: `from` and `to` are 3D offsets from the node's anchor,
+ * the same convention `line` uses in 2D.
+ *
+ * Its own node type rather than a line with a z, because both ends have to be
+ * projected separately — a vector spanning depth is not a single point with a
+ * depth, and drawing it as one is exactly the "flat overlapping lines" failure
+ * this phase exists to avoid.
+ */
+export interface Vector3Node extends NodeBase {
+  type: 'vector3'
+  from: Vec3
+  to: Vec3
+  stroke: Color
+  strokeWidth: number
+  /** Arrowhead length in px at the focus plane; 0 draws a bare segment. */
+  headSize: number
+}
+
+/** A coordinate frame: three arrows from the anchor, one per axis. */
+export interface Axes3dNode extends NodeBase {
+  type: 'axes3d'
+  /** Length of each positive axis, in scene px. */
+  size: number
+  colorX: Color
+  colorY: Color
+  colorZ: Color
+  strokeWidth: number
+  /** Draw the negative half of each axis too, dimmer. */
+  negative: boolean
+}
+
+/** A cloud of dots, each scaled and dimmed by its own depth. */
+export interface Points3Node extends NodeBase {
+  type: 'points3'
+  points: Vec3[]
+  radius: number
+  fill: Color
+}
+
 export interface GroupNode extends NodeBase {
   type: 'group'
   children: EuclidNode[]
@@ -325,12 +387,16 @@ export type EuclidNode =
   | LatexNode
   | MatrixNode
   | TokensNode
+  | Vector3Node
+  | Axes3dNode
+  | Points3Node
   | GroupNode
 
 const NodeBaseShape = {
   id: z.string().min(1),
   name: z.string().optional(),
   position: Vec2Schema,
+  z: z.number().finite().optional(),
   scale: z.number().finite(),
   rotation: z.number().finite(),
   opacity: z.number().min(0).max(1),
@@ -417,6 +483,32 @@ export const NodeSchema: z.ZodType<EuclidNode> = z.lazy(() =>
     }),
     z.object({
       ...NodeBaseShape,
+      type: z.literal('vector3'),
+      from: Vec3Schema,
+      to: Vec3Schema,
+      stroke: ColorSchema,
+      strokeWidth: z.number().positive(),
+      headSize: z.number().min(0),
+    }),
+    z.object({
+      ...NodeBaseShape,
+      type: z.literal('axes3d'),
+      size: z.number().positive(),
+      colorX: ColorSchema,
+      colorY: ColorSchema,
+      colorZ: ColorSchema,
+      strokeWidth: z.number().positive(),
+      negative: z.boolean(),
+    }),
+    z.object({
+      ...NodeBaseShape,
+      type: z.literal('points3'),
+      points: z.array(Vec3Schema).min(1).max(LIMITS.maxPoints),
+      radius: z.number().positive(),
+      fill: ColorSchema,
+    }),
+    z.object({
+      ...NodeBaseShape,
       type: z.literal('group'),
       children: z.array(NodeSchema).max(LIMITS.maxNodesPerScene),
     }),
@@ -425,7 +517,7 @@ export const NodeSchema: z.ZodType<EuclidNode> = z.lazy(() =>
 
 // ---------- camera ----------
 
-export const CAMERA_PROPS = ['position', 'zoom', 'rotation'] as const
+export const CAMERA_PROPS = ['position', 'zoom', 'rotation', 'yaw', 'pitch', 'distance'] as const
 export type CameraProp = (typeof CAMERA_PROPS)[number]
 
 /** Same keyframe machinery as a node track, restricted to what a camera has. */
@@ -458,14 +550,33 @@ export interface Camera {
    * appears to turn counter-clockwise — the negation lives in the stage.
    */
   rotation: number
+  /**
+   * Radians about the vertical axis — the orbit. Positive swings +x toward the
+   * viewer. Zero yaw *and* zero pitch means the scene is drawn flat, in
+   * document order, with no projection at all.
+   */
+  yaw: number
+  /** Radians about the horizontal axis. Positive lifts the camera, looking down. */
+  pitch: number
+  /**
+   * How far the camera sits from the z=0 plane, in scene px. Smaller is a
+   * wider lens: more perspective, stronger depth cues. Large is orthographic.
+   */
+  distance: number
   tracks: CameraTrack[]
 }
 export const CameraSchema: z.ZodType<Camera> = z.object({
   position: Vec2Schema,
   zoom: z.number().min(LIMITS.minCameraZoom).max(LIMITS.maxCameraZoom),
   rotation: z.number().finite(),
+  // Defaulted rather than optional: a camera written before the third
+  // dimension existed parses into a flat one, and every reader can treat the
+  // three as always present.
+  yaw: z.number().finite().default(0),
+  pitch: z.number().finite().default(0),
+  distance: z.number().min(LIMITS.minCameraDistance).max(LIMITS.maxCameraDistance).default(2000),
   tracks: z.array(CameraTrackSchema),
-})
+}) as z.ZodType<Camera>
 
 // ---------- narration / scene / document ----------
 

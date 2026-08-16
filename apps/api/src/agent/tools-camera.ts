@@ -11,6 +11,7 @@ import {
 } from '@euclid/dsl'
 import { resolveCamera } from '@euclid/engine'
 import { EASING, NUMBERISH, PROJECT_ID, SCENE_ID, SECONDS } from './schemas'
+import { checkDistance } from './tools-3d'
 import { capability, said, CapabilityError } from './types'
 
 const ZOOM = NUMBERISH.describe(
@@ -24,6 +25,8 @@ const CAMERA_UNITS = [
   '`rotation` is camera roll in **RADIANS**, positive clockwise. A 15° tilt is 0.262, not 15 — the degrees guess succeeds and spins the scene more than twice round.',
   '',
   'The camera never moves a node. Every coordinate you pass to add_* and animate stays scene-local, which is the point: lay a diagram out larger than the canvas and let the camera decide what is being looked at.',
+  '',
+  '`yaw` and `pitch` (radians) turn the camera into a **3D** one: they orbit the scene about the framed point, and any node with a `z` — or an add_vector3 / add_axes3d / add_points3 node — is then projected, scaled and dimmed by its depth. While both are zero the scene is drawn flat, in document order, exactly as it always was. `distance` is how far the camera sits from the z=0 plane: smaller is a wider lens with stronger perspective.',
 ].join('\n')
 
 function checkZoom(zoom: number | undefined): void {
@@ -86,15 +89,18 @@ export const cameraTools = [
       y: NUMBERISH.optional().describe('scene y placed at the centre of the frame'),
       zoom: ZOOM.optional(),
       rotation: NUMBERISH.optional().describe('camera roll in RADIANS, positive clockwise'),
+      yaw: NUMBERISH.optional().describe('orbit about the vertical axis, RADIANS; non-zero turns on 3D'),
+      pitch: NUMBERISH.optional().describe('orbit about the horizontal axis, RADIANS; positive looks down'),
+      distance: NUMBERISH.optional().describe('camera distance from the z=0 plane; smaller = more perspective'),
       reset: z
         .boolean()
         .default(false)
         .describe('drop the camera and its tracks entirely, back to the plain canvas frame'),
     }),
-    async handler(ctx, { projectId, sceneId, x, y, zoom, rotation, reset }) {
+    async handler(ctx, { projectId, sceneId, x, y, zoom, rotation, yaw, pitch, distance, reset }) {
       const { doc } = await ctx.getDoc(projectId)
       const scene = ctx.sceneOrThrow(doc, sceneId)
-      const framing = [x, y, zoom, rotation].some((v) => v !== undefined)
+      const framing = [x, y, zoom, rotation, yaw, pitch, distance].some((v) => v !== undefined)
 
       if (reset) {
         if (framing) {
@@ -111,10 +117,12 @@ export const cameraTools = [
       }
       if (!framing) {
         throw new CapabilityError(
-          'nothing to set — pass at least one of x, y, zoom, rotation (or reset: true)',
+          'nothing to set — pass at least one of x, y, zoom, rotation, yaw, pitch, distance ' +
+            '(or reset: true)',
         )
       }
       checkZoom(zoom)
+      checkDistance(distance)
 
       const base = scene.camera ?? defaultCamera(doc.canvas)
       const camera: Camera = {
@@ -122,6 +130,9 @@ export const cameraTools = [
         position: { x: x ?? base.position.x, y: y ?? base.position.y },
         zoom: zoom ?? base.zoom,
         rotation: rotation ?? base.rotation,
+        yaw: yaw ?? base.yaw,
+        pitch: pitch ?? base.pitch,
+        distance: distance ?? base.distance,
       }
       await ctx.submit(projectId, [op.setCamera(sceneId, camera)])
 
@@ -132,11 +143,18 @@ export const cameraTools = [
         ...(x !== undefined || y !== undefined ? (['position'] as const) : []),
         ...(zoom !== undefined ? (['zoom'] as const) : []),
         ...(rotation !== undefined ? (['rotation'] as const) : []),
+        ...(yaw !== undefined ? (['yaw'] as const) : []),
+        ...(pitch !== undefined ? (['pitch'] as const) : []),
+        ...(distance !== undefined ? (['distance'] as const) : []),
       ]
       const shadowed = touched.filter((p) => base.tracks.some((t) => t.property === p))
       return said(
         `camera on ${sceneId}: centre (${camera.position.x}, ${camera.position.y}), ` +
-          `zoom ${camera.zoom}, roll ${camera.rotation}rad` +
+          `zoom ${camera.zoom}, roll ${camera.rotation}rad, yaw ${camera.yaw}, ` +
+          `pitch ${camera.pitch}, distance ${camera.distance}` +
+          (camera.yaw === 0 && camera.pitch === 0
+            ? ' — flat: yaw and pitch are both zero, so nothing is projected'
+            : '') +
           (shadowed.length
             ? ` — WARNING: ${shadowed.join(' and ')} ${shadowed.length > 1 ? 'are' : 'is'} keyframed ` +
               `on this camera, so the track wins at render time and this will not be visible. ` +
@@ -168,20 +186,26 @@ export const cameraTools = [
       y: NUMBERISH.optional().describe('scene y to centre the frame on'),
       zoom: ZOOM.optional(),
       rotation: NUMBERISH.optional().describe('camera roll in RADIANS, positive clockwise'),
+      yaw: NUMBERISH.optional().describe('orbit about the vertical axis, RADIANS'),
+      pitch: NUMBERISH.optional().describe('orbit about the horizontal axis, RADIANS'),
+      distance: NUMBERISH.optional().describe('camera distance from the z=0 plane'),
       start: SECONDS,
       duration: z.number().positive().default(2),
       easing: EASING,
     }),
-    async handler(ctx, { projectId, sceneId, x, y, zoom, rotation, start, duration, easing }) {
+    async handler(ctx, args) {
+      const { projectId, sceneId, x, y, zoom, rotation, yaw, pitch, distance, start, duration, easing } =
+        args
       const { doc } = await ctx.getDoc(projectId)
       const scene = ctx.sceneOrThrow(doc, sceneId)
-      if ([x, y, zoom, rotation].every((v) => v === undefined)) {
+      if ([x, y, zoom, rotation, yaw, pitch, distance].every((v) => v === undefined)) {
         throw new CapabilityError(
-          'nothing to move — pass at least one of x, y, zoom, rotation. ' +
+          'nothing to move — pass at least one of x, y, zoom, rotation, yaw, pitch, distance. ' +
             'A camera move with no target is a hold, which is what happens anyway.',
         )
       }
       checkZoom(zoom)
+      checkDistance(distance)
 
       const base = scene.camera ?? defaultCamera(doc.canvas)
       const from = resolveCamera({ ...scene, camera: base }, start)!
@@ -202,6 +226,15 @@ export const cameraTools = [
         tracks = extendTrack(tracks, 'rotation', from.rotation, rotation, start, duration, ease)
         moves.push(`roll ${from.rotation} → ${rotation}rad`)
       }
+      for (const [prop, target, current] of [
+        ['yaw', yaw, from.yaw],
+        ['pitch', pitch, from.pitch],
+        ['distance', distance, from.distance],
+      ] as const) {
+        if (target === undefined) continue
+        tracks = extendTrack(tracks, prop, current, target, start, duration, ease)
+        moves.push(`${prop} ${current} → ${target}`)
+      }
 
       await ctx.submit(projectId, [op.setCamera(sceneId, { ...base, tracks })])
       const overrun = start + duration > scene.duration
@@ -214,4 +247,53 @@ export const cameraTools = [
       )
     },
   }),
+
+  capability({
+    name: 'orbit_camera',
+    summary: 'Swing the camera around the scene by a number of DEGREES — the 3D establishing move.',
+    doc: [
+      'Sugar over move_camera for the one motion a spatial scene almost always wants: a slow turn around what it is looking at, which is what makes a projection read as depth rather than as a strange flat drawing. Nothing else conveys "this is a space" as cheaply.',
+      '',
+      '**This is the only capability that takes degrees**, because an orbit is naturally described as "a quarter turn" and `90` is unambiguous when the argument is called `degrees`. Everywhere else — including `yaw` and `pitch` on set_camera and move_camera — angles are RADIANS.',
+      '',
+      'The turn is *relative*: it adds to wherever the camera is at `start`, so successive orbits compose. `pitchDegrees` tilts at the same time; positive lifts the camera and looks down, which is usually what a diagram wants.',
+      '',
+      'Slow is the whole point. Under narration, 20–40 degrees over several seconds reads as a considered look around; a full turn in one second reads as a spin.',
+    ].join('\n'),
+    args: z.object({
+      projectId: PROJECT_ID,
+      sceneId: SCENE_ID,
+      degrees: NUMBERISH.default(45).describe('how far to swing about the vertical axis, DEGREES'),
+      pitchDegrees: NUMBERISH.optional().describe('tilt to reach, DEGREES; positive looks down'),
+      start: SECONDS,
+      duration: z.number().positive().default(4),
+      easing: EASING,
+    }),
+    async handler(ctx, { projectId, sceneId, degrees, pitchDegrees, start, duration, easing }) {
+      const { doc } = await ctx.getDoc(projectId)
+      const scene = ctx.sceneOrThrow(doc, sceneId)
+      const base = scene.camera ?? defaultCamera(doc.canvas)
+      const from = resolveCamera({ ...scene, camera: base }, start)!
+      const ease = easing as Easing
+      const toYaw = from.yaw + (degrees * Math.PI) / 180
+
+      let tracks = extendTrack(base.tracks, 'yaw', from.yaw, toYaw, start, duration, ease)
+      const moves = [`yaw ${round(from.yaw)} → ${round(toYaw)}rad (${degrees}°)`]
+      if (pitchDegrees !== undefined) {
+        const toPitch = (pitchDegrees * Math.PI) / 180
+        tracks = extendTrack(tracks, 'pitch', from.pitch, toPitch, start, duration, ease)
+        moves.push(`pitch ${round(from.pitch)} → ${round(toPitch)}rad (${pitchDegrees}°)`)
+      }
+      await ctx.submit(projectId, [op.setCamera(sceneId, { ...base, tracks })])
+      return said(
+        `orbiting ${sceneId}: ${moves.join(', ')} over [${start}s, ${start + duration}s]` +
+          (from.yaw === 0 && from.pitch === 0 && pitchDegrees === undefined
+            ? ' — the scene starts flat and turns into the projection as it goes'
+            : ''),
+        { sceneId, degrees, pitchDegrees, start, duration },
+      )
+    },
+  }),
 ]
+
+const round = (n: number): number => Math.round(n * 1000) / 1000

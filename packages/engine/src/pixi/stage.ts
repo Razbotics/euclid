@@ -12,13 +12,23 @@ import {
   type EuclidDoc,
   type GridSpec,
   type LatexNode,
+  type Axes3dNode,
   type MatrixNode,
+  type Points3Node,
   type TokensNode,
   type Vec2,
+  type Vec3,
+  type Vector3Node,
 } from '@euclid/dsl'
 import { pathAtProgress } from '../path'
 import { staggerAlphas } from '../stagger'
-import { lerpColor, resolveScene, type ResolvedCamera, type ResolvedNode } from '../sampler'
+import {
+  lerpColor,
+  resolveScene,
+  type ResolvedCamera,
+  type ResolvedNode,
+} from '../sampler'
+import { project3, type Camera3, type Projected } from '../project'
 import {
   findGlyphRun,
   glyphBounds,
@@ -108,6 +118,71 @@ function cellKey(cells: string[][]): string {
 
 const lerp = (a: number, b: number, u: number): number => a + (b - a) * u
 
+const add3 = (a: Vec3, b: Vec3): Vec3 => ({ x: a.x + b.x, y: a.y + b.y, z: a.z + b.z })
+const lerp3 = (a: Vec3, b: Vec3, u: number): Vec3 => ({
+  x: lerp(a.x, b.x, u),
+  y: lerp(a.y, b.y, u),
+  z: lerp(a.z, b.z, u),
+})
+
+/** Node types whose geometry spans depth and is projected vertex by vertex. */
+function isSpatialType(type: string): boolean {
+  return type === 'vector3' || type === 'axes3d' || type === 'points3'
+}
+
+/**
+ * One arrow between two points in space.
+ *
+ * Both ends are projected independently — that is the whole point — and the
+ * cues ride the result: stroke width and head size follow the mean perspective
+ * scale, and the alpha follows the mean dim, so an arrow pointing away from
+ * the camera is visibly thinner and fainter at its far end.
+ */
+function drawArrow(
+  g: Graphics,
+  cam: Camera3,
+  from: Vec3,
+  to: Vec3,
+  color: string,
+  width: number,
+  head: number,
+  alphaMul: number,
+): void {
+  const a = project3(from, cam)
+  const b = project3(to, cam)
+  if (!a || !b) return
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const len = Math.hypot(dx, dy)
+  const alpha = ((a.dim + b.dim) / 2) * alphaMul
+  const w = Math.max(0.5, width * ((a.scale + b.scale) / 2))
+
+  // Pointing (almost) straight at the camera. The shaft has no length to draw
+  // and the head has no direction to point, but the arrow is still there — an
+  // axis that silently vanishes at one angle reads as a bug, and a cone seen
+  // end-on is a disc.
+  if (len < Math.max(1, w)) {
+    if (head > 0) g.circle(b.x, b.y, Math.max(w, head * b.scale * 0.35)).fill({ color, alpha })
+    return
+  }
+
+  const headLen = Math.min(head * b.scale, len * 0.9)
+  const ux = dx / len
+  const uy = dy / len
+  // The shaft stops short of the tip so it does not show through the head.
+  const endX = b.x - ux * headLen
+  const endY = b.y - uy * headLen
+  g.moveTo(a.x, a.y).lineTo(endX, endY).stroke({ width: w, color, alpha })
+  if (headLen > 0) {
+    const halfW = headLen * 0.45
+    g.moveTo(b.x, b.y)
+      .lineTo(endX - uy * halfW, endY + ux * halfW)
+      .lineTo(endX + uy * halfW, endY - ux * halfW)
+      .closePath()
+      .fill({ color, alpha })
+  }
+}
+
 /** Renders the raw TeX source as monospace text — placeholder until a real provider is wired. */
 export class FallbackTexProvider implements TexProvider {
   constructor(private renderer: Renderer) {}
@@ -162,6 +237,8 @@ export class EuclidStage {
   private matchCache = new Map<string, GlyphMatch>()
   private pendingTex = new Set<Promise<unknown>>()
   private currentSceneId: string | null = null
+  /** The 3D half of the camera while a spatial scene is being drawn; null when flat. */
+  private cam3: Camera3 | null = null
   private texProvider: TexProvider | null
 
   constructor(
@@ -199,10 +276,11 @@ export class EuclidStage {
     this.bg.clear()
     this.bg.rect(0, 0, doc.canvas.width, doc.canvas.height).fill(at.scene.background)
 
-    const resolved = resolveScene(at.scene, at.localT)
+    const resolved = resolveScene(at.scene, at.localT, doc.canvas)
     this.applyCamera(resolved.camera, doc.canvas)
+    this.cam3 = resolved.cam3
     const seen = new Set<string>()
-    this.syncChildren(resolved.nodes, this.layer, seen)
+    this.syncChildren(resolved.nodes, this.layer, seen, resolved.spatial)
 
     for (const [id, item] of this.items) {
       if (!seen.has(id)) {
@@ -244,11 +322,29 @@ export class EuclidStage {
     this.currentSceneId = null
   }
 
-  private syncChildren(resolved: ResolvedNode[], parent: Container, seen: Set<string>): void {
-    resolved.forEach((res, zIndex) => {
-      const item = this.syncNode(res, parent, seen)
+  private syncChildren(
+    resolved: ResolvedNode[],
+    parent: Container,
+    seen: Set<string>,
+    projected = false,
+  ): void {
+    // Painter's algorithm: furthest first, so nearer things cover them. The
+    // sort is stable and a node without a depth counts as sitting on the z=0
+    // plane, so a flat label keeps its document order among its peers instead
+    // of jumping to one end.
+    const order = projected
+      ? resolved
+          .map((res, i) => ({ res, i }))
+          .sort((a, b) => (a.res.projection?.depth ?? 0) - (b.res.projection?.depth ?? 0) || a.i - b.i)
+          .map((x) => x.res)
+      : resolved
+    order.forEach((res, zIndex) => {
+      const item = this.syncNode(res, parent, seen, projected)
       parent.setChildIndex(item.view, Math.min(zIndex, parent.children.length - 1))
       if (res.source.type === 'group') {
+        // Groups are drawn flat: their children inherit the group's 2D
+        // transform, and projecting inside one would apply the camera twice.
+        // Spatial nodes belong at the scene root.
         this.syncChildren(res.children, item.content, seen)
         this.applyGroupStagger(res)
       }
@@ -275,7 +371,12 @@ export class EuclidStage {
     })
   }
 
-  private syncNode(res: ResolvedNode, parent: Container, seen: Set<string>): Item {
+  private syncNode(
+    res: ResolvedNode,
+    parent: Container,
+    seen: Set<string>,
+    projected = false,
+  ): Item {
     const node = res.source
     seen.add(node.id)
     const staticKey = computeStaticKey(node)
@@ -294,14 +395,36 @@ export class EuclidStage {
 
     const p = res.props
     const pos = p.position as Vec2
-    item.view.position.set(pos.x, pos.y)
-    item.view.scale.set(p.scale as number)
-    item.view.rotation = p.rotation as number
-    item.view.alpha = p.opacity as number
+    const proj = res.projection
+    const spatialGeometry = isSpatialType(res.source.type)
+    if (spatialGeometry) {
+      // Its vertices are already in projected scene space — see updateSpatial —
+      // so the view itself must add nothing, or the camera applies twice.
+      item.view.position.set(0, 0)
+      item.view.scale.set(1)
+      item.view.rotation = 0
+      item.view.alpha = p.opacity as number
+    } else if (projected && proj) {
+      // Two of the three depth cues live here: nearer draws larger, further
+      // draws dimmer. The third is the sort order above. Without them a
+      // projection reads as flat overlapping lines.
+      item.view.position.set(proj.x, proj.y)
+      item.view.scale.set((p.scale as number) * proj.scale)
+      item.view.rotation = p.rotation as number
+      item.view.alpha = (p.opacity as number) * proj.dim
+    } else {
+      item.view.position.set(pos.x, pos.y)
+      item.view.scale.set(p.scale as number)
+      item.view.rotation = p.rotation as number
+      item.view.alpha = p.opacity as number
+    }
 
     this.updateContent(item, res)
     this.updateHighlight(item, res)
     this.applyWrite(item, res)
+    // Last word, because applyWrite turns nodes back on: a node at or behind
+    // the camera has no projection and must not be drawn at all.
+    if (projected && !proj && !spatialGeometry) item.view.visible = false
     return item
   }
 
@@ -412,6 +535,9 @@ export class EuclidStage {
       case 'circle':
       case 'line':
       case 'path':
+      case 'vector3':
+      case 'axes3d':
+      case 'points3':
         content = new Graphics()
         break
       case 'text': {
@@ -502,6 +628,15 @@ export class EuclidStage {
         return
       case 'tokens':
         this.updateTokens(item, res, node)
+        return
+      case 'vector3':
+      case 'axes3d':
+      case 'points3':
+        // Geometry that spans depth projects its own vertices — see
+        // updateSpatial. Nothing to do when the scene is flat, because a
+        // spatial node without a camera to project through has no position.
+        if (this.cam3) this.updateSpatial(item, res, node, this.cam3)
+        else (item.content as Graphics).clear()
         return
       case 'group':
         // A write on a group arrives child by child (applied once the children
@@ -916,6 +1051,90 @@ export class EuclidStage {
       text.visible = alpha > 0
     }
     for (let i = node.labels.length; i < pool.length; i++) pool[i]!.visible = false
+  }
+
+  /**
+   * Geometry that spans depth: a vector, a coordinate frame, a cloud of points.
+   *
+   * These project their own **vertices** rather than riding the node-level
+   * projection, because an arrow from here to there is not one point with one
+   * depth — drawing it that way is exactly the "flat overlapping lines" failure
+   * this phase exists to avoid. The view transform is left at identity for
+   * them (see syncNode) and everything below is absolute scene space, so the
+   * 2D camera still frames it afterwards.
+   */
+  private updateSpatial(
+    item: Item,
+    res: ResolvedNode,
+    node: Vector3Node | Axes3dNode | Points3Node,
+    cam: Camera3,
+  ): void {
+    const g = item.content as Graphics
+    g.clear()
+    const p = res.props
+    const base = p.position as Vec2
+    const anchor: Vec3 = { x: base.x, y: base.y, z: (p.z as number | undefined) ?? 0 }
+    const scale = p.scale as number
+    // A spatial reveal grows along the geometry rather than sweeping a mask
+    // across the frame, the same argument `path` makes for arc length.
+    const wp = res.writeProgress
+    item.glyphWrite = wp !== null
+    const grow = wp === null ? 1 : wp
+
+    switch (node.type) {
+      case 'vector3': {
+        const from = add3(anchor, node.from)
+        const to = add3(anchor, node.to)
+        drawArrow(
+          g,
+          cam,
+          from,
+          lerp3(from, to, grow),
+          p.stroke as string,
+          (p.strokeWidth as number) * scale,
+          node.headSize * scale * grow,
+          1,
+        )
+        return
+      }
+      case 'axes3d': {
+        const size = node.size * scale
+        const width = (p.strokeWidth as number) * scale
+        const head = size * 0.12
+        const axes: [Vec3, string][] = [
+          [{ x: size, y: 0, z: 0 }, node.colorX],
+          // `y` grows downward in scene space, so the y axis points *up* the
+          // screen when it is drawn negative — which is what anyone reading a
+          // graph expects of it.
+          [{ x: 0, y: -size, z: 0 }, node.colorY],
+          [{ x: 0, y: 0, z: size }, node.colorZ],
+        ]
+        for (const [dir, color] of axes) {
+          if (node.negative) {
+            const back = lerp3(anchor, add3(anchor, { x: -dir.x, y: -dir.y, z: -dir.z }), grow)
+            drawArrow(g, cam, anchor, back, color, width, 0, 0.35)
+          }
+          drawArrow(g, cam, anchor, lerp3(anchor, add3(anchor, dir), grow), color, width, head, 1)
+        }
+        return
+      }
+      case 'points3': {
+        const alphas = wp === null ? null : staggerAlphas(node.points.length, wp)
+        const dots = node.points
+          .map((pt, i) => ({ at: project3(add3(anchor, pt), cam), a: alphas?.[i] ?? 1 }))
+          .filter((d): d is { at: Projected; a: number } => d.at !== null && d.a > 0)
+        // Painter's order inside the cloud too, or a near point drawn early
+        // sits behind a far one and the whole thing reads as confetti.
+        dots.sort((a, b) => a.at.depth - b.at.depth)
+        for (const d of dots) {
+          g.circle(d.at.x, d.at.y, Math.max(0.5, node.radius * scale * d.at.scale)).fill({
+            color: p.fill as string,
+            alpha: d.at.dim * d.a,
+          })
+        }
+        return
+      }
+    }
   }
 
   /** Shared sprite pool: one sprite per drawn glyph, reused across frames. */

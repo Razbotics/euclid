@@ -1,4 +1,4 @@
-# 006 — Complex animation and depth (status: in progress — Phase 4, A+B done)
+# 006 — Complex animation and depth (status: in progress — Phase 4, A+B+C done)
 
 > **Deferred 2026-08-15, promoted back 2026-08-16.** It was parked for one
 > stated reason: this plan's own verification step — "verify by screenshot at
@@ -218,19 +218,70 @@ Phase A paying for itself inside Phase B's test.
   cannot match around them. Replaced with `\u0000` escapes — same runtime
   string, greppable file.
 
-## Phase C: Pseudo-3D  (status: planned)
+## Phase C: Pseudo-3D  (status: done, 2026-08-16)
 
-- [ ] Optional `z` on nodes; camera gains `yaw`/`pitch` and a perspective
-      parameter
-- [ ] Sampler projects `(x, y, z)` → screen and returns a depth per node —
+- [x] Optional `z` on nodes; camera gains `yaw`/`pitch` and a perspective
+      parameter (`distance`)
+- [x] Sampler projects `(x, y, z)` → screen and returns a depth per node —
       pure, deterministic, no engine
-- [ ] Stage: painter's z-sort, scale by depth, dim with distance. **The cues
+- [x] Stage: painter's z-sort, scale by depth, dim with distance. **The cues
       are what sell it**, not the projection
-- [ ] `axes3d`, `vector3` (arrow in space), point cloud
-- [ ] MCP: `add_vector3`, `add_axes3d`, camera orbit helper
+- [x] `axes3d`, `vector3` (arrow in space), point cloud (`points3`)
+- [x] MCP: `add_vector3`, `add_axes3d`, `add_points3`, `orbit_camera`, and
+      `yaw`/`pitch`/`distance` on set_camera and move_camera
 
-Verify by screenshot at several camera angles: a vector behind another must
-be occluded in draw order and dimmer, or it reads as flat overlapping lines.
+Verified as this plan asked — by screenshot at several camera angles, plus a
+measurement for the claim a screenshot cannot settle. Occlusion is the hard one:
+a correct frame and a wrongly-ordered one contain the same shapes. `check-3d.ts`
+settles it with a disc painted the **background colour** — invisible against the
+backdrop but still occluding — so the same two discs with only their depths
+swapped read **6.11% lit one way round and 0.00% the other**, and the only
+difference is draw order. Alongside: the same disc draws 2.76x larger when
+nearer (2.78 predicted from scale²), an arrow orbited end-on foreshortens
+0.76% → 0.55% → 0.07%, a 27-point lattice stays lit through a 120° orbit, and a
+cloud reveals dot by dot.
+
+### Decisions
+
+- **Projection and framing compose; they do not compete.** The 3D half maps a
+  point onto the z=0 plane in *scene* space, and the existing 2D camera then
+  frames that plane. So Phase A's transform is untouched, and one camera object
+  carries both without either needing to know about the other.
+- **Nothing is projected until there is a reason.** A flat camera over flat
+  nodes leaves a scene bit-identical to what it was before this existed — no
+  projection, no depth sort. 3D turns on with a `yaw`/`pitch`, a node with a
+  `z`, or a spatial node type. The corollary is worth telling agents plainly:
+  straight on, a cube *is* a square, and that is not a bug.
+- **Vertex projection for geometry that spans depth.** A vector is not one
+  point with one depth; drawing it that way is precisely the "flat overlapping
+  lines" failure this phase was written to avoid. `vector3`, `axes3d` and
+  `points3` keep their view transform at identity and draw in absolute
+  projected space; a cloud sorts within itself as well.
+- **Dimming rides the perspective divide** rather than raw depth, so one number
+  sets the strength of every cue and a flatter camera dims less — which is what
+  an orthographic view should do.
+- **Points at or behind the camera are culled**, and camera `distance` is
+  bounded and re-clamped at sample time. The divide flips sign there, and the
+  node would land hugely magnified on the wrong side of the frame.
+- **`orbit_camera` takes degrees** — the only capability that does. An orbit is
+  naturally "a quarter turn", `90` is unambiguous when the argument is called
+  `degrees`, and its doc says outright that everything else is radians.
+- Spatial nodes belong at the **scene root**: a group applies its own 2D
+  transform to its children, so projecting inside one would apply the camera
+  twice. Groups stay flat, and the tools say so.
+
+### Notes / gotchas
+
+- **An arrow pointing exactly at the camera vanished.** Mathematically right —
+  a segment seen end-on is a point — and wrong on screen: at yaw 0 the z axis
+  simply was not there, which reads as a missing feature rather than as depth.
+  A degenerate arrow now draws its head as a disc, because a cone seen end-on
+  is a disc. Found by looking at the contact sheet, not by any assertion; the
+  lit fraction was happily reporting 0.00% as a pass.
+- A spatial node in a scene with **no camera** used to draw nothing, because
+  the projection had no camera to run through. It falls back to a flat camera
+  focused on the canvas centre — the focus matters, since (0,0) would slide a
+  deep node toward the corner as it came forward.
 
 ## Phase D: Flows  (status: planned)
 

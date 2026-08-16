@@ -17,7 +17,9 @@ export const animTools = [
     doc: [
       'The generic motion primitive. The start value is **sampled from the document at `start`**, never assumed — so animations chain continuously and you never have to restate where something already is.',
       '',
-      'Properties: `position` ({x,y}), `scale`/`rotation`/`opacity`/`width`/`height`/`radius`/`fontSize`/`strokeWidth` (number), `fill`/`stroke`/`color` (#rrggbb).',
+      'Properties: `position` ({x,y}), `z`/`scale`/`rotation`/`opacity`/`width`/`height`/`radius`/`fontSize`/`strokeWidth` (number), `fill`/`stroke`/`color` (#rrggbb).',
+      '',
+      '`z` is depth, toward the viewer — animating it flies a node at the camera. It only exists on a node you gave a `z` to, and only shows once the camera has a yaw or pitch.',
       '',
       '**`rotation` is in RADIANS, not degrees** — a quarter turn is 1.5708, not 90. Degrees are the natural guess and the call will succeed with a wildly wrong value: 90 wraps more than fourteen full turns. Convert with `degrees × π / 180`. A node rotates about its own `position`, so a line pivots about its anchor rather than its midpoint.',
       '',
@@ -30,7 +32,7 @@ export const animTools = [
       sceneId: SCENE_ID,
       nodeId: NODE_ID,
       property: z.enum([
-        'position', 'scale', 'rotation', 'opacity', 'fill', 'stroke', 'color',
+        'position', 'z', 'scale', 'rotation', 'opacity', 'fill', 'stroke', 'color',
         'width', 'height', 'radius', 'fontSize', 'strokeWidth',
       ]),
       // NUMBERISH first: a colour like "#ff0000" fails it and falls through to
