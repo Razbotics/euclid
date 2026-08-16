@@ -11,6 +11,22 @@ import {
 import { COLOR, NODE_ID, NUMBERISH, PROJECT_ID, SCENE_ID } from './schemas'
 import { capability, said, CapabilityError } from './types'
 
+/**
+ * Attach a new node to a group instead of the scene root.
+ *
+ * The hierarchy has always existed in the document and the renderer — groups
+ * compose transforms like any scene graph — but nothing exposed it, so a dot
+ * riding a rotating radius had to be keyframed chord by chord. Run 5 spent
+ * roughly 60% of its calls on exactly that.
+ */
+const PARENT_ID = z
+  .string()
+  .optional()
+  .describe('id of a group to add this into; omitted = the scene root')
+
+/** A colour, or `none` for an unfilled outline. */
+const FILLABLE = z.union([COLOR, z.literal('none')])
+
 /** Defaults every node carries, so a caller only supplies what it cares about. */
 export const baseNode = (position: Vec2) => ({
   position,
@@ -34,11 +50,12 @@ export const nodeTools = [
       y: z.number(),
       fontSize: z.number().positive().default(64),
       color: COLOR.default('#ffffff'),
+      parentId: PARENT_ID,
     }),
-    async handler(ctx, { projectId, sceneId, tex, x, y, fontSize, color }) {
+    async handler(ctx, { projectId, sceneId, tex, x, y, fontSize, color, parentId }) {
       const id = newId('eq')
       await ctx.submit(projectId, [
-        op.addNode(sceneId, { ...baseNode({ x, y }), id, type: 'latex', tex, color, fontSize }),
+        op.addNode(sceneId, { ...baseNode({ x, y }), id, type: 'latex', tex, color, fontSize }, parentId),
       ])
       return said(`created latex node ${id}`, { nodeId: id })
     },
@@ -57,8 +74,9 @@ export const nodeTools = [
       fontSize: z.number().positive().default(48),
       fill: COLOR.default('#ffffff'),
       fontFamily: z.string().default('Georgia, serif'),
+      parentId: PARENT_ID,
     }),
-    async handler(ctx, { projectId, sceneId, textContent, x, y, fontSize, fill, fontFamily }) {
+    async handler(ctx, { projectId, sceneId, textContent, x, y, fontSize, fill, fontFamily, parentId }) {
       const id = newId('txt')
       await ctx.submit(projectId, [
         op.addNode(sceneId, {
@@ -69,7 +87,7 @@ export const nodeTools = [
           fontSize,
           fill,
           fontFamily,
-        }),
+        }, parentId),
       ])
       return said(`created text node ${id}`, { nodeId: id })
     },
@@ -78,7 +96,13 @@ export const nodeTools = [
   capability({
     name: 'add_shape',
     summary: 'Add a rect, circle or line.',
-    doc: 'Rect and circle anchor at their centre; a line\'s `x2`/`y2` are relative to its position, so a line at (100, 100) with x2=200 ends at (300, 100).',
+    doc: [
+      'Rect and circle anchor at their centre; a line\'s `x2`/`y2` are relative to its position, so a line at (100, 100) with x2=200 ends at (300, 100).',
+      '',
+      'Pass `fill: "none"` with a `stroke` for an outline or a ring. Do **not** fill with the background colour to fake it — that paints an opaque disc which hides whatever is behind it and breaks the moment the background is not flat.',
+      '',
+      'Note a line stores `from`/`to`, not the `x2`/`y2` you create it with, so `update_node` on a line takes `{"to":{"x":…,"y":…}}`. A line has no `width` either — animating its length means animating `to`.',
+    ].join('\n'),
     args: z.object({
       projectId: PROJECT_ID,
       sceneId: SCENE_ID,
@@ -90,9 +114,10 @@ export const nodeTools = [
       radius: z.number().positive().optional(),
       x2: z.number().optional().describe('line end x, relative to position'),
       y2: z.number().optional().describe('line end y, relative to position'),
-      fill: COLOR.default('#58c4dd'),
+      fill: FILLABLE.default('#58c4dd').describe('"none" for an outline/ring'),
       stroke: COLOR.optional(),
       strokeWidth: z.number().min(0).default(4),
+      parentId: PARENT_ID,
     }),
     async handler(ctx, a) {
       const id = newId(a.shape)
@@ -104,7 +129,7 @@ export const nodeTools = [
           type: 'rect',
           width: a.width ?? 200,
           height: a.height ?? 120,
-          fill: a.fill,
+          ...(a.fill === 'none' ? {} : { fill: a.fill }),
           cornerRadius: 0,
           stroke: a.stroke,
           strokeWidth: a.strokeWidth,
@@ -115,7 +140,7 @@ export const nodeTools = [
           id,
           type: 'circle',
           radius: a.radius ?? 80,
-          fill: a.fill,
+          ...(a.fill === 'none' ? {} : { fill: a.fill }),
           stroke: a.stroke,
           strokeWidth: a.strokeWidth,
         }
@@ -126,12 +151,48 @@ export const nodeTools = [
           type: 'line',
           from: { x: 0, y: 0 },
           to: { x: a.x2 ?? 100, y: a.y2 ?? 0 },
-          stroke: a.stroke ?? a.fill,
+          // A line has no fill, so `none` must not become its colour.
+          stroke: a.stroke ?? (a.fill === 'none' ? '#58c4dd' : a.fill),
           strokeWidth: Math.max(1, a.strokeWidth),
         }
       }
-      await ctx.submit(a.projectId, [op.addNode(a.sceneId, node)])
-      return said(`created ${a.shape} node ${id}`, { nodeId: id })
+      await ctx.submit(a.projectId, [op.addNode(a.sceneId, node, a.parentId)])
+      return said(
+        `created ${a.shape} node ${id}${a.parentId ? ` inside ${a.parentId}` : ''}`,
+        { nodeId: id },
+      )
+    },
+  }),
+
+  capability({
+    name: 'add_group',
+    summary: 'Create a group; children move, rotate and scale with it.',
+    doc: [
+      'A container with its own position, rotation, scale and opacity. Anything created with `parentId` set to this group inherits that transform.',
+      '',
+      '**This is how you make one thing carry another.** A dot riding the end of a spinning radius is a group at the circle\'s centre, with the radius line and the dot inside it, and a single `animate` on the group\'s `rotation`. Without it the same motion is a keyframe per step with hand-computed cos/sin — a real run spent roughly 60% of its tool calls that way.',
+      '',
+      'Children\'s coordinates are **relative to the group\'s position**, so a dot at radius 200 sits at (200, 0) inside a group centred on the circle, whatever the group later does.',
+      '',
+      'Rotation is in radians and turns about the group\'s own position, so put the group where the pivot is. Groups nest.',
+    ].join('\n'),
+    args: z.object({
+      projectId: PROJECT_ID,
+      sceneId: SCENE_ID,
+      x: z.number().describe('the pivot: children rotate about this point'),
+      y: z.number(),
+      parentId: PARENT_ID,
+    }),
+    async handler(ctx, { projectId, sceneId, x, y, parentId }) {
+      const id = newId('grp')
+      await ctx.submit(projectId, [
+        op.addNode(sceneId, { ...baseNode({ x, y }), id, type: 'group', children: [] }, parentId),
+      ])
+      return said(
+        `created group ${id} at (${x}, ${y})${parentId ? ` inside ${parentId}` : ''} — ` +
+          `add children with parentId: "${id}", then animate ${id}.rotation to carry them`,
+        { nodeId: id },
+      )
     },
   }),
 
@@ -161,8 +222,9 @@ export const nodeTools = [
       strokeWidth: z.number().positive().default(4),
       closed: z.boolean().default(false),
       fill: COLOR.optional(),
+      parentId: PARENT_ID,
     }),
-    async handler(ctx, { projectId, sceneId, points, x, y, stroke, strokeWidth, closed, fill }) {
+    async handler(ctx, { projectId, sceneId, points, x, y, stroke, strokeWidth, closed, fill, parentId }) {
       const id = newId('path')
       await ctx.submit(projectId, [
         op.addNode(sceneId, {
@@ -174,7 +236,7 @@ export const nodeTools = [
           strokeWidth,
           closed,
           ...(fill ? { fill } : {}),
-        }),
+        }, parentId),
       ])
       return said(`created path node ${id} (${points.length} points)`, {
         nodeId: id,
@@ -216,6 +278,7 @@ export const nodeTools = [
       uniform: z.boolean().default(false).describe('equal px per unit on both axes'),
       stroke: COLOR.default('#58c4dd'),
       strokeWidth: z.number().positive().default(4),
+      parentId: PARENT_ID,
     }),
     async handler(ctx, a) {
       const hasRange = a.yMin !== undefined && a.yMax !== undefined
@@ -251,7 +314,7 @@ export const nodeTools = [
           stroke: a.stroke,
           strokeWidth: a.strokeWidth,
           closed: false,
-        }),
+        }, a.parentId),
       ])
 
       const [lo, hi] = plot.range

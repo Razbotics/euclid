@@ -364,6 +364,62 @@ for (const hostile of ['Math.random()', 'globalThis', 'x)+(1']) {
 }
 console.log('plot OK — mapping round-trips, y flipped for canvas, expression errors teach')
 
+// ---------- groups carry their children ----------
+// The hierarchy existed in the document and the renderer all along; nothing
+// exposed it, so run 5 keyframed an orbiting dot as 16 chords per revolution
+// and spent ~60% of its calls doing it. One animate on a group replaces that.
+const grpId = (await exec('add_group', { projectId, sceneId, x: 700, y: 540 }))
+  .match(/group (\S+)/)![1]!
+await exec('add_shape', {
+  projectId, sceneId, shape: 'circle', x: 200, y: 0, radius: 14, parentId: grpId,
+})
+const nested = JSON.parse(await exec('get_scene', { projectId, sceneId })) as {
+  nodes: { id: string; type: string; children?: { id: string; position: { x: number } }[] }[]
+}
+const grp = nested.nodes.find((n) => n.id === grpId)!
+assert.equal(grp.type, 'group')
+assert.equal(grp.children!.length, 1, 'parentId must nest the child, not add it to the scene root')
+assert.equal(grp.children![0]!.position.x, 200, "a child's coordinates stay relative to the group")
+assert.ok(
+  !nested.nodes.some((n) => n.id === grp.children![0]!.id),
+  'a nested child must not also appear at the scene root',
+)
+// A group is animatable like any node — that is the entire point.
+assert.match(
+  await exec('animate', {
+    projectId, sceneId, nodeId: grpId, property: 'rotation', to: 6.283, start: 0, duration: 5,
+  }),
+  /rotation/,
+  'a group rotates, carrying its children',
+)
+// Nested nodes stay addressable, or a child could never be edited again.
+assert.match(
+  await exec('update_node', {
+    projectId, sceneId, nodeId: grp.children![0]!.id, patch: { radius: 20 },
+  }),
+  /updated/,
+  'a child inside a group is still findable by id',
+)
+const badParent = await post('/api/agent/tools/add_shape/execute', {
+  projectId, sceneId, shape: 'circle', x: 0, y: 0, parentId: 'grp_nope',
+})
+assert.equal(badParent.status, 422, 'an unknown parent must be refused, not silently ignored')
+console.log('groups OK — children nest, inherit the transform, and stay addressable')
+
+// ---------- an unfilled shape is an outline, not a hole ----------
+// Filling with the background colour was the only way to get a ring, which
+// paints an opaque disc over whatever is behind it.
+const ringId = (await exec('add_shape', {
+  projectId, sceneId, shape: 'circle', x: 400, y: 400, radius: 90,
+  fill: 'none', stroke: '#5b6673', strokeWidth: 3,
+})).match(/node (\S+)/)![1]!
+const ring = (JSON.parse(await exec('get_scene', { projectId, sceneId })) as {
+  nodes: { id: string; fill?: string; stroke?: string }[]
+}).nodes.find((n) => n.id === ringId)!
+assert.equal(ring.fill, undefined, '"none" must omit the fill, not store a colour')
+assert.equal(ring.stroke, '#5b6673', 'the outline is still drawn')
+console.log('fill OK — "none" gives a real outline rather than a background-coloured disc')
+
 // ---------- assets ----------
 // Producers are server-side, so the fixture is uploaded the way TTS does it.
 const uploaded = JSON.parse(

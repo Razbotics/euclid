@@ -296,14 +296,19 @@ export class EuclidStage {
         g.clear()
         const w = p.width as number
         const h = p.height as number
-        g.roundRect(-w / 2, -h / 2, w, h, node.cornerRadius).fill(p.fill as string)
+        g.roundRect(-w / 2, -h / 2, w, h, node.cornerRadius)
+        // No fill means an outline, not a hole: filling with the background
+        // colour would occlude anything behind it and break on a non-flat
+        // background, which is what callers were forced to do before.
+        if (p.fill) g.fill(p.fill as string)
         if (node.stroke) g.stroke({ width: p.strokeWidth as number, color: p.stroke as string })
         return
       }
       case 'circle': {
         const g = item.content as Graphics
         g.clear()
-        g.circle(0, 0, p.radius as number).fill(p.fill as string)
+        g.circle(0, 0, p.radius as number)
+        if (p.fill) g.fill(p.fill as string)
         if (node.stroke) g.stroke({ width: p.strokeWidth as number, color: p.stroke as string })
         return
       }

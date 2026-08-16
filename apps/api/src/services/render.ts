@@ -74,7 +74,9 @@ export async function startRender(
 
   // TODO(render): push jobId onto a Cloudflare Queue consumed by the container
   // worker (apps/renderer). Until the queue is wired, run the renderer manually:
-  //   pnpm --filter @euclid/renderer render -- --project <id> --job <jobId>
+  //   pnpm --filter @euclid/renderer exec tsx src/render.ts --project <id> --job <jobId>
+  // (NOT `pnpm ... render -- --project`: pnpm forwards the `--` and node's
+  //  parseArgs rejects it as an unexpected positional.)
   // The worker then drives this job to done/failed (failure refunds the cost).
   return { jobId, cost, seconds, status: 'queued' }
 }

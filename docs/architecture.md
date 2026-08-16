@@ -104,6 +104,22 @@ simultaneous cross-fade is the muddy look being replaced. The provider seam
 keeps `getGlyphs` optional: a provider without it still renders correctly via
 the original cross-fade.
 
+## Grouping
+
+`group` nodes compose transforms the way any scene graph does: a child's
+coordinates are relative to its parent, so rotating a group carries everything
+inside it. This was in the document model and the renderer from the start, and
+for a long time nothing exposed it — milestone run 5 keyframed an orbiting dot
+as sixteen chords per revolution with hand-computed cos/sin, and reported it as
+"no transform hierarchy". The hierarchy was there; only the door was missing.
+`add_group` plus a `parentId` on every creator is that door, and it turns an
+orbit into a single `animate` on the group's rotation.
+
+Worth noting the shape of that failure, because it will recur: an agent cannot
+tell "the system cannot do this" from "the system does not offer this", and
+will design around the limit it infers. Errors are cheap — a wrong guess costs
+one retry — but an inference costs a whole approach.
+
 ## Curves
 
 A `path` node holds sampled points and draws them as one polyline. It exists
@@ -290,6 +306,13 @@ tile where the pixels actually are (the PNG cannot be asked — row filtering
 makes flat regions look like zeros) and reports it; an all-blank sheet is
 refused as a capture fault rather than handed to an agent that would read it
 as a broken video.
+
+## Shapes without fills
+
+`fill` is optional on rects and circles: omitted, the shape is an outline. It
+had been required, so a ring meant filling with the background colour — which
+paints an opaque disc that occludes whatever is behind it and stops working the
+moment a background is not flat. `add_shape` takes `fill: "none"` for this.
 
 ## Deleting a project
 

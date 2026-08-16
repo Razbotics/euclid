@@ -149,7 +149,9 @@ export interface RectNode extends NodeBase {
   type: 'rect'
   width: number
   height: number
-  fill: Color
+  /** Omitted = unfilled outline. Painting the background colour instead would
+   *  occlude whatever is behind it and break the moment a background is not flat. */
+  fill?: Color
   cornerRadius: number
   stroke?: Color
   strokeWidth: number
@@ -157,7 +159,8 @@ export interface RectNode extends NodeBase {
 export interface CircleNode extends NodeBase {
   type: 'circle'
   radius: number
-  fill: Color
+  /** Omitted = unfilled ring. See RectNode.fill. */
+  fill?: Color
   stroke?: Color
   strokeWidth: number
 }
@@ -228,7 +231,7 @@ export const NodeSchema: z.ZodType<EuclidNode> = z.lazy(() =>
       type: z.literal('rect'),
       width: z.number().positive(),
       height: z.number().positive(),
-      fill: ColorSchema,
+      fill: ColorSchema.optional(),
       cornerRadius: z.number().min(0),
       stroke: ColorSchema.optional(),
       strokeWidth: z.number().min(0),
@@ -237,7 +240,7 @@ export const NodeSchema: z.ZodType<EuclidNode> = z.lazy(() =>
       ...NodeBaseShape,
       type: z.literal('circle'),
       radius: z.number().positive(),
-      fill: ColorSchema,
+      fill: ColorSchema.optional(),
       stroke: ColorSchema.optional(),
       strokeWidth: z.number().min(0),
     }),

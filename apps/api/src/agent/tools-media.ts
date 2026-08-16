@@ -248,20 +248,39 @@ export const mediaTools = [
   capability({
     name: 'get_render_status',
     summary: 'Recent render jobs; a done job carries downloadUrl.',
-    doc: 'Free. Lists the last 20 jobs newest first. A `done` job carries `downloadUrl` for the MP4; a `failed` job has already had its credits refunded.',
+    doc: [
+      'Free. Lists the last 20 jobs newest first, with how long each has been in its current state.',
+      'A `done` job carries `downloadUrl` for the MP4; a `failed` job has already had its credits refunded.',
+      '',
+      '**A job sitting in `queued` may have nothing coming for it.** The render worker is driven by a queue that is not wired up in every environment, so `queued` means "accepted and priced", not "started". The age is shown for exactly this reason: minutes in `queued` with no `rendering` means no worker is draining it, and re-submitting will only spend credits again. Say so rather than waiting indefinitely.',
+    ].join('\n'),
     args: z.object({ projectId: PROJECT_ID }),
     async handler(ctx, { projectId }) {
       await ctx.requireProject(projectId)
       const jobs = await listRenderJobs(ctx.env, projectId, ctx.origin)
       if (jobs.length === 0) return said('no render jobs yet', { jobs: [] })
+      const now = Date.now()
+      const age = (ms: number) => {
+        const s = Math.max(0, Math.round((now - ms) / 1000))
+        return s < 90 ? `${s}s` : `${Math.round(s / 60)}m`
+      }
+      // A queued job that nothing is draining is indistinguishable from a busy
+      // one without this: run 5 waited ten minutes and then had to guess.
+      const stalled = jobs.filter((j) => j.status === 'queued' && now - j.created_at > 120_000)
       return said(
         jobs
           .map(
             (j) =>
-              `${j.id}  ${j.status}  ${j.cost} credits` +
+              `${j.id}  ${j.status.padEnd(9)} ${j.cost} credits  ${age(j.created_at)} old` +
               (j.downloadUrl ? `  ${j.downloadUrl}` : ''),
           )
-          .join('\n'),
+          .join('\n') +
+          (stalled.length
+            ? `\n\n${stalled.length} job(s) have been queued for minutes without starting. ` +
+              `That means no render worker is draining the queue, not that it is busy — ` +
+              `re-submitting would spend credits again for the same result. The document ` +
+              `is unaffected, and preview_frames shows the same frames the render would.`
+            : ''),
         { jobs },
       )
     },

@@ -113,7 +113,15 @@ export const animTools = [
   capability({
     name: 'write_on',
     summary: 'Draw-on reveal, like writing by hand. Node is invisible before `start`.',
-    doc: 'On a latex node the equation is revealed symbol by symbol in reading order; other node types use a sweeping mask. Only one write transition exists per node — calling again replaces it.',
+    doc: [
+      'How the reveal is drawn depends on the node, because one motion does not suit all three:',
+      '',
+      '- **latex** — symbol by symbol in reading order, so glyphs are never sliced mid-stroke.',
+      '- **path** — along the curve by **arc length**, like drawing it by hand. Note this is *not* uniform in x: on a sine curve the steep sections have more arc per unit x, so a path reveal paced against a linearly-advancing quantity drifts slightly. Match them by eye, or animate the other thing to the same easing.',
+      '- **everything else** — a mask sweeping left to right across the node.',
+      '',
+      'Only one write transition exists per node; calling again replaces it.',
+    ].join('\n'),
     args: z.object({
       projectId: PROJECT_ID,
       sceneId: SCENE_ID,

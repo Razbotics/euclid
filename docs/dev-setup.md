@@ -158,6 +158,20 @@ webhooks, claude.ai MCP later. The script writes `TUNNEL_ORIGIN` to
 `.env.local` so the worker trusts the origin. Quick tunnels get a **new URL
 every run** — re-run and re-paste after restarting.
 
+> **Gotcha:** `render_video` creates a `queued` job and **nothing drains the
+> queue in dev** — the Cloudflare Queue + Container consumer is deferred (see
+> plans/002). A job will sit in `queued` forever. Drive it by hand:
+>
+> ```sh
+> pnpm --filter @euclid/renderer exec tsx src/render.ts --project <id> --job <jobId>
+> ```
+>
+> Note the `exec tsx` form. `pnpm --filter … render -- --project` forwards the
+> `--` and node's `parseArgs` rejects it as an unexpected positional — the
+> command that used to be written in the code comment did not work.
+> `get_render_status` now shows each job's age and says so when one has been
+> queued for minutes.
+
 ## Verification tools (apps/renderer/src)
 
 | Script | What it proves |
