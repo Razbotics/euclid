@@ -29,7 +29,8 @@ files; this file tracks the big picture.
 - [x] Captions: SRT/VTT export, document-derived (upgrades to word-accurate when TTS lands)
 - [x] Renderer: mux narration audio into the MP4
 - [x] Run the milestone: agent builds the full video over MCP, export
-      downloads. **Five runs done** (see plans/002); run 5 was given only a
+      downloads. **Five runs done here** (see plans/002), and a sixth under
+      Phase 4 that used the depth primitives; run 5 was given only a
       subject and produced a 67s synchronised circle→wave explainer, rendered
       unattended now that the queue has a consumer.
       The *human tweaks in the editor* half is **deferred** (2026-08-16): five

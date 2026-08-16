@@ -351,13 +351,20 @@ the normal ops path.
 
 **On the deferred item.** The milestone was written assuming the valuable loop
 was agent-and-human-together: the agent builds, the human nudges, the change
-lands live. Five runs in, that is not where the value has been. Every quality
-improvement across runs 1–5 came from the *agent* being able to check its own
+lands live. Six runs in, that is not where the value has been. Every quality
+improvement across runs 1–6 came from the *agent* being able to check its own
 work — `preview_frames`, word-level narration timings, the primitives added
 after a run showed they were missing — and none came from a human editing
 mid-build. The mechanism for it exists and is verified at a lower level:
 `check-live.ts` proves an external op reaches the open editor over the
 WebSocket, so this is an unproven *workflow*, not an unproven capability.
+
+**Run 6 (2026-08-16)** is recorded in
+[plans/006](006-animation-depth.md#milestone-run-6-2026-08-16-did-the-depth-work-earn-its-place)
+rather than here, because its subject was the depth primitives rather than the
+pipeline. It says the same thing about this item: the run's one composition
+error was caught by the agent looking at a contact sheet, and a human editing
+mid-build would have had nothing to add.
 
 Deferred rather than dropped, and cheap to pick up: the ops path, the live
 sync and the editor's inspector all already work. What is missing is a run

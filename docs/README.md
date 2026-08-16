@@ -15,7 +15,7 @@ Two kinds of content live here:
   ```
   ## Phase 2: TTS pipeline   (status: in progress)
   - [x] TTS adapter interface
-  - [ ] OpenAI provider with word timestamps
+  - [ ] Provider with word timestamps
   ```
 
   Mark tasks `[x]` as they land (same commit as the work when possible).
@@ -40,5 +40,6 @@ Two kinds of content live here:
 | [plans/003-general-video.md](plans/003-general-video.md) | **Product direction**: general video — assets, reels, ingest |
 | [plans/004-desktop.md](plans/004-desktop.md) | Desktop app: the case, costs, and why not yet |
 | [plans/005-agent-questions.md](plans/005-agent-questions.md) | The agent asks the human instead of deciding alone |
-| [plans/006-animation-depth.md](plans/006-animation-depth.md) | Camera, structured primitives, pseudo-3D — **deferred**, superseded by 007 |
-| [plans/007-agent-sight.md](plans/007-agent-sight.md) | **Active**: `preview_frames` — the agent can't see what it makes |
+| [plans/006-animation-depth.md](plans/006-animation-depth.md) | **Done**: camera, structured primitives, pseudo-3D, flows — plus milestone run 6, which used all four |
+| [plans/007-agent-sight.md](plans/007-agent-sight.md) | Agent sight: `preview_frames`. Shipped; only its deployment is still local |
+| [plans/008-mcp-gateway.md](plans/008-mcp-gateway.md) | **Done**: the agent gateway — a capability catalog behind five fixed MCP tools |

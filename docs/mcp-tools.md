@@ -67,9 +67,10 @@ shape as `remove_asset`'s `force`.
   out larger than the canvas. `get_project` prints it as `cam@(x,y) zoom=…`,
   because a framing that hides half the scene makes every coordinate in the
   outline misleading otherwise.
-- Connections are **anchored, not positioned**: `connect` takes node ids and
-  the arrow recomputes its endpoints every frame, stopping at the edge of what
-  it points at. `flow_along` rides a path by arc length and overrides the
+- Connections are **anchored, not positioned**: `connect` takes node ids — or
+  one part of a grid, `{"node":"tok_x","cells":{"cols":2}}` — and the arrow
+  recomputes its endpoints every frame, stopping at the edge of what it points
+  at. `flow_along` rides a path by arc length and overrides the
   node's position from `start` onward — the one place a transition beats a
   track, which the response says out loud.
 - A node can step **out of the world**: `pin_to_frame` makes it ignore the

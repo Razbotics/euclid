@@ -1,4 +1,4 @@
-# 007 — Agent sight: preview frames over MCP (status: built, unproven in a run)
+# 007 — Agent sight: preview frames over MCP (status: done — proven in runs 4, 5 and 6; only its deployment is still local)
 
 Direction decided 2026-08-15 (after the third milestone run): the agent
 cannot see what it makes. This **supersedes**

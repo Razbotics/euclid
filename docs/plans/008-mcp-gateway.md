@@ -1,4 +1,4 @@
-# 008 — MCP as a generic gateway over an agent API (status: in progress)
+# 008 — MCP as a generic gateway over an agent API (status: done)
 
 ## The problem being solved
 
