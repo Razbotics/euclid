@@ -37,7 +37,7 @@ part, and that is exactly what the agent cannot do.
 
 ## Why this outranks vertical depth
 
-The launch phase ([Phase 5](000-roadmap.md), moved last on 2026-08-15) is
+The launch phase ([000-roadmap.md](000-roadmap.md), moved last on 2026-08-15) is
 claude.ai connecting over MCP OAuth. **That agent has no shell**: it cannot
 run `tsx`, cannot run `ffmpeg`, cannot decode an MP4. Its only feedback
 channel is text. Every visual primitive we have shipped was validated by a
@@ -146,6 +146,12 @@ no equivalent.
 proposes verifying pseudo-3D "by screenshot at several camera angles" — the
 capability this plan builds, which it assumed was free because a human had a
 shell.
+
+> **Settled 2026-08-16.** That prediction held: once this plan shipped, 006's
+> precondition was met and it was promoted back to the phase *ahead* of
+> general video. "Early, not wrong" turned out to be the right call, and the
+> thing that unblocked it was exactly the capability named in the sentence
+> above.
 
 Returning the direction to [plans/003](003-general-video.md) also lines up
 technically rather than merely strategically:

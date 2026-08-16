@@ -83,7 +83,7 @@ outweighs bundle size.
 
 ## Timing — do not start yet
 
-The strongest argument (local media) is a Phase 4 concern. Starting a shell
+The strongest argument (local media) is a general-video concern. Starting a shell
 mid-Phase-2 would be premature, and the WebCodecs work in
 [plans/003](003-general-video.md) is required under either future.
 

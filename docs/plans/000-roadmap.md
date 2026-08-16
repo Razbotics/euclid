@@ -23,7 +23,7 @@ files; this file tracks the big picture.
 - [x] Silent MP4 export verified end-to-end (animation confirmed in the file, not just a file produced)
 - [x] Close the render job loop: R2 upload, job status, download URL, refund on failure
 - [x] Asset registry (`assets` table + routes) — prerequisite for narration
-      audio; also the Phase 4 "assets as first-class" down payment
+      audio; also the general-video phase's "assets as first-class" down payment
 - [x] TTS adapter interface + ElevenLabs provider (word timestamps)
 - [x] Narration audio in R2, wordTimings into the doc
 - [x] Captions: SRT/VTT export, document-derived (upgrades to word-accurate when TTS lands)
@@ -82,12 +82,48 @@ Preview frames are only trustworthy because of the purity invariant: a
 preview frame is not an approximation of the export, it *is* the export.
 Building an independent capture path would trade that away.
 
-## Phase 4: General video → plans/003-general-video.md
-Reinstated as the product direction 2026-08-15. It was briefly superseded by
-the animation-depth plan; the third run showed the binding constraint is not
-the visual vocabulary but verification, which is platform work rather than
-vertical work. Phase 4 rides on this plan's capture rework: WebCodecs removes
-the `page.screenshot()` round-trip, and asset proxies/thumbnails are the same
+## Phase 4: Animation depth → plans/006-animation-depth.md
+Promoted out of deferral 2026-08-16. It was parked because its own
+verification step — "verify by screenshot at several camera angles" — assumed
+a capability that did not exist, and because the binding constraint looked
+like verification rather than visual vocabulary. Both premises have since
+changed: Phase 3 shipped that capability, and five milestone runs have spent
+their friction on *missing primitives* rather than on not being able to check
+the output. Run 5 spent roughly 60% of its calls hand-rolling motion the scene
+graph could have carried.
+
+Ordered ahead of general video deliberately. Depth is work on the vertical
+that already produces watchable videos, where each addition is checkable in
+about a second; general video is a larger bet whose first item is a rights
+decision. Doing the cheap, verifiable one first is not a change of direction —
+plans/003 keeps its analysis and its place.
+
+What already landed changes the shape of the remaining work: `add_group` gives
+a real transform hierarchy, `path` + `plot_function` did the graph half, and
+arc-length `write_on` is the beginning of path-following.
+- [ ] Camera on the scene (position/zoom/rotation), animated by ordinary tracks
+      — a scene-level transform, now that per-node grouping exists
+- [ ] Structured primitives: `matrix`, `tokens`, cell-level addressing
+- [ ] Generalise stagger + element matching out of the glyph work in 002
+- [ ] Flows: arrows anchored to nodes, path-following along a `path`
+- [ ] Axes, ticks and labels — the rest of the graph story `plot_function`
+      started; hand-built today
+- [ ] Code-block primitive with line-highlight animations
+- [ ] Pseudo-3D by projection: optional `z`, camera yaw/pitch, depth cues.
+      Last on purpose — the pseudo-3D-by-projection analysis in plans/006
+      stands unchanged, but it is the least certain to earn its place
+
+Done already, and kept here because it is the same plan: matched-glyph LaTeX
+morphing, and the `path`/`plot_function` half of the graph primitives.
+
+## Phase 5: General video → plans/003-general-video.md
+Reinstated as the product direction 2026-08-15, and now sequenced after
+animation depth (2026-08-16) rather than before it — the verification argument
+that promoted it has been satisfied, and depth is the cheaper, more checkable
+work. The direction is unchanged; only the order is.
+
+This phase rides on the capture rework agent sight began: WebCodecs removes the
+`page.screenshot()` round-trip, and asset proxies/thumbnails are the same
 capability as a document contact sheet.
 - [ ] Replace per-frame screenshot capture with WebCodecs (wins on the current path too)
 - [x] Assets as first-class (registry) — done in Phase 2; proxies/thumbnails still to do
@@ -97,7 +133,7 @@ capability as a document contact sheet.
 - [ ] Decide the rights/ToS model **before** building the ingest fetcher
 - [ ] Narration-anchored animation (sync to word timestamps)
 
-## Phase 5: Real users — launch, and deliberately last
+## Phase 6: Real users — launch, and deliberately last
 Moved to the end 2026-08-15. Auth, billing UI and a production deploy are
 the work that only pays off once there is something worth signing up for,
 and every hour spent on them is an hour not spent on the thing being sold.
@@ -150,29 +186,3 @@ local rendering inverts the cost model. Revisit when the general-video
 direction is confirmed, container render cost becomes a constraint, or users
 prove unwilling to upload source footage.
 
-## Deferred: Complex animation and depth → plans/006-animation-depth.md
-Superseded as the active direction by Phase 4, **not** abandoned — the
-pseudo-3D-by-projection analysis stands unchanged and is still the right
-answer whenever depth is picked up. Deferred because the plan's own
-verification step ("verify by screenshot at several camera angles") assumes
-the capability Phase 4 builds. Everything already shipped for the vertical
-keeps its value; what stops is *new* vertical investment until the agent can
-check its own output.
-- [ ] Camera on the scene (position/zoom/rotation), animated by ordinary tracks
-- [ ] Structured primitives: `matrix`, `tokens`, cell-level addressing
-- [ ] Generalise stagger + element matching out of the glyph work in 002
-- [ ] Pseudo-3D by projection: optional `z`, camera yaw/pitch, depth cues
-- [ ] Flows: arrows anchored to nodes, path-following
-
-## Deferred: Vertical depth (folded into the animation-depth plan)
-- [x] Matched-glyph LaTeX morphing (upgrade inside texMorph seam)
-- [~] Graphs/axes/function-plot primitives — `path` node with arc-length
-      write-on and `plot_function` both shipped 2026-08-16 (run 4 spent ~20
-      calls and 9 nodes on one parabola). `plot_function` owns the
-      domain→canvas mapping, which is where run 4's cost actually was, and
-      reports the transform back so a point placed on the curve lands on it.
-      Axes, ticks and labels are still hand-built — worth doing only once a
-      run shows what they should look like. Grouping (`add_group` + `parentId`)
-      exposed 2026-08-16 after run 5 spent ~60% of its calls keyframing an
-      orbit the scene graph could always have carried
-- [ ] Code-block primitive with line-highlight animations

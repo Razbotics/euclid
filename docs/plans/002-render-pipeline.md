@@ -57,7 +57,7 @@ ever resolved an assetId to bytes.
 ### 3a. Asset registry (status: done — blocks everything below)
 There was no asset storage layer. `schema.sql` had no `assets` table and the
 API had no asset route; the R2 `ASSETS` binding was used only for `renders/`
-keys. Built general rather than narration-shaped because Phase 4 of the
+keys. Built general rather than narration-shaped because the general-video phase of the
 roadmap lists "assets as first-class" anyway — same work, no migration later.
 
 - [x] `assets` table: `id, project_id, kind, r2_key, mime, bytes,
@@ -188,7 +188,7 @@ needs no schema change.
 
 **Word-level timestamps are the selection criterion** for the provider, not
 voice quality. Timestamps are what later allow animations to anchor to
-narration beats (Phase 4 of the roadmap). Put the provider behind the adapter
+narration beats (the general-video phase of the roadmap). Put the provider behind the adapter
 so the choice stays reversible.
 
 **Provider: ElevenLabs** — `POST /v1/text-to-speech/{voice_id}/with-timestamps`.
@@ -244,7 +244,7 @@ next scene's cue began at `1.00` — **two subtitles on screen at once**.
 `clampToScene` in `packages/dsl/src/captions.ts` now trims cues to the scene
 boundary and drops any that start beyond it; `smoke-captions.ts` guards it.
 
-Phase 4 inherits the same question for audio: the mux must decide whether
+The general-video phase inherits the same question for audio: the mux must decide whether
 overrunning narration is cut at the scene boundary or allowed to bleed over
 the next scene's frames. Captions now assume the former.
 
@@ -362,7 +362,7 @@ WebSocket, so this is an unproven *workflow*, not an unproven capability.
 Deferred rather than dropped, and cheap to pick up: the ops path, the live
 sync and the editor's inspector all already work. What is missing is a run
 that actually does it, and a reason to want one. The likely reason is a real
-user who cannot express what they want in a sentence — which is a Phase 5
+user who cannot express what they want in a sentence — which is a launch-phase
 question, not a pipeline question.
 
 ### The run (2026-08-15)

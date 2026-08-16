@@ -1,13 +1,28 @@
-# 006 — Complex animation and depth (status: deferred)
+# 006 — Complex animation and depth (status: next — Phase 4)
 
-> **Superseded as the active direction on 2026-08-15** by
-> [plans/007](007-agent-sight.md), which returns the product direction to
-> [plans/003](003-general-video.md). Deferred, not abandoned: the analysis
-> below stands unchanged, and the pseudo-3D-by-projection argument is still
-> the right answer whenever depth is picked up. The reason for the switch is
-> that this plan's own verification step ("verify by screenshot at several
-> camera angles") assumes a capability the agent does not have — see 007
-> under "What this replaces, and why".
+> **Deferred 2026-08-15, promoted back 2026-08-16.** It was parked for one
+> stated reason: this plan's own verification step — "verify by screenshot at
+> several camera angles" — assumed a capability the agent did not have, and
+> [plans/007](007-agent-sight.md) argued the binding constraint was
+> verification rather than visual vocabulary.
+>
+> Both premises have since changed. 007 shipped: an agent can capture labelled
+> frames of its own work in about a second, so "verify by screenshot at several
+> camera angles" is now a thing it can actually do. And five milestone runs
+> have since spent their friction on *missing primitives* rather than on being
+> unable to check output — run 5 spent roughly 60% of its calls hand-rolling
+> motion the scene graph could have carried. The deferral did its job and its
+> precondition is met.
+>
+> It is now sequenced **ahead of** [plans/003](003-general-video.md), which
+> keeps its analysis and its place in the queue. Depth is work on a vertical
+> that already produces watchable videos and is checkable in a second; general
+> video is a larger bet whose first item is a rights decision.
+>
+> What landed while this was parked changes the shape of the work below:
+> `add_group` gives a real transform hierarchy (a camera is a scene-level
+> version of it), `path` and `plot_function` did the graph half, and
+> arc-length `write_on` is the start of path-following.
 
 Direction decided 2026-08-15: go deep on the vertical rather than wide across
 video. This superseded [plans/003](003-general-video.md) as the active

@@ -45,7 +45,7 @@ The MCP worker never changes again.
   mid-thread may hold a stale `describe` in context; stamp responses with a
   catalog revision and have validation errors say when the schema moved.
 - **Phase 3 & 5 get cheaper.** `preview_frames` becomes a catalog entry, not
-  a new tool. OAuth (Phase 5) wires through 3 stable tools instead of 26.
+  a new tool. OAuth (the launch phase) wires through 3 stable tools instead of 26.
 - **Purity is preserved.** The intent logic imports only `@euclid/dsl` and
   the pure `@euclid/engine` sampler (`resolveNode`) — no Pixi — so it moves
   into the API worker without touching the workers-must-not-import-Pixi rule.
@@ -88,7 +88,7 @@ the 60s milestone through the gateway and comparing friction.
 
 **Out of scope for `execute`: binary upload.** Tool args are JSON; base64
 audio/video through an LLM context is a non-starter. Asset byte upload stays
-a plain REST endpoint (its producers are server-side today anyway; Phase 4
+a plain REST endpoint (its producers are server-side today anyway; general-video
 ingest passes URLs, not bytes).
 
 **Escape hatch that de-risks everything:** the catalog (name, summary, doc,

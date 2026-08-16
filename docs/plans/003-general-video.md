@@ -1,4 +1,9 @@
-# 003 — General video: assets, clips, reels (status: next — Phase 4)
+# 003 — General video: assets, clips, reels (status: queued — Phase 5)
+
+Sequenced after animation depth (plans/006) as of 2026-08-16: the argument
+that put general video first was that verification, not visual vocabulary, was
+the binding constraint — and Phase 3 settled verification. The analysis below
+is unchanged; only its place in the queue is.
 
 > **Reinstated as the product direction on 2026-08-15.** It was superseded
 > briefly by [plans/006](006-animation-depth.md) (depth in the math vertical
