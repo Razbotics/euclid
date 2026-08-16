@@ -369,3 +369,73 @@ One problem at a time: make the math vertical genuinely good, then widen.
 Work already done under 003 keeps its value either way — the WebCodecs
 benchmark, the container's codec findings, and the asset registry from 002
 are all prerequisites for general video whenever it resumes.
+
+## Milestone run 6 (2026-08-16) — did the depth work earn its place?
+
+The first run to use all four phases. Subject: **attention**, which is this
+plan's stated target vocabulary. Five scenes, 56.8s, narrated, rendered:
+`attention.mp4`, h264 1920x1080@60 with AAC, 69 credits (12 TTS + 57 render).
+Built entirely through the MCP gateway, starting from `instructions` with no
+shortcuts into the codebase.
+
+**The answer is yes, with caveats.** A token strip, two labelled matrices, two
+curved connectors between them and per-cell emphasis took about ten calls in
+scene 3; the same diagram hand-placed is dozens of nodes whose ids the caller
+tracks and whose alignment breaks when a font size changes. Run 5 spent roughly
+60% of its calls hand-rolling motion the scene graph could have carried — this
+run spent none. Nothing was hand-rolled, and no `check-*` script was needed:
+`preview_frames` caught the one composition error (a camera push-in clipping
+the equation) in a single call.
+
+Scene 2 is the honest test of pseudo-3D: an embedding space with axes, a
+12-point cloud and a vector, orbited 75° under the narration. It reads as a
+space rather than as a drawing, which is what the depth cues were for. Whether
+it was *necessary* is a different question — the same idea survives in 2D, and
+this is one scene of five.
+
+### What the run found
+
+1. **[FIXED] `instructions` said "You cannot see the video."** Stale since
+   plans/007 shipped, and it sits two lines under `preview_frames` in the same
+   block. An agent that believes it will not look. This is the single most
+   valuable finding of the run and the cheapest to fix.
+2. **No way to exempt a node from the 3D world.** In a scene with yaw or pitch,
+   *every* root node is projected — including flat labels. The "cat" chip and
+   its path drift and grow through the orbit, because they really are at z=0 in
+   a world being turned. Correct, and not what an author wants for a caption.
+   manim has `add_fixed_in_frame_mobjects`; the equivalent here is a `fixed`
+   flag that skips projection.
+3. **`connect` cannot anchor to a cell.** Cell addressing exists for
+   `highlight` but not for anchors, so six per-token arrows in scene 5 needed
+   six proxy circles to point at. The natural call is
+   `connect(from: {node: tok, cells: {cols: 1}})`.
+4. **[FIXED] The outline said nothing about what an arrow connects.** `arrow arw_851d
+   @(0,0)` — its position is meaningless and its endpoints, which are its
+   entire identity, are missing.
+5. **[FIXED] `fit_scene_to_narration` silently orphaned effects.** It shortened three of
+   five scenes below the end of an existing effect; the scene-2 orbit lost
+   1.6s of its 9.5s and would never have completed on screen. Nothing warned —
+   it was caught by arithmetic, and would otherwise have shipped. The tool
+   knows both numbers and should say so, in the same voice as the `update_node`
+   traps.
+
+Friction that was *not* a problem: one wrong argument name (`text` for
+`narrationText`), corrected from one `describe`. No failure loops, and no
+capability was missing outright.
+
+### Fixed the same day (1, 4, 5)
+
+- `instructions` now opens SEEING YOUR WORK with "You CAN see it" and tells the
+  agent to use `preview_frames` while building. Its ORIENTATION also lists the
+  structured primitives, which it had never mentioned — a run that does not
+  know `matrix` exists builds one out of nine latex nodes.
+- The outline prints an arrow as `arrow arw_x @(0,0) dot → (800,400)`.
+- `effectsPastEnd(scene, duration)` in `packages/dsl` finds every transition,
+  node track and **camera track** that would finish after a given duration, and
+  both doors into that trap — `fit_scene_to_narration` and `update_scene` —
+  name what they cut, worst first. The camera track is the one that got through
+  the run: a scene-level effect with no node to notice it under.
+
+2 and 3 are design changes and remain open: a `fixed` flag to keep a caption
+out of the orbited world, and cell-level anchors so `connect` can point at one
+token rather than a whole strip.

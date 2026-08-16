@@ -124,6 +124,21 @@ tell "the system cannot do this" from "the system does not offer this", and
 will design around the limit it infers. Errors are cheap — a wrong guess costs
 one retry — but an inference costs a whole approach.
 
+## Shortening a scene truncates, it does not break
+
+Nothing is deleted when a scene shrinks — keyframes past the new end simply
+stop being reached. That makes it one of the quietest traps in the system: the
+effect is cut off at the boundary and every frame still looks plausible.
+Milestone run 6 lost 1.6s off the end of a 9.5s camera orbit to
+`fit_scene_to_narration` and caught it by arithmetic, not by anything the
+system said.
+
+`effectsPastEnd(scene, duration)` in `packages/dsl` answers it: every
+transition, node track and camera track finishing after a given duration.
+Both doors — `fit_scene_to_narration` and `update_scene` — now name what they
+cut, worst overrun first. The camera track is the case that got through, being
+a scene-level effect with no node to notice it under.
+
 ## Flows: anchored arrows and path following
 
 An `arrow` node holds **node ids**, not coordinates. Its endpoints are

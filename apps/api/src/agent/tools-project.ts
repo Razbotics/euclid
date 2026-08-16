@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { newId, op, outlineDoc } from '@euclid/dsl'
+import { effectsPastEnd, formatOverruns, newId, op, outlineDoc } from '@euclid/dsl'
 import { createProject, deleteProject, listProjects, projectContents } from '../services/projects'
 import { PROJECT_ID, SCENE_ID, COLOR } from './schemas'
 import { capability, said, CapabilityError } from './types'
@@ -123,7 +123,7 @@ export const projectTools = [
   capability({
     name: 'update_scene',
     summary: "Patch a scene's name, duration or background.",
-    doc: 'Extending `duration` is the usual fix when generate_narration reports that speech overruns the scene. Shortening a scene does not delete anything — nodes and keyframes past the new end simply stop being reached.',
+    doc: 'Extending `duration` is the usual fix when generate_narration reports that speech overruns the scene. Shortening a scene does not delete anything — nodes and keyframes past the new end simply stop being reached, which means an animation still running at the old end is silently truncated and every frame still looks plausible. The response names anything a shorter duration cuts.',
     args: z.object({
       projectId: PROJECT_ID,
       sceneId: SCENE_ID,
@@ -139,9 +139,18 @@ export const projectTools = [
         throw new CapabilityError('nothing to update — pass at least one of name, duration, background')
       }
       const { doc } = await ctx.getDoc(projectId)
-      ctx.sceneOrThrow(doc, sceneId)
+      const scene = ctx.sceneOrThrow(doc, sceneId)
+      // Only a shorter scene can orphan anything; a longer one just adds air.
+      const cut =
+        duration !== undefined && duration < scene.duration
+          ? effectsPastEnd(scene, duration)
+          : []
       await ctx.submit(projectId, [op.updateScene(sceneId, patch)])
-      return said(`updated scene ${sceneId}: ${JSON.stringify(patch)}`, { sceneId, patch })
+      return said(
+        `updated scene ${sceneId}: ${JSON.stringify(patch)}` +
+          (duration !== undefined ? formatOverruns(cut, duration) : ''),
+        { sceneId, patch, cut },
+      )
     },
   }),
 ]

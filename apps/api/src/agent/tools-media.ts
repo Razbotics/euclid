@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import {
+  effectsPastEnd,
+  formatOverruns,
   buildAssetTree,
   documentCues,
   op,
@@ -84,7 +86,11 @@ export const mediaTools = [
   capability({
     name: 'fit_scene_to_narration',
     summary: 'Set a scene\'s duration to its speech plus a held tail.',
-    doc: 'Free. The one-call fix for the dead air get_project flags as `(long)`, and for speech that overruns its scene. The tail is deliberate breathing room — pass more for a beat you want to land, less to keep things tight. Requires generated narration, since it needs the real audio duration.',
+    doc: [
+      'Free. The one-call fix for the dead air get_project flags as `(long)`, and for speech that overruns its scene. The tail is deliberate breathing room — pass more for a beat you want to land, less to keep things tight. Requires generated narration, since it needs the real audio duration.',
+      '',
+      '**Shortening a scene truncates whatever was still running at the old end** — an animation or a camera move past the new end simply never finishes on screen, and every frame still looks plausible, so it is easy to ship. The response names anything this cuts; re-time those effects, or fit again with a longer tail.',
+    ].join('\n'),
     args: z.object({
       projectId: PROJECT_ID,
       sceneId: SCENE_ID,
@@ -106,11 +112,15 @@ export const mediaTools = [
         )
       }
       const duration = Math.round((audio.durationSec + tailSec) * 100) / 100
+      // Read the overruns before submitting: the question is what the *new*
+      // duration cuts, and the scene in hand is the one that still has them.
+      const cut = effectsPastEnd(scene, duration)
       await ctx.submit(projectId, [op.updateScene(sceneId, { duration })])
       return said(
         `scene ${sceneId}: ${scene.duration}s → ${duration}s ` +
-          `(${audio.durationSec.toFixed(2)}s speech + ${tailSec}s tail)`,
-        { sceneId, was: scene.duration, duration, speechSec: audio.durationSec, tailSec },
+          `(${audio.durationSec.toFixed(2)}s speech + ${tailSec}s tail)` +
+          formatOverruns(cut, duration),
+        { sceneId, was: scene.duration, duration, speechSec: audio.durationSec, tailSec, cut },
       )
     },
   }),

@@ -3,6 +3,8 @@ import assert from 'node:assert'
 import {
   applyOps,
   cellCenter,
+  effectsPastEnd,
+  formatOverruns,
   edgePoint,
   nodeExtent,
   cellsInRange,
@@ -776,6 +778,67 @@ assert.ok(
   keyMoments(flows).some((m) => m.kind === 'follow'),
   'a flow is a key moment — mid-flight is the frame worth seeing',
 )
+
+
+// ---------- what a shorter scene would orphan ----------
+// Milestone run 6 lost 1.6s off the end of a 9.5s camera orbit to
+// fit_scene_to_narration and caught it by arithmetic. Nothing said a word: the
+// effect is truncated at the scene boundary, so every frame still looks
+// plausible. This is the check that lets the tools say it.
+const overrun = applyOps(emptyDoc('ov', 'Overrun'), [
+  op.addScene({ id: 'o1', name: 'S', duration: 14, background: '#101418', nodes: [] }),
+  op.addNode('o1', {
+    id: 'dot', type: 'circle', radius: 20, fill: '#ffffff', strokeWidth: 0,
+    position: { x: 100, y: 100 }, scale: 1, rotation: 0, opacity: 1,
+    tracks: [{ property: 'position', keyframes: [
+      { t: 0, value: { x: 100, y: 100 }, easing: 'linear' },
+      { t: 9, value: { x: 900, y: 100 }, easing: 'smooth' },
+    ] }],
+    transitions: [{ type: 'write', start: 0, duration: 2 }],
+  }),
+  op.setCamera('o1', {
+    ...defaultCamera(canvas),
+    tracks: [{ property: 'yaw', keyframes: [
+      { t: 3.4, value: 0, easing: 'linear' },
+      { t: 12.9, value: 1.31, easing: 'smooth' },
+    ] }],
+  }),
+])
+const scene = overrun.scenes[0]!
+assert.deepEqual(effectsPastEnd(scene, 14), [], 'nothing overruns the scene it was built for')
+const cutAt12 = effectsPastEnd(scene, 12.42)
+assert.deepEqual(
+  cutAt12.map((c) => `${c.owner} ${c.what}`),
+  ['camera camera yaw'],
+  'fitting to 12.42s cuts the orbit — and only the orbit',
+)
+assert.equal(cutAt12[0]!.endsAt, 12.9)
+// A scene-level camera track has no node to notice it under, which is exactly
+// why it was the one that got through.
+const cutHard = effectsPastEnd(scene, 5)
+assert.deepEqual(
+  cutHard.map((c) => `${c.owner} ${c.what}`),
+  ['camera camera yaw', 'dot track position'],
+  'a harder cut takes the node track too, worst overrun first',
+)
+assert.equal(effectsPastEnd(scene, 1).length, 3, 'and eventually the write as well')
+assert.equal(formatOverruns([], 10), '', 'no overruns, no warning')
+assert.match(
+  formatOverruns(cutAt12, 12.42),
+  /WARNING: 1 effect now runs past the 12\.42s end/,
+  'the warning names the count and the deadline',
+)
+assert.match(formatOverruns(cutAt12, 12.42), /camera camera yaw ends 12\.90s/, 'and what is cut')
+
+// An arrow's identity is its endpoints, so the outline has to carry them.
+const linked = applyOps(overrun, [
+  op.addNode('o1', {
+    id: 'arw', type: 'arrow', from: { node: 'dot' }, to: { at: { x: 800, y: 400 } },
+    stroke: '#c9ced4', strokeWidth: 4, headSize: 20, curve: 0, gap: 8,
+    position: { x: 0, y: 0 }, scale: 1, rotation: 0, opacity: 1, tracks: [], transitions: [],
+  }),
+])
+assert.match(outlineDoc(linked), /arrow arw @\(0,0\) dot → \(800,400\)/, 'the outline names both ends')
 
 console.log(
   'smoke OK — reducer, sampler, morph resolution, key moments, camera framing, ' +

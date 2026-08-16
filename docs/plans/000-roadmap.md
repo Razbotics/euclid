@@ -141,6 +141,17 @@ arc-length `write_on` is the beginning of path-following.
 Done already, and kept here because it is the same plan: matched-glyph LaTeX
 morphing, and the `path`/`plot_function` half of the graph primitives.
 
+**Milestone run 6 (2026-08-16)** used all four phases end to end: a 56.8s
+narrated explainer of attention, rendered, 69 credits. The primitives carried
+it — nothing was hand-rolled and `preview_frames` caught the one composition
+error — so the depth work earns its place. It also found five gaps, listed in
+plans/006. Three are fixed: the `instructions` block had still been telling
+agents "You cannot see the video" two lines under `preview_frames`; the outline
+never said what an arrow connected; and shortening a scene silently truncated
+whatever was still running, which cost the run 1.6s of a camera orbit. Two
+remain open — a `fixed` flag to keep a caption out of the orbited world, and
+cell-level anchors for `connect`.
+
 ## Phase 5: General video → plans/003-general-video.md
 Reinstated as the product direction 2026-08-15, and now sequenced after
 animation depth (2026-08-16) rather than before it — the verification argument

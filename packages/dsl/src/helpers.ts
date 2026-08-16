@@ -77,6 +77,65 @@ export function defaultCamera(canvas: Canvas): Camera {
  */
 export const DEFAULT_CAMERA_DISTANCE = 2000
 
+/** An effect that would run past a scene's end — see `effectsPastEnd`. */
+export interface OverrunningEffect {
+  /** Node id, or 'camera' for a camera track. */
+  owner: string
+  /** `write`, `texMorph`, `track position`, `camera yaw`… */
+  what: string
+  /** Scene-local second the effect finishes at. */
+  endsAt: number
+}
+
+/**
+ * Effects that finish after `duration` — what shortening a scene would orphan.
+ *
+ * Nothing is deleted when a scene shrinks: keyframes past the new end simply
+ * stop being reached, so an effect is truncated rather than broken and every
+ * frame still looks plausible. Milestone run 6 lost 1.6s off the end of a 9.5s
+ * camera orbit that way, to `fit_scene_to_narration`, and caught it by
+ * arithmetic rather than by anything the system said. This is what lets the
+ * tools say it instead.
+ */
+export function effectsPastEnd(scene: Scene, duration: number): OverrunningEffect[] {
+  const out: OverrunningEffect[] = []
+  const walk = (nodes: EuclidNode[]): void => {
+    for (const n of nodes) {
+      for (const tr of n.transitions) {
+        const endsAt = tr.start + tr.duration
+        if (endsAt > duration) out.push({ owner: n.id, what: tr.type, endsAt })
+      }
+      for (const t of n.tracks) {
+        const endsAt = t.keyframes[t.keyframes.length - 1]?.t ?? 0
+        if (endsAt > duration) out.push({ owner: n.id, what: `track ${t.property}`, endsAt })
+      }
+      if (n.type === 'group') walk(n.children)
+    }
+  }
+  walk(scene.nodes)
+  // The camera is the one that bit hardest: an orbit is a scene-level effect
+  // with no node to notice it under.
+  for (const t of scene.camera?.tracks ?? []) {
+    const endsAt = t.keyframes[t.keyframes.length - 1]?.t ?? 0
+    if (endsAt > duration) out.push({ owner: 'camera', what: `camera ${t.property}`, endsAt })
+  }
+  return out.sort((a, b) => b.endsAt - a.endsAt)
+}
+
+/** One line naming what would be cut, for a tool response. */
+export function formatOverruns(cut: OverrunningEffect[], duration: number): string {
+  if (cut.length === 0) return ''
+  const worst = cut
+    .slice(0, 3)
+    .map((c) => `${c.owner} ${c.what} ends ${c.endsAt.toFixed(2)}s`)
+    .join(', ')
+  return (
+    ` — WARNING: ${cut.length} effect${cut.length > 1 ? 's' : ''} now run${cut.length > 1 ? '' : 's'} ` +
+    `past the ${duration.toFixed(2)}s end and will never finish on screen (${worst}` +
+    `${cut.length > 3 ? `, +${cut.length - 3} more` : ''}). Re-time them, or set a longer tail.`
+  )
+}
+
 export interface FoundNode {
   node: EuclidNode
   /** The array that directly contains the node (scene root or a group's children). */
@@ -167,6 +226,11 @@ function outlineCamera(scene: Scene): string {
   )
 }
 
+/** `from`/`to` of an arrow: the node it tracks, or the fixed point. */
+function arrowEnd(end: { node: string } | { at: { x: number; y: number } }): string {
+  return 'node' in end ? end.node : `(${round(end.at.x)},${round(end.at.y)})`
+}
+
 function round(n: number): number {
   return Math.round(n * 100) / 100
 }
@@ -192,7 +256,11 @@ function outlineNodes(nodes: import('./document').EuclidNode[], lines: string[],
                   ? `size=${n.size}`
                   : n.type === 'points3'
                     ? `${n.points.length} points`
-                    : ''
+                    : n.type === 'arrow'
+                      ? // An arrow's identity is its endpoints; its own position is
+                        // an offset that is almost always zero.
+                        `${arrowEnd(n.from)} → ${arrowEnd(n.to)}`
+                      : ''
     lines.push(
       `${indent}${n.type} ${n.id}${n.name ? ` (${n.name})` : ''} ` +
         `@(${n.position.x},${n.position.y}${n.z !== undefined ? `,z=${n.z}` : ''}) ${label}${anim}${trans}`,
