@@ -36,8 +36,11 @@ files; this file tracks the big picture.
       than exercised. The render also has to be driven by hand until the queue
       has a consumer, which is the one thing blocking a clean end-to-end claim.
 
-Render queue (Cloudflare Queues → Containers) is deliberately deferred until
-after the milestone — see plans/002 for the reasoning.
+Render queue: a **pull-based worker** (`render-worker.ts`) drains it as of
+2026-08-16, so a submitted job now finishes unattended. Cloudflare Queues →
+Containers remains the production shape and is still deferred; the job
+lifecycle lives in the API either side of the claim, so swapping the producer
+does not touch it.
 
 ## Phase 3: Agent sight → plans/007-agent-sight.md
 Direction decided 2026-08-15 after the third milestone run: **the agent

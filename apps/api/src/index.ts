@@ -20,6 +20,7 @@ import {
   JOB_TERMINAL,
   type RenderJobRow,
   RenderError,
+  claimNextJob,
   downloadUrlFor,
   listRenderJobs,
   startRender,
@@ -321,6 +322,21 @@ app.patch('/api/jobs/:jobId', async (c) => {
     await adjustCredits(c.env, job.user_id, job.cost, `refund:${jobId}${error ? ` (${error})` : ''}`)
   }
   return c.json({ status: applied ? status : job.status, applied, refunded: applied && status === 'failed' })
+})
+
+/**
+ * The render worker claims its next job here.
+ *
+ * A pull rather than a push: a Worker cannot run Chromium, so the thing that
+ * renders lives outside Cloudflare and has to come and ask. When this moves to
+ * Queues + Containers the producer changes and this endpoint goes away, but
+ * the job lifecycle either side of it does not — which is why the transitions
+ * live in the API rather than in whatever is doing the rendering.
+ */
+app.post('/api/jobs/claim', async (c) => {
+  if (!isInternal(c)) return c.json({ error: 'forbidden' }, 403)
+  const claimed = await claimNextJob(c.env)
+  return c.json(claimed ?? { jobId: null })
 })
 
 /** Render worker uploads the finished MP4 here; body is the raw file. */

@@ -252,7 +252,7 @@ export const mediaTools = [
       'Free. Lists the last 20 jobs newest first, with how long each has been in its current state.',
       'A `done` job carries `downloadUrl` for the MP4; a `failed` job has already had its credits refunded.',
       '',
-      '**A job sitting in `queued` may have nothing coming for it.** The render worker is driven by a queue that is not wired up in every environment, so `queued` means "accepted and priced", not "started". The age is shown for exactly this reason: minutes in `queued` with no `rendering` means no worker is draining it, and re-submitting will only spend credits again. Say so rather than waiting indefinitely.',
+      '**A job sitting in `queued` means no render worker is running.** `queued` means accepted and priced, not started — a worker has to claim it. The age is shown for exactly this reason: minutes in `queued` with no `rendering` means nothing is draining the queue, and re-submitting will only spend credits again. Report that rather than waiting indefinitely; the document is unaffected and `preview_frames` shows the same frames the render would.',
     ].join('\n'),
     args: z.object({ projectId: PROJECT_ID }),
     async handler(ctx, { projectId }) {
@@ -276,9 +276,9 @@ export const mediaTools = [
           )
           .join('\n') +
           (stalled.length
-            ? `\n\n${stalled.length} job(s) have been queued for minutes without starting. ` +
-              `That means no render worker is draining the queue, not that it is busy — ` +
-              `re-submitting would spend credits again for the same result. The document ` +
+            ? `\n\n${stalled.length} job(s) have been queued for minutes without starting — ` +
+              `no render worker is claiming them, which is not the same as busy. ` +
+              `Re-submitting would spend credits again for the same result. The document ` +
               `is unaffected, and preview_frames shows the same frames the render would.`
             : ''),
         { jobs },

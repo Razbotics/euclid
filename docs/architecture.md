@@ -410,6 +410,23 @@ audio counterpart of the purity invariant — but note audio itself stays out of
 playback lives in the browser shell (`apps/web/src/Narration.tsx`). Target: Cloudflare Containers consuming a
 Queue that `POST /render` feeds (queue deferred — see plans/002).
 
+The queue is drained by `apps/renderer/src/render-worker.ts`, which **pulls**:
+it claims the oldest queued job through `POST /api/jobs/claim` and spawns
+`render.ts` for it. A pull rather than a push because a Worker cannot run
+Chromium, so the renderer lives outside Cloudflare and has to come and ask.
+Claiming is a conditional `UPDATE ... WHERE status = 'queued'` — the same
+trick the terminal states use — so two workers racing for one job resolve by
+`changes === 0` rather than by a lock.
+
+One child process per job, deliberately: a render that wedges the browser or
+exhausts memory takes its own process down, not the worker, which is also the
+shape a container-per-job deployment has. The child drives its own status
+transitions, and the worker marks anything that exits without reaching a
+terminal state as `failed` — otherwise `rendering` becomes the new `queued`,
+a job paid for and never resolved. When this moves to Queues + Containers the
+producer changes and `/api/jobs/claim` goes away; the lifecycle either side of
+it does not, which is why those transitions live in the API.
+
 Job lifecycle: `POST /render` prices the video (per-second × resolution, see
 `packages/dsl/src/limits.ts`), debits credits up front, and creates a
 `queued` job. The render worker then drives it — `rendering`, upload the MP4

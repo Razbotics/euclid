@@ -81,6 +81,37 @@ export async function startRender(
   return { jobId, cost, seconds, status: 'queued' }
 }
 
+/**
+ * Atomically take the oldest queued job.
+ *
+ * Two-step rather than one UPDATE, so it stays portable and readable: read a
+ * candidate, then update it *only if it is still queued*. A second worker that
+ * picked the same candidate finds `changes === 0` and asks again. The same
+ * conditional-update trick the terminal states use, for the same reason —
+ * correctness here is a `WHERE` clause, not a lock.
+ */
+export async function claimNextJob(
+  env: Env,
+): Promise<{ jobId: string; projectId: string } | null> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const candidate = await env.DB.prepare(
+      "SELECT id, project_id FROM render_jobs WHERE status = 'queued' ORDER BY created_at LIMIT 1",
+    ).first<{ id: string; project_id: string }>()
+    if (!candidate) return null
+
+    const res = await env.DB.prepare(
+      "UPDATE render_jobs SET status = 'rendering', updated_at = ? WHERE id = ? AND status = 'queued'",
+    )
+      .bind(Date.now(), candidate.id)
+      .run()
+    if ((res.meta?.changes ?? 0) > 0) {
+      return { jobId: candidate.id, projectId: candidate.project_id }
+    }
+    // Lost the race; the next read will skip it.
+  }
+  return null
+}
+
 export async function listRenderJobs(
   env: Env,
   projectId: string,
