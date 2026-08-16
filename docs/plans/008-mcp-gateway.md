@@ -278,6 +278,33 @@ honored. The escape hatch (register catalog entries as per-tool MCP tools) is
 not needed. The two defects found are both *catalog validation* bugs that the
 gateway makes cheaper to fix, not consequences of the indirection.
 
+### Milestone run 5 (2026-08-16): the catalog held, the doors were shut
+
+Second run over the gateway, this one given only a subject. No failure loops
+and no argument-shape retries worth recording — the strict-args fix from run 4
+did its job, and `describe` was not needed to recover from anything.
+
+What the run *did* surface is a different class of problem: **capabilities that
+existed and were unreachable**. It reported "no node parenting / no transform
+hierarchy" and spent roughly 60% of its calls keyframing an orbit chord by
+chord. `GroupNode` had been in the document model since the scaffold, `addNode`
+had always taken `parentId`, and the stage already composed group transforms.
+Nothing in the catalog exposed any of it.
+
+That is the gateway's own failure mode, and worth stating plainly: it made
+*adding* a capability cheap, and did nothing for discovery. An agent reads
+`instructions`, sees no group, and concludes the system has no hierarchy —
+then designs around the limit it inferred. **An error costs one retry; an
+inference costs an approach.** Two of run 5's seven friction points were
+inferences rather than errors (the other: animating `width` on a line, which
+returns a clear refusal the agent never triggered because it did not try).
+
+Fixed the same day: `add_group`, `parentId` on every creator, `fill: "none"`
+for outlines, job age on `get_render_status`, and `write_on`'s documentation
+corrected where it still described the pre-`path` behaviour. The lesson for
+future catalog entries is that a capability the summary does not mention may as
+well not exist — `instructions` is the whole map.
+
 ## Notes / gotchas
 
 - Tool 1's response replaces the tool-list context the client used to load —

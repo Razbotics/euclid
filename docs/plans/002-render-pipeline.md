@@ -674,6 +674,52 @@ line endpoint, ahead of glyph correspondence. Run 3 named glyph
 correspondence because its subject was a derivation; the moment a video needs
 *geometry*, the missing primitive is the thing that bites.
 
+### The fifth run (2026-08-16)
+
+"Sine from a Spinning Circle" (`4efbc214`) — a point going round a circle,
+its height unrolled into a wave, for someone who has done trigonometry but
+never connected the two. 4 scenes, 67.05s h264+aac 1080p60, 3.0MB,
+**82 credits** (14 TTS + 68 render). `pnpm -r typecheck` green.
+
+The first run given **only a subject** — no brief, no watch list, no mention
+of the tool surface (see [007](007-agent-sight.md) for why that mattered).
+
+**Verdict: the best of the five, and the first whose central idea is
+*synchronisation* rather than a sequence of stills.**
+
+The thing worth checking was whether the two halves agree, and they do: at
+40.91s the dot sits at 9 o'clock (θ=π) with the wave crossing zero, and at
+52.24s it is back at 3 o'clock as the period closes. That is the whole idea of
+the video, and it is correct — verified from a contact sheet rather than from
+the agent's report.
+
+What went right that had not before:
+- **It reached for the new primitives unprompted.** Three `plot_function`
+  curves and one `add_path`, with no nine-chord workaround anywhere — the flaw
+  that dominated run 4. Nothing in the request mentioned either capability.
+- **Four scenes, and the last one earns its place.** Runs 1–4 were three
+  scenes ending on a summary card; here the payoff (one turn = one wave, with
+  the 2π bracket) is a distinct beat.
+
+Flaws, in rough order of impact:
+1. **The orbiting dot is 17 position keyframes, not an orbit.** Nothing
+   exposed grouping, so the dot and the radius were keyframed chord-by-chord
+   with hand-computed cos/sin — the agent reported this as ~60% of its tool
+   calls. The hierarchy existed all along; see [008](008-mcp-gateway.md).
+   Fixed the same day: that motion is now one `animate` on a group.
+2. **The render never started.** The job sat `queued` ~10 minutes because
+   nothing drains the queue in dev, and `get_render_status` gave no age, so
+   "busy" and "dead" were indistinguishable. The agent correctly declined to
+   re-spend 68 credits on a guess. Driven by hand afterwards — and the
+   recovery command written in the code comment turned out not to work.
+3. **A ring had to be faked** by filling a circle with the background colour,
+   which paints an opaque disc. Fixed the same day (`fill: "none"`).
+
+Not a flaw, recorded because it recurs: the agent inferred that animating a
+line's `width` does nothing and designed around it. It does not — it returns
+`property width does not exist on line node`. One call would have settled it.
+An error costs a retry; an inference costs an approach.
+
 ## Deferred on purpose
 - **Cloudflare Queues + Containers.** The flagged infra risk, and it's
   orchestration for a pipeline that hasn't yet proven it makes a *good*

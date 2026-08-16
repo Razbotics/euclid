@@ -28,7 +28,13 @@ files; this file tracks the big picture.
 - [x] Narration audio in R2, wordTimings into the doc
 - [x] Captions: SRT/VTT export, document-derived (upgrades to word-accurate when TTS lands)
 - [x] Renderer: mux narration audio into the MP4
-- [ ] Run the milestone: agent builds the full video over MCP, human tweaks in editor, export downloads
+- [~] Run the milestone: agent builds the full video over MCP, export downloads.
+      **Five runs done** (see plans/002); run 5 is the first given only a
+      subject, and produced a 67s synchronised circle→wave explainer. What is
+      still unproven is the *human tweaks in the editor* half — every run so
+      far has been agent-only, and the editor's role is still assumed rather
+      than exercised. The render also has to be driven by hand until the queue
+      has a consumer, which is the one thing blocking a clean end-to-end claim.
 
 Render queue (Cloudflare Queues → Containers) is deliberately deferred until
 after the milestone — see plans/002 for the reasoning.
@@ -156,5 +162,7 @@ check its own output.
       domain→canvas mapping, which is where run 4's cost actually was, and
       reports the transform back so a point placed on the curve lands on it.
       Axes, ticks and labels are still hand-built — worth doing only once a
-      run shows what they should look like
+      run shows what they should look like. Grouping (`add_group` + `parentId`)
+      exposed 2026-08-16 after run 5 spent ~60% of its calls keyframing an
+      orbit the scene graph could always have carried
 - [ ] Code-block primitive with line-highlight animations

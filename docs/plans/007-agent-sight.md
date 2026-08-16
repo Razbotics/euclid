@@ -305,6 +305,36 @@ likely have shipped than been found.
   gotten right by reading word-level timings out of `get_scene` — a text tool.
   Sight and pacing text are complements, not substitutes.
 
+## Milestone run 5 (2026-08-16) — the uncontaminated answer
+
+Run 4's evidence on *did it look unprompted* was worthless: the operator pasted
+the brief, watch list included, into the agent's first turn. Run 5 fixed the
+method. The agent was given a **subject only** — "a ~60s video on how a sine
+wave comes from a spinning circle" — in the operator's own words, with no
+brief, no watch list, and no mention that a preview capability exists. The
+observation criteria were never written down where they could be pasted; the
+run was reconstructed afterwards from the preview backend's log, the document,
+and the session transcript.
+
+**It previewed while building, unprompted.** That is the question this plan was
+written to answer, and it is now answered without the operator's thumb on the
+scale. It also reached for `add_path` and `plot_function` — capabilities that
+did not exist when run 4 ran, mentioned nowhere in the request — instead of
+approximating a curve with line segments.
+
+The quality claim holds up too, and was checked rather than accepted: the
+circle and the wave agree (dot at 9 o'clock with the wave crossing zero at
+40.91s; back at 3 o'clock as the period closes at 52.24s). Synchronisation
+between two views is a thing no text tool can confirm, which makes it the
+sharpest case yet for sight.
+
+One method note for future runs: launch `claude` **from the project directory**.
+The first attempt at run 5 was started elsewhere, so the MCP server — registered
+per-project — was absent, and the agent sensibly reached for a Python animation
+library instead. That is not a discoverability finding, it is an empty tool
+list, and the two look identical from the outside. Confirm with `/mcp` before
+reading anything into what the agent does.
+
 ## Notes / gotchas
 
 - **Two silent-blank-frame bugs, found by the tool on its own output.** Both
