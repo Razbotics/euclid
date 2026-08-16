@@ -231,6 +231,13 @@ interface Item {
 export class EuclidStage {
   private bg = new Graphics()
   private layer = new Container()
+  /**
+   * Nodes pinned to the frame. A sibling of `layer` rather than a child, which
+   * is the whole mechanism: the camera transform lives on `layer`, so anything
+   * in here is untouched by pan, zoom, roll and orbit alike. Added last, so an
+   * overlay draws over the scene.
+   */
+  private overlay = new Container()
   private items = new Map<string, Item>()
   private texCache = new Map<string, Texture | 'pending'>()
   private glyphCache = new Map<string, TexGlyphRender[] | 'pending'>()
@@ -249,6 +256,7 @@ export class EuclidStage {
     this.texProvider = opts?.texProvider ?? null
     root.addChild(this.bg)
     root.addChild(this.layer)
+    root.addChild(this.overlay)
   }
 
   setTexProvider(p: TexProvider): void {
@@ -281,7 +289,12 @@ export class EuclidStage {
     this.applyCamera(resolved.camera, doc.canvas)
     this.cam3 = resolved.cam3
     const seen = new Set<string>()
-    this.syncChildren(resolved.nodes, this.layer, seen, resolved.spatial)
+    // Split at the root only: a child inherits its group's transform, so
+    // pinning one inside a moving group is a contradiction (see NodeBase.fixed).
+    const pinned = resolved.nodes.filter((n) => n.source.fixed)
+    const inWorld = resolved.nodes.filter((n) => !n.source.fixed)
+    this.syncChildren(inWorld, this.layer, seen, resolved.spatial)
+    this.syncChildren(pinned, this.overlay, seen)
 
     for (const [id, item] of this.items) {
       if (!seen.has(id)) {
@@ -320,6 +333,7 @@ export class EuclidStage {
     for (const item of this.items.values()) item.view.destroy({ children: true })
     this.items.clear()
     this.layer.removeChildren()
+    this.overlay.removeChildren()
     this.currentSceneId = null
   }
 

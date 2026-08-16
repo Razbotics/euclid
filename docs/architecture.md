@@ -153,6 +153,11 @@ Two pieces make it work:
   into an absolute `world` position per node, so an arrow can point at
   something three groups deep. It also indexes nodes by id, which is what
   anchors resolve against.
+- **Cell anchors.** An end can name part of a grid —
+  `{node: "tok_x", cells: {cols: 2}}` — and the arrow tracks that cell's box
+  rather than the middle of the whole strip. Run 6 drew six per-token arrows by
+  inventing six proxy circles to point at, which is the shape of a missing
+  feature.
 - **Extents** (`packages/dsl/src/extent.ts`). An arrow stops at the *edge* of
   what it points at, plus a `gap`. Extents are exact for shapes, grids and
   paths, and **estimated** from font size and length for text and LaTeX —
@@ -214,6 +219,16 @@ Geometry that *spans* depth — `vector3`, `axes3d`, `points3` — projects its 
 here to there is not one point with one depth. Those nodes keep their view
 transform at identity and draw in absolute projected scene space; a point cloud
 also sorts within itself.
+
+**Pinned nodes are the way out of the world.** `fixed: true` on a root node
+puts it in an overlay container that is a *sibling* of the camera layer rather
+than a child, so it ignores pan, zoom, roll and orbit alike and draws over the
+scene at its own coordinates. That is the mechanism, and it is the whole
+implementation. Milestone run 6 needed it: its caption drifted across the frame
+and grew 46% as the space orbited behind it — correct, since a root node really
+is in the world, and not what anyone wants of a label. It applies at the root
+only; a child inherits its group's transform, so `pin_to_frame` says so rather
+than pretending.
 
 Two rules fall out and are worth knowing:
 

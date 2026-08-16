@@ -399,13 +399,13 @@ this is one scene of five.
    plans/007 shipped, and it sits two lines under `preview_frames` in the same
    block. An agent that believes it will not look. This is the single most
    valuable finding of the run and the cheapest to fix.
-2. **No way to exempt a node from the 3D world.** In a scene with yaw or pitch,
+2. **[FIXED] No way to exempt a node from the 3D world.** In a scene with yaw or pitch,
    *every* root node is projected — including flat labels. The "cat" chip and
    its path drift and grow through the orbit, because they really are at z=0 in
    a world being turned. Correct, and not what an author wants for a caption.
    manim has `add_fixed_in_frame_mobjects`; the equivalent here is a `fixed`
    flag that skips projection.
-3. **`connect` cannot anchor to a cell.** Cell addressing exists for
+3. **[FIXED] `connect` could not anchor to a cell.** Cell addressing exists for
    `highlight` but not for anchors, so six per-token arrows in scene 5 needed
    six proxy circles to point at. The natural call is
    `connect(from: {node: tok, cells: {cols: 1}})`.
@@ -436,6 +436,21 @@ capability was missing outright.
   name what they cut, worst first. The camera track is the one that got through
   the run: a scene-level effect with no node to notice it under.
 
-2 and 3 are design changes and remain open: a `fixed` flag to keep a caption
-out of the orbited world, and cell-level anchors so `connect` can point at one
-token rather than a whole strip.
+### And then 2 and 3
+
+- **`fixed: true`** pins a node to the frame: an overlay container that is a
+  *sibling* of the camera layer, so pan, zoom, roll and orbit all miss it.
+  `pin_to_frame` is the capability, and it warns when asked to pin a node
+  inside a group, where the flag cannot mean anything. Verified as
+  camera-invariance rather than as a position: the same pinned disc reads
+  **0.76% under a hard zoom, a pan and an orbit** — and is never magnified,
+  which is the half of the behaviour an assertion about position would have
+  missed.
+- **Cell anchors**: either end of a `connect` takes
+  `{node, cells: {cols: 2}}` and tracks that cell's box. Proved by framing two
+  mirror-image patches either side of a strip's centre, neither containing a
+  token box, so the only thing that can light one and not the other is where
+  the arrow leaves from: **1.74% under the first token, 0.00% under the last**,
+  and the reverse once a second arrow is anchored to the last.
+
+All five findings from run 6 are now closed.

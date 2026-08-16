@@ -4,7 +4,9 @@ import {
   LIMITS,
   type Canvas,
   edgePoint,
+  gridOf,
   nodeExtent,
+  rangeBounds,
   type Extent,
   type ArrowEnd,
   type CellRange,
@@ -76,6 +78,8 @@ export interface ResolvedNode {
   world: Vec2
   /** Composed scale, for sizing anything measured against this node. */
   worldScale: number
+  /** Composed rotation, for placing an offset inside a rotated ancestor. */
+  worldRotation: number
   /** Endpoints of an `arrow`, resolved from whatever it is anchored to. */
   arrow: { from: Vec2; to: Vec2 } | null
   highlight: HighlightState | null
@@ -148,7 +152,11 @@ export function resolveScene(scene: Scene, t: number, canvas?: Canvas): Resolved
   // leave a 2D scene bit-identical to what it was before this existed.
   const spatial = cam3 !== null && (anySpatial || !isFlatCamera(cam3))
   if (spatial && cam3) {
-    for (const n of nodes) n.projection = projectNode(n, cam3)
+    // A pinned node keeps a null projection, which is part of what tells the
+    // stage to draw it in the overlay instead of the camera layer.
+    for (const n of nodes) {
+      if (!n.source.fixed) n.projection = projectNode(n, cam3)
+    }
   }
 
   // Last, so an arrow anchored to a node in a projected scene lands where that
@@ -182,6 +190,7 @@ function composeWorld(nodes: ResolvedNode[], parent: Frame, index: Map<string, R
     }
     n.world = { x: frame.x, y: frame.y }
     n.worldScale = frame.scale
+    n.worldRotation = frame.rotation
     index.set(n.source.id, n)
     if (n.source.type === 'group') composeWorld(n.children, frame, index)
   }
@@ -248,8 +257,32 @@ function anchorOf(
   const at = target.projection
     ? { x: target.projection.x, y: target.projection.y }
     : target.world
-  const extent = nodeExtent(target.source, target.props)
   const grow = target.projection?.scale ?? 1
+  const source = target.source
+
+  // Anchoring to part of a grid: the cell range's own box, offset from the
+  // node's centre. Without it an arrow to a token strip lands in the middle of
+  // the strip, and pointing at one word means inventing a proxy node to point
+  // at instead — which milestone run 6 had to do six times.
+  if (end.cells && (source.type === 'matrix' || source.type === 'tokens')) {
+    const box = rangeBounds(gridOf(source), end.cells)
+    if (box) {
+      const scale = target.worldScale * grow
+      const cos = Math.cos(target.worldRotation)
+      const sin = Math.sin(target.worldRotation)
+      const dx = box.x * scale
+      const dy = box.y * scale
+      return {
+        at: { x: at.x + dx * cos - dy * sin, y: at.y + dx * sin + dy * cos },
+        extent: {
+          halfWidth: (box.width / 2) * scale,
+          halfHeight: (box.height / 2) * scale,
+        },
+      }
+    }
+  }
+
+  const extent = nodeExtent(source, target.props)
   return {
     at,
     // Spread rather than rebuild: `shape` decides whether the boundary is a box
@@ -263,8 +296,13 @@ function anchorOf(
   }
 }
 
-/** A node is three-dimensional if it carries a depth or is 3D by type. */
+/**
+ * A node is three-dimensional if it carries a depth or is 3D by type — unless
+ * it is pinned to the frame, in which case it is not in the world at all and
+ * so cannot be what makes the world three-dimensional.
+ */
 function hasDepth(n: ResolvedNode): boolean {
+  if (n.source.fixed) return false
   return (
     n.props.z !== undefined ||
     n.source.type === 'vector3' ||
@@ -397,6 +435,7 @@ export function resolveNode(node: EuclidNode, t: number): ResolvedNode {
     projection: null,
     world: props.position as Vec2,
     worldScale: props.scale as number,
+    worldRotation: props.rotation as number,
     arrow: null,
     highlight,
     children: node.type === 'group' ? node.children.map((c) => resolveNode(c, t)) : [],

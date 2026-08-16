@@ -243,6 +243,18 @@ interface NodeBase {
    * which is where every 2D node lives, so plain scenes are unaffected.
    */
   z?: number
+  /**
+   * Pinned to the frame: the node ignores the camera entirely — pan, zoom,
+   * roll and orbit alike — and draws over the scene at its own coordinates.
+   *
+   * For captions, titles and legends. Without it every root node in an
+   * orbiting scene is part of the world being turned, which is correct and is
+   * not what anyone wants of a label: milestone run 6 watched its caption
+   * drift across the frame and grow 46% as the space rotated behind it.
+   * Applies at the scene root; a child inherits its group's transform, so a
+   * pinned child of a moving group is a contradiction and the flag is ignored.
+   */
+  fixed?: boolean
   scale: number
   /** Radians, about `position` — not degrees, and not about the node's bounds. */
   rotation: number
@@ -407,9 +419,11 @@ export interface Points3Node extends NodeBase {
  * every frame from where the node actually *is*, so a diagram whose parts move
  * keeps its connections instead of leaving them behind.
  */
-export type ArrowEnd = { node: string } | { at: Vec2 }
+export type ArrowEnd = { node: string; cells?: CellRange } | { at: Vec2 }
 const ArrowEndSchema: z.ZodType<ArrowEnd> = z.union([
-  z.object({ node: z.string().min(1) }),
+  // `cells` narrows the anchor to part of a matrix or token strip, so an arrow
+  // can point at one cell rather than at the middle of the whole grid.
+  z.object({ node: z.string().min(1), cells: CellRangeSchema.optional() }),
   z.object({ at: Vec2Schema }),
 ])
 
@@ -454,6 +468,7 @@ const NodeBaseShape = {
   name: z.string().optional(),
   position: Vec2Schema,
   z: z.number().finite().optional(),
+  fixed: z.boolean().optional(),
   scale: z.number().finite(),
   rotation: z.number().finite(),
   opacity: z.number().min(0).max(1),

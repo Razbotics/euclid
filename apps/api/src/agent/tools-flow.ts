@@ -8,19 +8,36 @@ import {
   type EuclidNode,
   type Transition,
 } from '@euclid/dsl'
+import { describeRange } from '@euclid/dsl'
 import { pathLength } from '@euclid/engine'
 import { COLOR, EASING, NODE_ID, NUMBERISH, PROJECT_ID, SCENE_ID, SECONDS } from './schemas'
+import { CELLS_ARG, checkRange, gridOrThrow } from './tools-grid'
 import { baseNode } from './tools-node'
 import { capability, said, CapabilityError } from './types'
 
-/** Either end: a node id to track, or a fixed point. */
+/** Either end: a node id, one part of a grid, or a fixed point. */
 const END = z.union([
   z.string().min(1),
+  z.object({ node: z.string().min(1), cells: CELLS_ARG }),
   z.object({ x: NUMBERISH, y: NUMBERISH }),
 ])
+type EndArg = z.infer<typeof END>
 
-function toEnd(v: string | { x: number; y: number }): ArrowEnd {
-  return typeof v === 'string' ? { node: v } : { at: v }
+function toEnd(v: EndArg): ArrowEnd {
+  if (typeof v === 'string') return { node: v }
+  return 'node' in v ? { node: v.node, cells: v.cells } : { at: v }
+}
+
+/** Name for a response line: the id, the cell, or the point. */
+function endName(v: EndArg): string {
+  if (typeof v === 'string') return v
+  return 'node' in v ? `${describeRange(v.cells)} of ${v.node}` : `(${v.x},${v.y})`
+}
+
+/** The node id an end refers to, if it refers to one at all. */
+function endNode(v: EndArg): string | null {
+  if (typeof v === 'string') return v
+  return 'node' in v ? v.node : null
 }
 
 /** Nodes an arrow or a follower names must actually be there. */
@@ -44,7 +61,7 @@ export const flowTools = [
       '',
       'It stops at the **edge** of what it points at, not the centre, with `gap` px of clearance. Extents are exact for shapes, matrices and token strips, and estimated from font size for text and LaTeX — if a head crowds an equation, raise `gap`.',
       '',
-      'Either end also takes a fixed point as `{"x":…,"y":…}` when there is nothing to anchor to.',
+      'Either end also takes **one part of a grid** — `{"node":"tok_x","cells":{"cols":2}}` points at the third token of a strip, or one cell of a matrix, and tracks that cell rather than the middle of the whole thing. And a fixed point as `{"x":…,"y":…}` when there is nothing to anchor to.',
       '',
       '`curve` bows it sideways as a fraction of the distance: 0 is straight, ±0.2 is a gentle arc, and two arrows between the same pair with opposite curves separate instead of overlapping. The head follows the curve\'s own tangent, so it meets its target square.',
       '',
@@ -65,9 +82,21 @@ export const flowTools = [
       const { doc } = await ctx.getDoc(projectId)
       const scene = ctx.sceneOrThrow(doc, sceneId)
       const find = (id: string) => findIn(scene.nodes, id)
-      if (typeof from === 'string') requireNode(find, from, 'from')
-      if (typeof to === 'string') requireNode(find, to, 'to')
-      if (typeof from === 'string' && from === to) {
+      const fromId = endNode(from)
+      const toId = endNode(to)
+      // A cell range that names cells the node does not have is rejected here,
+      // not clamped: an arrow to a plausible-but-wrong cell looks right.
+      for (const [end, id, role] of [
+        [from, fromId, 'from'],
+        [to, toId, 'to'],
+      ] as const) {
+        if (!id) continue
+        const node = requireNode(find, id, role)
+        if (typeof end !== 'string' && 'cells' in end) {
+          checkRange(node, gridOrThrow(node, id), end.cells, id)
+        }
+      }
+      if (fromId && fromId === toId && JSON.stringify(from) === JSON.stringify(to)) {
         throw new CapabilityError('an arrow from a node to itself has no direction to point in')
       }
 
@@ -85,14 +114,10 @@ export const flowTools = [
         gap,
       }
       await ctx.submit(projectId, [op.addNode(sceneId, node)])
-      const name = (v: string | { x: number; y: number }) =>
-        typeof v === 'string' ? v : `(${v.x},${v.y})`
       return said(
-        `connected ${name(from)} → ${name(to)} as ${id}` +
+        `connected ${endName(from)} → ${endName(to)} as ${id}` +
           (curve ? ` (curve ${curve})` : '') +
-          (typeof from === 'string' || typeof to === 'string'
-            ? ' — it will follow them if they move'
-            : ''),
+          (fromId || toId ? ' — it will follow them if they move' : ''),
         { nodeId: id },
       )
     },
@@ -152,6 +177,46 @@ export const flowTools = [
             ? ` — NOTE ${nodeId} also has a position track, and the flow wins from ${start}s onward`
             : ''),
         { nodeId, pathId, start, duration, length },
+      )
+    },
+  }),
+  capability({
+    name: 'pin_to_frame',
+    summary: 'Pin a node to the frame so the camera cannot move it — for captions and titles.',
+    doc: [
+      'A pinned node ignores the camera **entirely**: pan, zoom, roll and orbit alike. It draws over the scene at its own coordinates, which is what you want for a caption, a title or a legend.',
+      '',
+      'Without this, every node at the scene root is part of the world the camera is looking at — correct, and not what anyone wants of a label. In an orbiting scene an unpinned caption swings across the frame and changes size as the space turns behind it.',
+      '',
+      'Pinned nodes draw **on top** of everything else, and in the order you added them.',
+      '',
+      'It applies at the scene root only. A child inherits its group\'s transform, so pinning one inside a moving group is a contradiction and the flag is ignored — pin the group, or move the node out of it.',
+      '',
+      'Pass `fixed: false` to put a node back into the world.',
+    ].join('\n'),
+    args: z.object({
+      projectId: PROJECT_ID,
+      sceneId: SCENE_ID,
+      nodeId: NODE_ID,
+      fixed: z.boolean().default(true),
+    }),
+    async handler(ctx, { projectId, sceneId, nodeId, fixed }) {
+      const { doc } = await ctx.getDoc(projectId)
+      const scene = ctx.sceneOrThrow(doc, sceneId)
+      ctx.nodeOrThrow(doc, sceneId, nodeId)
+      const atRoot = scene.nodes.some((n) => n.id === nodeId)
+      await ctx.submit(projectId, [
+        op.updateNode(sceneId, nodeId, { fixed: fixed ? true : null }),
+      ])
+      return said(
+        fixed
+          ? `${nodeId} is pinned to the frame — the camera no longer moves it` +
+            (atRoot
+              ? ''
+              : ` — WARNING: it is inside a group, which still moves it. ` +
+                `Pinning applies at the scene root; pin the group instead, or take the node out of it.`)
+          : `${nodeId} is back in the world and moves with the camera`,
+        { nodeId, fixed },
       )
     },
   }),

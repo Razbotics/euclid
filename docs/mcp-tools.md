@@ -72,6 +72,9 @@ shape as `remove_asset`'s `force`.
   it points at. `flow_along` rides a path by arc length and overrides the
   node's position from `start` onward — the one place a transition beats a
   track, which the response says out loud.
+- A node can step **out of the world**: `pin_to_frame` makes it ignore the
+  camera entirely, for captions and titles that should not swing about when
+  the scene orbits.
 - The third dimension is opt-in and inert until asked for: nodes take an
   optional `z` and `add_vector3`/`add_axes3d`/`add_points3` are spatial by
   type, but **nothing is projected until the camera has a `yaw` or `pitch`**
