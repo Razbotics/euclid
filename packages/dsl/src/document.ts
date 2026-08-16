@@ -286,6 +286,50 @@ export const NodeSchema: z.ZodType<EuclidNode> = z.lazy(() =>
   ]),
 ) as z.ZodType<EuclidNode>
 
+// ---------- camera ----------
+
+export const CAMERA_PROPS = ['position', 'zoom', 'rotation'] as const
+export type CameraProp = (typeof CAMERA_PROPS)[number]
+
+/** Same keyframe machinery as a node track, restricted to what a camera has. */
+export interface CameraTrack {
+  property: CameraProp
+  keyframes: Keyframe[]
+}
+export const CameraTrackSchema: z.ZodType<CameraTrack> = z.object({
+  property: z.enum(CAMERA_PROPS),
+  keyframes: z.array(KeyframeSchema).min(1),
+})
+
+/**
+ * Which part of the scene the frame shows.
+ *
+ * A node's `position` is where it *is*; the camera decides what is looked at,
+ * which is what lets a diagram be laid out larger than the canvas and still be
+ * legible piece by piece. Deliberately not a node: a camera inside the tree
+ * would inherit its parent's transform, and the frame is not something a group
+ * can own. Deliberately not a new animation mechanism either — it is keyframed
+ * by the same `Track` shape as everything else.
+ */
+export interface Camera {
+  /** The scene point shown at the centre of the frame. */
+  position: Vec2
+  /** 1 = the canvas as laid out. 2 shows half as much, twice as large. */
+  zoom: number
+  /**
+   * Camera roll in radians. Positive rolls the camera clockwise, so the scene
+   * appears to turn counter-clockwise — the negation lives in the stage.
+   */
+  rotation: number
+  tracks: CameraTrack[]
+}
+export const CameraSchema: z.ZodType<Camera> = z.object({
+  position: Vec2Schema,
+  zoom: z.number().min(LIMITS.minCameraZoom).max(LIMITS.maxCameraZoom),
+  rotation: z.number().finite(),
+  tracks: z.array(CameraTrackSchema),
+})
+
 // ---------- narration / scene / document ----------
 
 export interface NarrationWord {
@@ -324,6 +368,8 @@ export interface Scene {
   background: Color
   nodes: EuclidNode[]
   narration?: Narration
+  /** Absent = the frame is the canvas, untransformed. */
+  camera?: Camera
 }
 export const SceneSchema: z.ZodType<Scene> = z.object({
   id: z.string().min(1),
@@ -332,6 +378,9 @@ export const SceneSchema: z.ZodType<Scene> = z.object({
   background: ColorSchema,
   nodes: z.array(NodeSchema).max(LIMITS.maxNodesPerScene),
   narration: NarrationSchema.optional(),
+  // Optional, so every document written before cameras existed stays valid and
+  // SCHEMA_VERSION does not move.
+  camera: CameraSchema.optional(),
 })
 
 export interface Canvas {

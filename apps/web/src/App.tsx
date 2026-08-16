@@ -5,6 +5,7 @@ import { Preview } from './Preview'
 import { Timeline } from './Timeline'
 import { Inspector } from './Inspector'
 import { Assets } from './Assets'
+import { CameraFrame } from './Camera'
 import { CaptionOverlay, NarrationTrack } from './Narration'
 import { ProjectList } from './ProjectList'
 
@@ -79,6 +80,9 @@ function Editor({ projectId }: { projectId: string | null }) {
       <main>
         <div className="stage">
           <Preview doc={doc} time={time} />
+          {/* Only appears for a scene that has a camera — otherwise the frame
+              is the canvas and there is nothing to say. */}
+          <CameraFrame doc={doc} time={time} />
           {captions && <CaptionOverlay doc={doc} time={time} playing={playing} />}
         </div>
         <div className="side">

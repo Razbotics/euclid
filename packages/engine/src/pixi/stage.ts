@@ -1,7 +1,14 @@
 import { Container, Graphics, Sprite, Text, Texture, type Renderer } from 'pixi.js'
-import { globalToScene, type Color, type EuclidDoc, type LatexNode, type Vec2 } from '@euclid/dsl'
+import {
+  globalToScene,
+  type Canvas,
+  type Color,
+  type EuclidDoc,
+  type LatexNode,
+  type Vec2,
+} from '@euclid/dsl'
 import { pathAtProgress } from '../path'
-import { resolveScene, type ResolvedNode } from '../sampler'
+import { resolveScene, type ResolvedCamera, type ResolvedNode } from '../sampler'
 import {
   findGlyphRun,
   glyphBounds,
@@ -117,12 +124,16 @@ export class EuclidStage {
       this.currentSceneId = at.scene.id
     }
 
+    // The background is drawn outside the camera layer on purpose: it fills the
+    // frame rather than sitting in the scene, so zooming out reveals more
+    // diagram rather than the edge of the backdrop.
     this.bg.clear()
     this.bg.rect(0, 0, doc.canvas.width, doc.canvas.height).fill(at.scene.background)
 
     const resolved = resolveScene(at.scene, at.localT)
+    this.applyCamera(resolved.camera, doc.canvas)
     const seen = new Set<string>()
-    this.syncChildren(resolved, this.layer, seen)
+    this.syncChildren(resolved.nodes, this.layer, seen)
 
     for (const [id, item] of this.items) {
       if (!seen.has(id)) {
@@ -130,6 +141,31 @@ export class EuclidStage {
         this.items.delete(id)
       }
     }
+  }
+
+  /**
+   * The camera is one transform on the whole node layer, not a projection step:
+   * Pixi composes `position ∘ rotate ∘ scale ∘ (−pivot)`, which is exactly
+   * `centre + R(−roll)·zoom·(p − camera.position)`. Nothing downstream knows a
+   * camera exists — node coordinates, glyph geometry and highlight bounds are
+   * all still scene-local, so preview and export cannot disagree about framing
+   * any more than they can about anything else.
+   */
+  private applyCamera(camera: ResolvedCamera | null, canvas: Canvas): void {
+    if (!camera) {
+      // Reset rather than skip: scenes are switched inside one stage, and a
+      // camera-less scene after a zoomed one must not inherit the zoom.
+      this.layer.position.set(0, 0)
+      this.layer.pivot.set(0, 0)
+      this.layer.scale.set(1)
+      this.layer.rotation = 0
+      return
+    }
+    this.layer.pivot.set(camera.position.x, camera.position.y)
+    this.layer.position.set(canvas.width / 2, canvas.height / 2)
+    this.layer.scale.set(camera.zoom)
+    // Negated: rolling the camera one way turns the scene the other.
+    this.layer.rotation = -camera.rotation
   }
 
   private teardown(): void {

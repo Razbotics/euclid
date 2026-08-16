@@ -2,18 +2,27 @@
 import assert from 'node:assert'
 import {
   applyOps,
+  defaultCamera,
   emptyDoc,
   formatMoments,
   keyMoments,
   op,
   OpError,
+  outlineDoc,
   SCHEMA_VERSION,
   evaluateExpression,
   samplePlot,
   type EuclidDoc,
   type Track,
 } from '@euclid/dsl'
-import { pathAtProgress, pathLength, resolveNode, sampleKeyframes } from '../../../packages/engine/src/index'
+import {
+  pathAtProgress,
+  pathLength,
+  resolveCamera,
+  resolveNode,
+  resolveScene,
+  sampleKeyframes,
+} from '../../../packages/engine/src/index'
 
 let doc = emptyDoc('p1', 'smoke')
 doc = applyOps(doc, [
@@ -309,7 +318,104 @@ const flat = samplePlot({
 })
 assert.ok(flat.points.every((p) => Math.abs(p.y - 50) < 1e-9), 'a constant sits mid-rectangle')
 
+// ---------- camera ----------
+// A scene-level transform, sampled by the same keyframe machinery as a node.
+// Everything here is the pure half of it; check-camera.ts proves the pixels.
+const canvas = { width: 1920, height: 1080, fps: 60 } as const
+let shot = applyOps(emptyDoc('cam', 'Camera'), [
+  op.addScene({ id: 'cs', name: 'Framed', duration: 6, background: '#101418', nodes: [] }),
+])
+
+// No camera means no transform at all, not an identity camera — the stage has
+// to be able to tell "framed on the canvas" from "not framed".
+assert.equal(resolveScene(shot.scenes[0]!, 0).camera, null, 'a scene without a camera resolves none')
+assert.deepEqual(
+  defaultCamera(canvas),
+  { position: { x: 960, y: 540 }, zoom: 1, rotation: 0, tracks: [] },
+  'the default camera is the canvas centre at zoom 1 — adding one must move nothing',
+)
+
+shot = applyOps(shot, [
+  op.setCamera('cs', {
+    ...defaultCamera(canvas),
+    zoom: 2,
+    // Deliberately out of order: the reducer sorts, exactly as track.set does,
+    // or the sampler would interpolate backwards through them.
+    tracks: [
+      {
+        property: 'position',
+        keyframes: [
+          { t: 4, value: { x: 1400, y: 540 }, easing: 'linear' },
+          { t: 2, value: { x: 400, y: 540 }, easing: 'linear' },
+        ],
+      },
+    ],
+  }),
+])
+const framed = shot.scenes[0]!
+assert.deepEqual(
+  framed.camera!.tracks[0]!.keyframes.map((k) => k.t),
+  [2, 4],
+  'camera keyframes are sorted on the way in',
+)
+assert.deepEqual(resolveCamera(framed, 3)!.position, { x: 900, y: 540 }, 'a camera pan interpolates')
+assert.equal(resolveCamera(framed, 3)!.zoom, 2, 'an untracked property keeps its base value')
+// Same shadowing rule as nodes: where a track exists it wins, base or not.
+assert.deepEqual(resolveCamera(framed, 0)!.position, { x: 400, y: 540 }, 'before the first keyframe, the track still wins')
+
+// The schema bounds the base zoom; a keyframe can only be bounded at sample
+// time, and a zoom of 0 collapses the scene into a blank frame forever after.
+const collapsed = {
+  ...framed,
+  camera: {
+    ...defaultCamera(canvas),
+    tracks: [{ property: 'zoom' as const, keyframes: [{ t: 0, value: 0, easing: 'linear' as const }] }],
+  },
+}
+assert.ok(resolveCamera(collapsed, 1)!.zoom > 0, 'a zero-zoom keyframe is clamped, not rendered')
+
+assert.throws(
+  () => applyOps(shot, [op.setCamera('cs', { ...defaultCamera(canvas), zoom: 0 })]),
+  'a zero base zoom is refused outright',
+)
+assert.equal(
+  applyOps(shot, [op.clearCamera('cs')]).scenes[0]!.camera,
+  undefined,
+  'clearCamera removes it entirely, tracks and all',
+)
+
+// A camera move is a key moment: it re-frames every node at once, and where it
+// settles is the composition that has to be right.
+const camMoments = keyMoments(shot).filter((m) => m.kind === 'camera')
+assert.ok(camMoments.length >= 2, 'a camera move is sampled mid-move and where it settles')
+assert.ok(
+  camMoments.some((m) => m.phase === 'settled' && Math.abs(m.t - 4) < 1e-9),
+  'the settled sample lands on the closing keyframe',
+)
+assert.match(camMoments[0]!.label, /camera position → \(\d+,\d+\)/, 'the tile label names the target')
+// A held camera is not a move — two identical keyframes must not earn tiles.
+const held = applyOps(shot, [
+  op.setCamera('cs', {
+    ...defaultCamera(canvas),
+    tracks: [
+      {
+        property: 'zoom',
+        keyframes: [
+          { t: 0, value: 2, easing: 'linear' },
+          { t: 3, value: 2, easing: 'linear' },
+        ],
+      },
+    ],
+  }),
+])
+assert.equal(keyMoments(held).filter((m) => m.kind === 'camera').length, 0, 'a hold is not a move')
+
+// The outline is the agent's main read; a camera that re-frames everything and
+// does not appear in it would make every node coordinate misleading.
+assert.match(outlineDoc(shot), /cam@\(960,540\) zoom=2 cam-tracks\[position\]/, 'the outline shows the camera')
+assert.doesNotMatch(outlineDoc(applyOps(shot, [op.clearCamera('cs')])), /cam@/, 'and says nothing when there is none')
+
 console.log(
-  'smoke OK — reducer, sampler, morph resolution, key moments, path reveal, ' +
-    'expressions and plot mapping all behave',
+  'smoke OK — reducer, sampler, morph resolution, key moments, camera framing, ' +
+    'path reveal, expressions and plot mapping all behave',
 )

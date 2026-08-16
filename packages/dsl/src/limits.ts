@@ -6,6 +6,14 @@ export const LIMITS = {
   maxScenes: 100,
   maxNodesPerScene: 200,
   maxOpsPerEnvelope: 50,
+  /**
+   * Camera zoom is bounded rather than merely positive. A zoom of 1e-9 or 1e9
+   * is a degenerate transform that renders as an empty frame, which reads as a
+   * broken renderer rather than as a bad argument — and the agent's only view
+   * of it is a blank contact sheet.
+   */
+  minCameraZoom: 0.05,
+  maxCameraZoom: 50,
 } as const
 
 /**

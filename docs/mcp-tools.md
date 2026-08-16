@@ -61,7 +61,12 @@ shape as `remove_asset`'s `force`.
   editor binds to — same handler, two renderings.)
 - Writes auto-rebase: fetch version → submit → retry ×3 on 409.
 - Coordinates are canvas pixels, origin top-left. Times are scene-local
-  seconds. Nodes anchor at their center.
+  seconds. Nodes anchor at their center. A scene may also have a **camera**
+  (`set_camera` / `move_camera`) — node coordinates never change; the camera
+  decides which part of the scene the frame shows, so a diagram can be laid
+  out larger than the canvas. `get_project` prints it as `cam@(x,y) zoom=…`,
+  because a framing that hides half the scene makes every coordinate in the
+  outline misleading otherwise.
 - Capabilities report what they *did*, not what they were asked to do. Several
   succeed in ways that change nothing on screen — a patch shadowed by a track,
   narration cut at a scene edge — and say so in the result rather than leaving

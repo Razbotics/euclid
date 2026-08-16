@@ -25,6 +25,10 @@ export function buildInstructions(): string {
     '  top-left — a 1920x1080 canvas centres at (960, 540). Nodes anchor at their',
     '  centre. Every `start` and `duration` is in SCENE-LOCAL seconds.',
     '',
+    '  A scene can also have a camera (set_camera / move_camera). Node coordinates',
+    '  never change — the camera decides which part of the scene the frame shows,',
+    '  so a diagram can be laid out larger than the canvas and read piece by piece.',
+    '',
     '  Usual order: create_project → add_scene → add_* nodes → set_narration →',
     '  generate_narration (gives real timings) → fit_scene_to_narration →',
     '  animate/morph_latex/highlight against those timings → render_video.',
@@ -172,8 +176,8 @@ const STRICT = new WeakMap<Capability, z.ZodType>()
  * another, which no amount of reading the response can catch.
  *
  * Enforced here rather than on each schema because the catalog is the single
- * chokepoint — this covers all 27 capabilities and every future one, and no
- * entry can forget it.
+ * chokepoint — this covers every capability, present and future, and no entry
+ * can forget it.
  */
 function strictArgs(cap: Capability): z.ZodType {
   const cached = STRICT.get(cap)

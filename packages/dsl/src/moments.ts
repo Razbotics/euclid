@@ -15,8 +15,8 @@ export interface KeyMoment {
   sceneId: string
   /** The node that made this moment interesting; absent for a scene opening. */
   nodeId?: string
-  kind: 'scene' | 'texMorph' | 'write' | 'highlight'
-  /** Where in the effect this lands: '25%', '50%', '75%', 'hold', 'open'. */
+  kind: 'scene' | 'texMorph' | 'write' | 'highlight' | 'camera'
+  /** Where in the effect this lands: '25%', '50%', '75%', 'hold', 'open', 'settled'. */
   phase: string
   /** One short line for a contact-sheet tile label. */
   label: string
@@ -120,6 +120,38 @@ export function keyMoments(doc: EuclidDoc, options: KeyMomentOptions = {}): KeyM
         }
       }
     }
+    // A camera move re-frames every node at once, so what it can get wrong is
+    // not in any one node: the diagram ends up half out of frame, or the zoom
+    // settles somewhere nothing is. An outline cannot show that, and before
+    // this a contact sheet had no reason to sample the move at all — the
+    // moments came from transitions, and a camera has none.
+    for (const track of scene.camera?.tracks ?? []) {
+      for (let i = 1; i < track.keyframes.length; i++) {
+        const a = track.keyframes[i - 1]!
+        const b = track.keyframes[i]!
+        if (JSON.stringify(a.value) === JSON.stringify(b.value)) continue
+        const label = `camera ${track.property} → ${formatKeyValue(b.value)}`
+        picked.push({
+          t: sceneStart + (a.t + b.t) / 2,
+          sceneId: scene.id,
+          kind: 'camera',
+          phase: 'mid',
+          label,
+          priority: 3,
+        })
+        // Where it comes to rest is the frame that has to be composed, so it
+        // outranks the mid-move sample and survives the cap.
+        picked.push({
+          t: sceneStart + b.t,
+          sceneId: scene.id,
+          kind: 'camera',
+          phase: 'settled',
+          label,
+          priority: 1,
+        })
+      }
+    }
+
     sceneStart += scene.duration
   }
 
@@ -161,6 +193,16 @@ export function formatMoments(moments: KeyMoment[]): string {
 function strip(m: KeyMoment & { priority?: number }): KeyMoment {
   const { priority: _priority, ...rest } = m
   return rest
+}
+
+/** A keyframe value as a tile label: `(960,540)`, `2.5`, `#58c4dd`. */
+function formatKeyValue(v: unknown): string {
+  if (typeof v === 'object' && v !== null && 'x' in v && 'y' in v) {
+    const p = v as { x: number; y: number }
+    return `(${Math.round(p.x)},${Math.round(p.y)})`
+  }
+  if (typeof v === 'number') return String(Math.round(v * 100) / 100)
+  return String(v)
 }
 
 function* walk(nodes: EuclidNode[]): Generator<EuclidNode> {

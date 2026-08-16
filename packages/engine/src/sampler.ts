@@ -1,5 +1,6 @@
 import {
   ANIMATABLE_PROPS,
+  LIMITS,
   type EuclidNode,
   type KeyValue,
   type Keyframe,
@@ -44,8 +45,49 @@ export interface ResolvedNode {
   children: ResolvedNode[]
 }
 
-export function resolveScene(scene: Scene, t: number): ResolvedNode[] {
-  return scene.nodes.map((n) => resolveNode(n, t))
+/** The framing at t. Screen = canvasCentre + R(−rotation)·zoom·(scenePoint − position). */
+export interface ResolvedCamera {
+  position: Vec2
+  zoom: number
+  rotation: number
+}
+
+export interface ResolvedScene {
+  nodes: ResolvedNode[]
+  /** null = no camera on this scene; the frame is the canvas, untransformed. */
+  camera: ResolvedCamera | null
+}
+
+export function resolveScene(scene: Scene, t: number): ResolvedScene {
+  return {
+    nodes: scene.nodes.map((n) => resolveNode(n, t)),
+    camera: resolveCamera(scene, t),
+  }
+}
+
+/**
+ * The camera's framing at t — same rule as a node: a track shadows the base
+ * value wherever one exists.
+ *
+ * Exported separately from `resolveScene` because the editor's frame overlay
+ * wants the camera without paying to resolve every node in the scene.
+ */
+export function resolveCamera(scene: Scene, t: number): ResolvedCamera | null {
+  const cam = scene.camera
+  if (!cam) return null
+  const out: ResolvedCamera = { position: cam.position, zoom: cam.zoom, rotation: cam.rotation }
+  for (const track of cam.tracks) {
+    const v = sampleKeyframes(track.keyframes, t)
+    if (track.property === 'position') out.position = v as Vec2
+    else if (track.property === 'zoom') out.zoom = v as number
+    else out.rotation = v as number
+  }
+  // The schema bounds the base value but cannot bound a keyframe — KeyValue is
+  // one union for every property. A zoom at or below zero is a non-invertible
+  // transform: the whole scene collapses and every frame after it is blank,
+  // which looks like a broken renderer rather than a bad keyframe.
+  out.zoom = Math.min(LIMITS.maxCameraZoom, Math.max(LIMITS.minCameraZoom, out.zoom))
+  return out
 }
 
 export function resolveNode(node: EuclidNode, t: number): ResolvedNode {

@@ -1,11 +1,13 @@
 import { z } from 'zod'
 import {
+  CameraSchema,
   CanvasSchema,
   ColorSchema,
   NarrationSchema,
   NodeSchema,
   SceneSchema,
   TrackSchema,
+  type Camera,
   type Canvas,
   type Narration,
   type EuclidNode,
@@ -53,6 +55,16 @@ export const OpSchema = z.discriminatedUnion('kind', [
 
   z.object({ kind: z.literal('track.set'), sceneId: z.string(), nodeId: z.string(), track: TrackSchema }),
   z.object({ kind: z.literal('track.remove'), sceneId: z.string(), nodeId: z.string(), property: z.string() }),
+
+  /**
+   * The camera is set whole rather than patched, and its tracks ride along.
+   * A camera has three properties that are read together to mean "the framing",
+   * so a partial op would let two writers interleave into a framing neither
+   * asked for — and there is exactly one camera per scene, so there is no
+   * addressing to save by splitting it up.
+   */
+  z.object({ kind: z.literal('scene.setCamera'), sceneId: z.string(), camera: CameraSchema }),
+  z.object({ kind: z.literal('scene.clearCamera'), sceneId: z.string() }),
 
   z.object({ kind: z.literal('narration.set'), sceneId: z.string(), narration: NarrationSchema }),
   z.object({ kind: z.literal('narration.clear'), sceneId: z.string() }),
@@ -102,5 +114,7 @@ export const op = {
   removeNode: (sceneId: string, nodeId: string): Op => ({ kind: 'node.remove', sceneId, nodeId }),
   setTrack: (sceneId: string, nodeId: string, track: Track): Op => ({ kind: 'track.set', sceneId, nodeId, track }),
   setNarration: (sceneId: string, narration: Narration): Op => ({ kind: 'narration.set', sceneId, narration }),
+  setCamera: (sceneId: string, camera: Camera): Op => ({ kind: 'scene.setCamera', sceneId, camera }),
+  clearCamera: (sceneId: string): Op => ({ kind: 'scene.clearCamera', sceneId }),
   setCanvas: (canvas: Canvas): Op => ({ kind: 'project.setCanvas', canvas }),
 }

@@ -20,7 +20,8 @@ deterministic function of `t` when it's added.
 ## Document model
 
 `packages/dsl` defines the scene document: project → scenes (sequential on
-the global timeline) → nodes (rect/circle/line/text/latex/group). Animation:
+the global timeline) → nodes (rect/circle/line/path/text/latex/group), plus an
+optional per-scene `camera`. Animation:
 
 - **Tracks** — per-property keyframes (`position`, `opacity`, `fill`, …),
   eased per-segment (`smooth` = 3b1b smootherstep). The generic mechanism.
@@ -119,6 +120,42 @@ Worth noting the shape of that failure, because it will recur: an agent cannot
 tell "the system cannot do this" from "the system does not offer this", and
 will design around the limit it infers. Errors are cheap — a wrong guess costs
 one retry — but an inference costs a whole approach.
+
+## Camera
+
+A scene may carry a `camera` — `position`, `zoom`, `rotation`, plus tracks —
+and the stage composes it into the node layer's transform:
+`screen = canvasCentre + R(−roll)·zoom·(scenePoint − camera.position)`. Pixi
+builds exactly that from `pivot`/`position`/`scale`/`rotation`, so there is no
+projection step and nothing downstream knows a camera exists. Node
+coordinates, glyph geometry and highlight bounds all stay scene-local, which
+is what lets a diagram be laid out **larger than the canvas** and read a piece
+at a time — the thing a matrix of legible cells needs.
+
+Three decisions worth keeping:
+
+- **Not a node.** A camera inside the tree would inherit its parent's
+  transform, and the frame is not something a group can own.
+- **Not a new animation mechanism.** Camera tracks are the same `Track`
+  shape, sampled by the same `sampleKeyframes`, obeying the same rule that a
+  track shadows the base value. `move_camera` is `animate` with three
+  properties: it samples the current framing at `start` rather than assuming
+  it, so moves chain.
+- **The background stays outside it.** `bg` is drawn in the root, not the
+  camera layer, so it fills the frame rather than sitting in the scene, and
+  zooming out reveals more diagram instead of the edge of the backdrop.
+
+The camera is optional (`camera?`), so documents written before it stay valid
+and `SCHEMA_VERSION` did not move. Absent means no transform at all rather than
+an identity camera, which is what lets the stage reset cleanly between scenes.
+
+A camera move is also a **key moment**: it re-frames every node at once, so
+what it gets wrong is not in any node — the subject ends up half out of frame,
+or the zoom settles on nothing. It has no transitions to be found by, so
+`keyMoments` reads the camera tracks directly and samples mid-move and where it
+settles. The editor draws a mini-map of the frame within the scene while
+scrubbing, for the same reason: the preview *is* the camera's view, so the one
+thing it cannot show is where that view sits.
 
 ## Curves
 
@@ -304,9 +341,25 @@ Three properties carry it:
 A capture failure and a correctly-rendered dark frame are the same bytes: a
 valid PNG of the right size. So the backend measures the lit fraction of each
 tile where the pixels actually are (the PNG cannot be asked — row filtering
-makes flat regions look like zeros) and reports it; an all-blank sheet is
-refused as a capture fault rather than handed to an agent that would read it
-as a broken video.
+makes flat regions look like zeros) and reports it; a sheet of **key moments**
+that comes back entirely blank is refused as a capture fault rather than handed
+to an agent that would read it as a broken video. Explicitly requested times
+are exempt: there, "empty" can be the true answer — before a write-on starts,
+or when a camera is framing part of the scene where nothing is — and erroring
+would report a broken backend for a framing mistake.
+
+Two defects in this path were found while building the camera (2026-08-16),
+which is the first feature where "the document changed" and "the picture
+changed" come apart cleanly. Both are now asserted in `check-preview.ts`:
+
+- Ink was measured **after** the tile's hairline border was drawn, and the
+  border is inside the measured rect. Every tile carried a ~1.2% floor, so a
+  blank frame scored 1.15% against a 0.02% threshold and the capture-fault
+  guard could never fire.
+- The capture cache was keyed on the document's **JSON length**. Any
+  length-preserving edit — (960,540) → (200,200), `#ffffff` → `#101418`, a
+  duration of 6 → 8 — served the previous frame back as current. It is a
+  content hash now.
 
 ## Shapes without fills
 

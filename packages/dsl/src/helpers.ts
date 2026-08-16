@@ -1,4 +1,11 @@
-import { SCHEMA_VERSION, type EuclidDoc, type EuclidNode, type Scene } from './document'
+import {
+  SCHEMA_VERSION,
+  type Camera,
+  type Canvas,
+  type EuclidDoc,
+  type EuclidNode,
+  type Scene,
+} from './document'
 import { LONG_TAIL_SEC, pacingSummary, scenePacing } from './narration'
 
 export function newId(prefix: string): string {
@@ -38,6 +45,20 @@ export function globalToScene(doc: EuclidDoc, t: number): SceneAt | null {
     sceneIndex: doc.scenes.length - 1,
     localT: last.duration,
     sceneStart: acc - last.duration,
+  }
+}
+
+/**
+ * The camera that changes nothing: centred on the canvas, unzoomed, unrolled.
+ * Adding a camera to a scene must not move anything by itself, or every
+ * framing call would start by undoing a surprise.
+ */
+export function defaultCamera(canvas: Canvas): Camera {
+  return {
+    position: { x: canvas.width / 2, y: canvas.height / 2 },
+    zoom: 1,
+    rotation: 0,
+    tracks: [],
   }
 }
 
@@ -100,12 +121,32 @@ export function outlineDoc(doc: EuclidDoc): string {
       narration += ` "${truncate(sc.narration.text, 60)}"`
     }
     lines.push(
-      `  scene ${sc.id} "${sc.name}" [${start}s → ${start + sc.duration}s] bg=${sc.background}${narration}`,
+      `  scene ${sc.id} "${sc.name}" [${start}s → ${start + sc.duration}s] bg=${sc.background}` +
+        // A camera re-frames every node in the scene, so an outline that showed
+        // node positions but not the camera would be describing coordinates
+        // nobody is looking at.
+        outlineCamera(sc) +
+        narration,
     )
     outlineNodes(sc.nodes, lines, '    ')
     start += sc.duration
   }
   return lines.join('\n')
+}
+
+function outlineCamera(scene: Scene): string {
+  const cam = scene.camera
+  if (!cam) return ''
+  const tracks = cam.tracks.length > 0 ? ` cam-tracks[${cam.tracks.map((t) => t.property).join(',')}]` : ''
+  return (
+    ` cam@(${round(cam.position.x)},${round(cam.position.y)}) zoom=${round(cam.zoom)}` +
+    (cam.rotation !== 0 ? ` roll=${round(cam.rotation)}rad` : '') +
+    tracks
+  )
+}
+
+function round(n: number): number {
+  return Math.round(n * 100) / 100
 }
 
 function outlineNodes(nodes: import('./document').EuclidNode[], lines: string[], indent: string): void {

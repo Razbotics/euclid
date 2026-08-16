@@ -1,4 +1,4 @@
-# 006 — Complex animation and depth (status: next — Phase 4)
+# 006 — Complex animation and depth (status: in progress — Phase 4)
 
 > **Deferred 2026-08-15, promoted back 2026-08-16.** It was parked for one
 > stated reason: this plan's own verification step — "verify by screenshot at
@@ -71,18 +71,77 @@ Not starting from zero. The glyph work from
 Each of those has `glyph` hardcoded where it wants a key function. Extracting
 that is most of Phase A.
 
-## Phase A: Camera  (status: planned)
+## Phase A: Camera  (status: done, 2026-08-16)
 Smallest piece, improves everything after it, so it goes first.
 
-- [ ] `camera` on the scene: `position`, `zoom`, `rotation`, animated by
+- [x] `camera` on the scene: `position`, `zoom`, `rotation`, animated by
       ordinary tracks — no new animation mechanism
-- [ ] Sampler resolves the camera and returns it with the scene
-- [ ] Stage composes it into the layer transform
-- [ ] Editor shows the camera frame while scrubbing
-- [ ] `move_camera` MCP tool
+- [x] Sampler resolves the camera and returns it with the scene
+      (`resolveScene` → `{nodes, camera}`; `resolveCamera` exported separately
+      for callers that want the framing without resolving every node)
+- [x] Stage composes it into the layer transform
+- [x] Editor shows the camera frame while scrubbing
+- [x] `move_camera` MCP tool — plus `set_camera` for static framing
+- [x] Camera moves are key moments, so `preview_frames` samples them
 
 A diagram larger than the frame becomes legible, which is what lets a matrix
 be big enough to read cell by cell.
+
+**Verified in pixels**, not by reading the code — `check-camera.ts` measures
+the lit fraction of real capture frames, and every number matched the geometry:
+zoom 3 took a disc from 0.56% to 4.95% of the frame (8.8× ≈ 3²), panning away
+took it to exactly 0, a node laid out at x=2600 (past the 1920 canvas edge)
+went 0% → 1.26% when the camera reached it, an animated push-in read
+0.56% → 2.22% → 4.95%, and a quarter-turn roll clipped an 1800×200 bar to 0.6×
+its area.
+
+### Decisions
+
+- **Not a node, not a new animation mechanism.** A camera in the tree would
+  inherit its parent's transform; the frame is not something a group can own.
+  Its tracks are ordinary `Track`s sampled by the same `sampleKeyframes`, and
+  `move_camera` samples the framing at `start` exactly as `animate` samples a
+  node property, so moves chain.
+- **`camera` is optional on the scene**, so no `SCHEMA_VERSION` bump. Absent
+  means *no transform*, not an identity camera — which is what lets the stage
+  reset between scenes.
+- **One op, `scene.setCamera`, sets the camera whole.** Three numbers read
+  together mean "the framing"; a partial op would let two writers interleave
+  into a framing neither asked for, and there is one camera per scene so
+  nothing is saved by splitting it.
+- **Two capabilities, not one.** `set_camera` composes (and warns when a track
+  shadows what you just set — the `update_node` trap in camera form);
+  `move_camera` animates. Framing statically through a 0.1s move would leave a
+  track behind and shadow every later `set_camera`.
+- **Zoom is bounded (0.05–50), and clamped again at sample time.** The schema
+  can bound the base value but not a keyframe — `KeyValue` is one union for
+  every property — and a zoom of 0 is a non-invertible transform that blanks
+  every frame after it, which reads as a broken renderer rather than a bad
+  keyframe.
+
+### Notes / gotchas
+
+Two defects in the **agent-sight** path surfaced here, because a camera is the
+first feature where "the document changed" and "the picture changed" come apart
+cleanly. Both are fixed and now asserted in `check-preview.ts`:
+
+- **The tile border was inside the ink measurement.** `sheet.ts` measured the
+  lit fraction after drawing the hairline that separates tiles, putting a
+  ~1.2% floor under every tile. A genuinely blank frame scored 1.15% against a
+  0.02% blank threshold, so the "every frame came back empty ⇒ capture fault"
+  guard — built for exactly the black-tile bug that path has had before —
+  could never fire. Measure before decorating.
+- **The capture cache was keyed on the document's JSON length.** Any
+  length-preserving edit was invisible and the agent got the *previous* frame
+  back, reported as current: `(960,540)` → `(200,200)`, `#ffffff` → `#101418`,
+  a duration of 6 → 8. This is how it was found — a camera pan to (200,200)
+  produced a frame identical to the one before it. It is a content hash now.
+
+With the ink floor gone, the blank-sheet guard started firing on frames that
+are *legitimately* empty, so it now applies only to sheets built from key
+moments. An explicitly requested time is a question, and "nothing here" is a
+valid answer to it — especially with a camera, where the honest reading is
+"your framing is wrong", not "your backend is broken".
 
 ## Phase B: Structured primitives  (status: planned)
 Most of that video's density is structured 2D, not 3D. Highest ratio of

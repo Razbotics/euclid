@@ -101,8 +101,15 @@ plans/003 keeps its analysis and its place.
 What already landed changes the shape of the remaining work: `add_group` gives
 a real transform hierarchy, `path` + `plot_function` did the graph half, and
 arc-length `write_on` is the beginning of path-following.
-- [ ] Camera on the scene (position/zoom/rotation), animated by ordinary tracks
-      — a scene-level transform, now that per-node grouping exists
+- [x] Camera on the scene (position/zoom/rotation), animated by ordinary tracks
+      — a scene-level transform, now that per-node grouping exists. **Done
+      2026-08-16**: `set_camera`/`move_camera`, camera moves are key moments so
+      `preview_frames` samples them, and the editor draws a mini-map of the
+      frame while scrubbing. Verified in pixels by `check-camera.ts`. It also
+      turned up two defects in the sight path — the ink measurement counted the
+      tile's own border, and the capture cache was keyed on the document's JSON
+      *length*, so any length-preserving edit was served a stale frame. Both
+      fixed; see plans/006
 - [ ] Structured primitives: `matrix`, `tokens`, cell-level addressing
 - [ ] Generalise stagger + element matching out of the glyph work in 002
 - [ ] Flows: arrows anchored to nodes, path-following along a `path`

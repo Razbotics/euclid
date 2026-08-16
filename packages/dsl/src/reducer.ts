@@ -163,6 +163,24 @@ function applyOp(doc: EuclidDoc, op: Op): void {
       return
     }
 
+    case 'scene.setCamera': {
+      const scene = requireScene(doc, op.sceneId)
+      // Sorted here for the same reason track.set sorts: the sampler walks
+      // keyframes in order and would interpolate backwards otherwise.
+      scene.camera = {
+        ...op.camera,
+        tracks: op.camera.tracks.map((t) => ({
+          ...t,
+          keyframes: [...t.keyframes].sort((a, b) => a.t - b.t),
+        })),
+      }
+      return
+    }
+    case 'scene.clearCamera': {
+      delete requireScene(doc, op.sceneId).camera
+      return
+    }
+
     case 'narration.set': {
       requireScene(doc, op.sceneId).narration = op.narration
       return
