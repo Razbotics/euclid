@@ -1,17 +1,28 @@
 import { Container, Graphics, Sprite, Text, Texture, type Renderer } from 'pixi.js'
 import {
+  cellCenter,
+  cellsInRange,
   globalToScene,
+  gridOf,
+  gridSize,
+  rangeBounds,
   type Canvas,
+  type CellRange,
   type Color,
   type EuclidDoc,
+  type GridSpec,
   type LatexNode,
+  type MatrixNode,
+  type TokensNode,
   type Vec2,
 } from '@euclid/dsl'
 import { pathAtProgress } from '../path'
-import { resolveScene, type ResolvedCamera, type ResolvedNode } from '../sampler'
+import { staggerAlphas } from '../stagger'
+import { lerpColor, resolveScene, type ResolvedCamera, type ResolvedNode } from '../sampler'
 import {
   findGlyphRun,
   glyphBounds,
+  matchByKey,
   matchGlyphs,
   morphGlyphs,
   writeGlyphAlphas,
@@ -44,6 +55,59 @@ export interface TexGlyphRender extends TexGlyph {
   texture: Texture
 }
 
+/** One pooled sprite to draw this frame — a glyph, or a matrix cell. */
+interface SpriteEntry {
+  texture: Texture
+  x: number
+  y: number
+  scale: number
+  alpha: number
+}
+
+/**
+ * A matrix cell as the glyph machinery sees it: `code` is its contents, so
+ * `matchByKey` pairs cells that say the same thing and `morphGlyphs` moves them
+ * to their new places. Empty cells are dropped — an empty cell has no identity
+ * to match on — but `index` keeps the row-major position, which is what
+ * addressing and the reveal order are expressed in.
+ */
+interface CellItem extends TexGlyph {
+  index: number
+}
+
+function cellItems(cells: string[][], cellWidth: number, cellHeight: number): CellItem[] {
+  const spec: GridSpec = {
+    rows: cells.length,
+    cols: cells[0]?.length ?? 0,
+    cellWidth,
+    cellHeight,
+  }
+  const out: CellItem[] = []
+  for (let i = 0; i < spec.rows; i++) {
+    for (let j = 0; j < spec.cols; j++) {
+      const content = cells[i]![j]!
+      if (content === '') continue
+      const at = cellCenter(spec, i, j)
+      out.push({
+        code: content,
+        index: i * spec.cols + j,
+        x: at.x,
+        y: at.y,
+        width: cellWidth,
+        height: cellHeight,
+      })
+    }
+  }
+  return out
+}
+
+/** Cache key for a grid's contents — matching is O(n·m) and the pair is stable. */
+function cellKey(cells: string[][]): string {
+  return cells.map((r) => r.join('')).join('')
+}
+
+const lerp = (a: number, b: number, u: number): number => a + (b - a) * u
+
 /** Renders the raw TeX source as monospace text — placeholder until a real provider is wired. */
 export class FallbackTexProvider implements TexProvider {
   constructor(private renderer: Renderer) {}
@@ -67,9 +131,14 @@ interface Item {
   /** latex only: crossfade pair, used when glyph data isn't available */
   fromSprite?: Sprite
   toSprite?: Sprite
-  /** latex only: sprite pool for matched-glyph morphing, reused across frames */
+  /** latex/matrix: sprite pool for glyphs or cells, reused across frames */
   glyphSprites?: Sprite[]
   glyphLayer?: Container
+  /** matrix only: the delimiters, sized to the grid */
+  brackets?: Graphics
+  /** tokens only: the boxes, and one pooled Text per label */
+  boxes?: Graphics
+  labelTexts?: Text[]
   /** emphasis marker, drawn behind the node's content */
   highlight?: Graphics
   /** true when a write is being drawn per-glyph, so applyWrite skips its mask */
@@ -181,7 +250,28 @@ export class EuclidStage {
       parent.setChildIndex(item.view, Math.min(zIndex, parent.children.length - 1))
       if (res.source.type === 'group') {
         this.syncChildren(res.children, item.content, seen)
+        this.applyGroupStagger(res)
       }
+    })
+  }
+
+  /**
+   * `write` on a group reveals its children one after another — the same
+   * stagger an equation uses for its glyphs and a matrix for its cells, with
+   * child order as the sequence.
+   *
+   * Applied after the children are synced, because each child sets its own
+   * alpha from its resolved `opacity` when it syncs; this multiplies into that
+   * rather than replacing it, so a child that is half-transparent by design
+   * stays half-transparent as it arrives.
+   */
+  private applyGroupStagger(res: ResolvedNode): void {
+    const wp = res.writeProgress
+    if (wp === null || wp >= 1 || res.children.length === 0) return
+    const alphas = staggerAlphas(res.children.length, wp)
+    res.children.forEach((child, i) => {
+      const item = this.items.get(child.source.id)
+      if (item) item.view.alpha *= alphas[i]!
     })
   }
 
@@ -244,7 +334,7 @@ export class EuclidStage {
     g.visible = true
     g.clear()
 
-    const bounds = this.highlightBounds(item, res, hl.tex)
+    const bounds = this.highlightBounds(item, res, hl.tex, hl.cells)
     if (!bounds) {
       g.visible = false
       return
@@ -271,9 +361,30 @@ export class EuclidStage {
     }
   }
 
-  /** Glyph-run bounds for a targeted term, else the node's own bounds. */
-  private highlightBounds(item: Item, res: ResolvedNode, tex?: string): GlyphBounds | null {
+  /** Glyph-run bounds for a targeted term, cell bounds for a range, else the node's own. */
+  private highlightBounds(
+    item: Item,
+    res: ResolvedNode,
+    tex?: string,
+    cells?: CellRange,
+  ): GlyphBounds | null {
     const node = res.source
+    if (cells && (node.type === 'matrix' || node.type === 'tokens')) {
+      // Straight from the grid: no measurement, so a box around row 2 is exact
+      // whether or not the cells have finished rasterizing. The grid is the
+      // *resolved* one — a matrix that has morphed is the shape it morphed to.
+      const spec =
+        node.type === 'matrix' && res.cellMorph
+          ? {
+              rows: res.cellMorph.toCells.length,
+              cols: res.cellMorph.toCells[0]!.length,
+              cellWidth: node.cellWidth,
+              cellHeight: node.cellHeight,
+            }
+          : gridOf(node)
+      const b = rangeBounds(spec, cells)
+      if (b) return b
+    }
     if (tex && node.type === 'latex' && this.texProvider?.getGlyphs) {
       const color = res.props.color as string
       const fontSize = res.props.fontSize as number
@@ -313,8 +424,8 @@ export class EuclidStage {
         break
       }
       case 'latex':
-        content = new Container()
-        break
+      case 'matrix':
+      case 'tokens':
       case 'group':
         content = new Container()
         break
@@ -386,7 +497,18 @@ export class EuclidStage {
       case 'latex':
         this.updateLatex(item, res, node)
         return
+      case 'matrix':
+        this.updateMatrix(item, res, node)
+        return
+      case 'tokens':
+        this.updateTokens(item, res, node)
+        return
       case 'group':
+        // A write on a group arrives child by child (applied once the children
+        // exist, in syncChildren). Flagged here so applyWrite leaves its mask
+        // alone — a mask would sweep an edge across the whole group and undo
+        // the point of revealing its parts in turn.
+        item.glyphWrite = res.writeProgress !== null
         return
     }
   }
@@ -581,6 +703,221 @@ export class EuclidStage {
     this.drawGlyphs(item, entries)
   }
 
+  /**
+   * A matrix: one sprite per non-empty cell, on a fixed grid.
+   *
+   * Everything a matrix can do is something the glyph work already does, with
+   * cells in place of glyphs — which is why this is short. A reveal is
+   * `staggerAlphas` over cells instead of symbols; a restatement is
+   * `matchByKey` on cell contents instead of codepoints, fed to the same
+   * `morphGlyphs`; emphasis dims or recolours a selected set exactly as
+   * `spotlight` and `color` do inside an equation. The generalisations asked
+   * for in plans/006 Phase B are those two key functions.
+   */
+  private updateMatrix(item: Item, res: ResolvedNode, node: MatrixNode): void {
+    const color = res.props.color as string
+    const fontSize = res.props.fontSize as number
+    const morph = res.cellMorph
+    const fromCells = morph ? morph.fromCells : node.cells
+    const toCells = morph ? morph.toCells : node.cells
+    const progress = morph ? morph.progress : 0
+    item.glyphEmphasis = false
+    item.glyphWrite = false
+
+    const from = cellItems(fromCells, node.cellWidth, node.cellHeight)
+
+    if (fromCells !== toCells) {
+      const to = cellItems(toCells, node.cellWidth, node.cellHeight)
+      const key = `${cellKey(fromCells)}→${cellKey(toCells)}`
+      let match = this.matchCache.get(key)
+      if (!match) {
+        match = matchByKey(from, to, (c) => c.code)
+        this.matchCache.set(key, match)
+      }
+      // The grid itself grows or shrinks with the morph, so the delimiters
+      // travel with it rather than snapping at the end.
+      this.drawBrackets(item, node, {
+        rows: lerp(fromCells.length, toCells.length, progress),
+        cols: lerp(fromCells[0]!.length, toCells[0]!.length, progress),
+        cellWidth: node.cellWidth,
+        cellHeight: node.cellHeight,
+      })
+      const entries: SpriteEntry[] = []
+      for (const g of morphGlyphs(from, to, match, progress)) {
+        const cell = g.source === 'from' ? from[g.index]! : to[g.index]!
+        const texture = this.requestTexture(cell.code, color, fontSize)
+        if (texture) entries.push({ texture, x: g.x, y: g.y, scale: g.scale, alpha: g.alpha })
+      }
+      this.drawGlyphs(item, entries)
+      return
+    }
+
+    // The shape comes from the cells being *drawn*, not from `node.cells`:
+    // once a morph has settled, the resolved grid is the morph's target and
+    // the node's own cells are the shape it started life with. Reading the
+    // node here drew a 2x3 of cells inside 2x2 brackets.
+    const spec: GridSpec = {
+      rows: fromCells.length,
+      cols: fromCells[0]!.length,
+      cellWidth: node.cellWidth,
+      cellHeight: node.cellHeight,
+    }
+    this.drawBrackets(item, node, spec)
+
+    // A write reveals cell by cell, in reading order, so `applyWrite` must not
+    // also sweep a mask across it — same contract as the glyph reveal.
+    const wp = res.writeProgress
+    const alphas =
+      wp === null || wp >= 1 ? null : staggerAlphas(spec.rows * spec.cols, wp)
+    if (alphas) item.glyphWrite = true
+
+    const hl = res.highlight
+    const emphasis =
+      hl && hl.strength > 0 && hl.cells && (hl.style === 'color' || hl.style === 'spotlight')
+        ? hl
+        : null
+    const targeted = new Set(emphasis ? cellsInRange(spec, emphasis.cells) : [])
+    if (emphasis) item.glyphEmphasis = true
+
+    const entries: SpriteEntry[] = []
+    for (const cell of from) {
+      const texture = this.requestTexture(cell.code, color, fontSize)
+      if (!texture) continue
+      const dim =
+        emphasis?.style === 'spotlight' && !targeted.has(cell.index)
+          ? 1 - SPOTLIGHT_DIM * emphasis.strength
+          : 1
+      entries.push({
+        texture,
+        x: cell.x,
+        y: cell.y,
+        scale: 1,
+        alpha: (alphas?.[cell.index] ?? 1) * dim,
+      })
+    }
+    if (emphasis?.style === 'color') {
+      // The recoloured cell is the same content rasterized in the highlight
+      // colour, cross-faded over the original — tinting multiplies, so it
+      // could only ever darken.
+      for (const cell of from) {
+        if (!targeted.has(cell.index)) continue
+        const inked = this.requestTexture(cell.code, emphasis.color, fontSize)
+        if (!inked) continue
+        entries.push({ texture: inked, x: cell.x, y: cell.y, scale: 1, alpha: emphasis.strength })
+      }
+    }
+    this.drawGlyphs(item, entries)
+  }
+
+  /** Delimiters sized to the grid, drawn behind the cells. */
+  private drawBrackets(item: Item, node: MatrixNode, spec: GridSpec): void {
+    if (!item.brackets) {
+      item.brackets = new Graphics()
+      item.content.addChildAt(item.brackets, 0)
+    }
+    const g = item.brackets
+    g.clear()
+    if (node.brackets === 'none') return
+
+    const { width, height } = gridSize(spec)
+    const x = width / 2
+    const y = height / 2
+    const tick = Math.min(node.cellWidth, node.cellHeight) * 0.16
+    const w = Math.max(2, node.fontSize * 0.06)
+    for (const side of [-1, 1]) {
+      const edge = side * x
+      if (node.brackets === 'square') {
+        // Ticks point INWARD, toward the content: a left bracket is `[`, whose
+        // arms reach right. Pointing them outward draws `]` on the left and
+        // `[` on the right, which reads as the matrix turned inside out.
+        g.moveTo(edge - side * tick, -y)
+          .lineTo(edge, -y)
+          .lineTo(edge, y)
+          .lineTo(edge - side * tick, y)
+      } else {
+        // A parenthesis bows away from the content; the control point sits
+        // outside the edge by the same tick, so both styles read the same size.
+        g.moveTo(edge, -y)
+          .quadraticCurveTo(edge + side * tick * 2, 0, edge, y)
+      }
+      g.stroke({ width: w, color: node.color, alpha: 1 })
+    }
+  }
+
+  /**
+   * A token strip: labels in boxes, laid out on the same grid a matrix uses.
+   *
+   * Text rather than typeset mathematics, so this draws Pixi `Text` instead of
+   * rasterized LaTeX — which makes emphasis simpler, not harder: recolouring a
+   * token is a fill change, where recolouring a glyph needs a second
+   * rasterization to cross-fade against.
+   */
+  private updateTokens(item: Item, res: ResolvedNode, node: TokensNode): void {
+    const color = res.props.color as string
+    const fontSize = res.props.fontSize as number
+    const spec = gridOf(node)
+    item.glyphWrite = false
+    item.glyphEmphasis = false
+
+    const wp = res.writeProgress
+    const alphas = wp === null || wp >= 1 ? null : staggerAlphas(node.labels.length, wp)
+    if (alphas) item.glyphWrite = true
+
+    const hl = res.highlight
+    const emphasis =
+      hl && hl.strength > 0 && hl.cells && (hl.style === 'color' || hl.style === 'spotlight')
+        ? hl
+        : null
+    const targeted = new Set(emphasis ? cellsInRange(spec, emphasis.cells) : [])
+    if (emphasis) item.glyphEmphasis = true
+
+    if (!item.boxes) {
+      item.boxes = new Graphics()
+      item.content.addChildAt(item.boxes, 0)
+    }
+    const boxes = item.boxes
+    boxes.clear()
+    if (!item.labelTexts) item.labelTexts = []
+    const pool = item.labelTexts
+
+    const boxW = node.cellWidth * 0.88
+    const boxH = node.cellHeight * 0.72
+    for (let i = 0; i < node.labels.length; i++) {
+      const row = node.orientation === 'row' ? 0 : i
+      const col = node.orientation === 'row' ? i : 0
+      const at = cellCenter(spec, row, col)
+      const dim =
+        emphasis?.style === 'spotlight' && !targeted.has(i) ? 1 - SPOTLIGHT_DIM * emphasis.strength : 1
+      const alpha = (alphas?.[i] ?? 1) * dim
+
+      if (alpha > 0 && (node.boxFill || node.boxStroke)) {
+        boxes.roundRect(at.x - boxW / 2, at.y - boxH / 2, boxW, boxH, Math.min(boxW, boxH) * 0.18)
+        if (node.boxFill) boxes.fill({ color: node.boxFill, alpha })
+        if (node.boxStroke) {
+          boxes.stroke({ width: Math.max(1, fontSize * 0.05), color: node.boxStroke, alpha })
+        }
+      }
+
+      let text = pool[i]
+      if (!text) {
+        text = new Text({ text: node.labels[i]!, style: { fontFamily: node.fontFamily, fontSize } })
+        text.anchor.set(0.5)
+        pool.push(text)
+        item.content.addChild(text)
+      }
+      if (text.text !== node.labels[i]) text.text = node.labels[i]!
+      text.style.fontSize = fontSize
+      text.style.fill =
+        emphasis?.style === 'color' && targeted.has(i)
+          ? lerpColor(color, emphasis.color, emphasis.strength)
+          : color
+      text.position.set(at.x, at.y)
+      text.alpha = alpha
+      text.visible = alpha > 0
+    }
+    for (let i = node.labels.length; i < pool.length; i++) pool[i]!.visible = false
+  }
+
   /** Shared sprite pool: one sprite per drawn glyph, reused across frames. */
   private drawGlyphs(
     item: Item,
@@ -628,14 +965,16 @@ export class EuclidStage {
     return null
   }
 
-  private assignTexTexture(sprite: Sprite, tex: string, color: string, fontSize: number): void {
-    const key = `${tex} ${color} ${fontSize}`
+  /**
+   * Cached whole-string texture, kicking off rasterization on first request —
+   * the sprite-free half of `assignTexTexture`, because a matrix has to know
+   * whether a cell's texture exists *before* deciding what to draw.
+   */
+  private requestTexture(tex: string, color: string, fontSize: number): Texture | null {
+    const key = `${tex}\u0000${color}\u0000${fontSize}`
     const cached = this.texCache.get(key)
-    if (cached instanceof Texture) {
-      if (sprite.texture !== cached) sprite.texture = cached
-      return
-    }
-    if (cached === 'pending' || !this.texProvider) return
+    if (cached instanceof Texture) return cached
+    if (cached === 'pending' || !this.texProvider) return null
     this.texCache.set(key, 'pending')
     const p = this.texProvider
       .getTexture(tex, color, fontSize)
@@ -643,6 +982,12 @@ export class EuclidStage {
       .catch(() => this.texCache.delete(key))
       .finally(() => this.pendingTex.delete(p))
     this.pendingTex.add(p)
+    return null
+  }
+
+  private assignTexTexture(sprite: Sprite, tex: string, color: string, fontSize: number): void {
+    const texture = this.requestTexture(tex, color, fontSize)
+    if (texture && sprite.texture !== texture) sprite.texture = texture
   }
 
   /**

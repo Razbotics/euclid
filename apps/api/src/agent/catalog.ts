@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { animTools } from './tools-anim'
 import { cameraTools } from './tools-camera'
 import { decisionTools } from './tools-decision'
+import { gridTools } from './tools-grid'
 import { mediaTools } from './tools-media'
 import { nodeTools } from './tools-node'
 import { previewTools } from './tools-preview'
@@ -11,6 +12,7 @@ import type { Capability } from './types'
 const ALL: Capability[] = [
   ...projectTools,
   ...nodeTools,
+  ...gridTools,
   ...animTools,
   ...cameraTools,
   ...mediaTools,

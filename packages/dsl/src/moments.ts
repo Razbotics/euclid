@@ -1,4 +1,5 @@
 import { collectNodeIds, docDuration } from './helpers'
+import { describeRange } from './grid'
 import type { EuclidDoc, EuclidNode, Scene } from './document'
 
 /**
@@ -15,7 +16,7 @@ export interface KeyMoment {
   sceneId: string
   /** The node that made this moment interesting; absent for a scene opening. */
   nodeId?: string
-  kind: 'scene' | 'texMorph' | 'write' | 'highlight' | 'camera'
+  kind: 'scene' | 'texMorph' | 'cellMorph' | 'write' | 'highlight' | 'camera'
   /** Where in the effect this lands: '25%', '50%', '75%', 'hold', 'open', 'settled'. */
   phase: string
   /** One short line for a contact-sheet tile label. */
@@ -94,6 +95,21 @@ export function keyMoments(doc: EuclidDoc, options: KeyMomentOptions = {}): KeyM
               priority: f === 0.5 ? 0 : 3,
             })
           }
+        } else if (tr.type === 'cellMorph') {
+          // Same trajectory sampling as a tex morph, and for the same reason:
+          // a grid re-laying itself is worst somewhere in the middle, not at
+          // either end.
+          for (const f of TRAJECTORY) {
+            picked.push({
+              t: at(f),
+              sceneId: scene.id,
+              nodeId: node.id,
+              kind: 'cellMorph',
+              phase: `${f * 100}%`,
+              label: `cells → ${tr.toCells.length}x${tr.toCells[0]?.length ?? 0} ${truncate(tr.toCells.map((r) => r.join(' ')).join(' ; '), 22)}`,
+              priority: f === 0.5 ? 0 : 3,
+            })
+          }
         } else if (tr.type === 'write') {
           picked.push({
             t: at(0.5),
@@ -114,7 +130,9 @@ export function keyMoments(doc: EuclidDoc, options: KeyMomentOptions = {}): KeyM
             nodeId: node.id,
             kind: 'highlight',
             phase: 'hold',
-            label: `highlight ${tr.tex ? truncate(tr.tex, 24) : describe(node)} (${tr.style})`,
+            label:
+              `highlight ${tr.tex ? truncate(tr.tex, 24) : tr.cells ? describeRange(tr.cells) : describe(node)} ` +
+              `(${tr.style})`,
             priority: 0,
           })
         }

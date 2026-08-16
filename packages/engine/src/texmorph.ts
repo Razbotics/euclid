@@ -10,6 +10,7 @@
  * Everything here is a pure function of (fromGlyphs, toGlyphs, progress), so
  * the purity invariant holds — no time, no randomness, no accumulated state.
  */
+import { staggerAlphas } from './stagger'
 
 /** One rendered glyph, positioned relative to the equation's centre, in px. */
 export interface TexGlyph {
@@ -25,9 +26,6 @@ export interface TexGlyph {
   height: number
 }
 
-/** Fraction of the whole reveal that a single glyph spends fading in. */
-const GLYPH_WRITE_SPAN = 0.3
-
 /**
  * Per-glyph alpha for a written reveal.
  *
@@ -36,18 +34,13 @@ const GLYPH_WRITE_SPAN = 0.3
  * as it passes. Revealing symbol by symbol in reading order reads far closer
  * to someone writing it out. Glyphs overlap slightly rather than appearing
  * one at a time, so it flows instead of ticking.
+ *
+ * The curve itself is `staggerAlphas`, which knows nothing about glyphs — a
+ * matrix filling in cell by cell and a group arriving child by child are the
+ * same reveal with a different order.
  */
 export function writeGlyphAlphas(count: number, progress: number): number[] {
-  const u = progress < 0 ? 0 : progress > 1 ? 1 : progress
-  if (count <= 0) return []
-  if (count === 1) return [u]
-  const step = (1 - GLYPH_WRITE_SPAN) / (count - 1)
-  const out: number[] = []
-  for (let i = 0; i < count; i++) {
-    const a = (u - i * step) / GLYPH_WRITE_SPAN
-    out.push(a < 0 ? 0 : a > 1 ? 1 : a)
-  }
-  return out
+  return staggerAlphas(count, progress)
 }
 
 export interface GlyphBounds {
@@ -111,32 +104,44 @@ export interface GlyphPair {
   toIndex: number
 }
 
+/**
+ * Correspondence between two sequences. Named for glyphs because that is what
+ * it was built for; the shape says nothing about them, and matrix cells use it
+ * unchanged.
+ */
 export interface GlyphMatch {
   pairs: GlyphPair[]
-  /** indices of from-glyphs with no counterpart — these fade out */
+  /** indices of from-items with no counterpart — these fade out */
   removed: number[]
-  /** indices of to-glyphs with no counterpart — these fade in */
+  /** indices of to-items with no counterpart — these fade in */
   added: number[]
 }
 
 /**
- * Pair glyphs between two equations by longest common subsequence of codes.
+ * Pair two sequences by longest common subsequence of their keys.
  *
  * LCS rather than greedy nearest-match because it preserves reading order:
- * matched glyphs can never cross over one another, which is what keeps the
+ * matched items can never cross over one another, which is what keeps the
  * motion legible. A greedy matcher pairing `c` with a later `c` would drag it
- * across the `=` and read as chaos.
+ * across the `=` and read as chaos; the same matcher pairing a matrix cell
+ * with an equal-valued cell three rows away would fling it across the grid.
+ *
+ * The key function is the whole generalisation: glyphs key on their codepoint,
+ * cells on their contents. Anything with a notion of "the same thing again"
+ * can morph.
  */
-export function matchGlyphs(from: TexGlyph[], to: TexGlyph[]): GlyphMatch {
+export function matchByKey<T>(from: T[], to: T[], key: (item: T) => string): GlyphMatch {
   const n = from.length
   const m = to.length
+  const a = from.map(key)
+  const b = to.map(key)
 
   // lengths[i][j] = LCS length of from[i..] and to[j..]
   const lengths: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0))
   for (let i = n - 1; i >= 0; i--) {
     for (let j = m - 1; j >= 0; j--) {
       lengths[i]![j] =
-        from[i]!.code === to[j]!.code
+        a[i] === b[j]
           ? lengths[i + 1]![j + 1]! + 1
           : Math.max(lengths[i + 1]![j]!, lengths[i]![j + 1]!)
     }
@@ -148,7 +153,7 @@ export function matchGlyphs(from: TexGlyph[], to: TexGlyph[]): GlyphMatch {
   let i = 0
   let j = 0
   while (i < n && j < m) {
-    if (from[i]!.code === to[j]!.code) {
+    if (a[i] === b[j]) {
       pairs.push({ fromIndex: i, toIndex: j })
       i++
       j++
@@ -162,6 +167,11 @@ export function matchGlyphs(from: TexGlyph[], to: TexGlyph[]): GlyphMatch {
   while (j < m) added.push(j++)
 
   return { pairs, removed, added }
+}
+
+/** Glyphs match iff their codepoints are equal. */
+export function matchGlyphs(from: TexGlyph[], to: TexGlyph[]): GlyphMatch {
+  return matchByKey(from, to, (g) => g.code)
 }
 
 /**

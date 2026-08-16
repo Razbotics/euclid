@@ -1,7 +1,8 @@
 import { z } from 'zod'
-import { op, type Easing, type Track, type Transition } from '@euclid/dsl'
+import { describeRange, op, type Easing, type Track, type Transition } from '@euclid/dsl'
 import { resolveNode } from '@euclid/engine'
 import { COLOR, EASING, NODE_ID, NUMBERISH, PROJECT_ID, SCENE_ID, SECONDS } from './schemas'
+import { CELLS_ARG, checkRange, gridOrThrow } from './tools-grid'
 import { capability, said, CapabilityError } from './types'
 
 /** Transitions that do not overlap [start, start+duration). */
@@ -145,11 +146,15 @@ export const animTools = [
 
   capability({
     name: 'highlight',
-    summary: 'Emphasise a node, or one term inside an equation named by its LaTeX.',
+    summary: 'Emphasise a node, one term inside an equation, or a range of matrix cells.',
     doc: [
-      'Free. Give `tex` to mark a sub-expression — `tex: "\\\\frac{b}{a}"` marks just that term, located by its glyph codes, so you never need screen coordinates.',
+      'Free. Name the part by what it *is*, never by where it landed on screen:',
       '',
-      'Styles: `color` recolours the term (default, usually cleanest); `spotlight` dims everything else and reads strongest on a busy equation; `box`/`underline` draw a marker around it. `color` and `spotlight` need `tex` on a latex node and fall back to a box otherwise.',
+      '- `tex` marks a sub-expression of a latex node — `tex: "\\\\frac{b}{a}"` marks just that term, located by its glyph codes.',
+      '- `cells` marks part of a matrix or token strip — `{"rows":1}` a row, `{"cols":2}` a column, `{"rows":1,"cols":2}` one cell, `{"rows":[0,1]}` a band. Indices are 0-based, and one that does not exist is an error rather than a marker drawn somewhere plausible.',
+      '- Neither marks the whole node.',
+      '',
+      'Styles: `color` recolours the target (default, usually cleanest); `spotlight` dims everything else and reads strongest on a busy equation or a large matrix; `box`/`underline` draw a marker around it. `color` and `spotlight` need a `tex` or `cells` target and fall back to a box otherwise.',
       '',
       'Use it when the narration dwells on something and nothing else is moving. Sequential highlights on one node accumulate; a call overlapping an existing window replaces it, because the engine renders one highlight at a time.',
     ].join('\n'),
@@ -160,31 +165,38 @@ export const animTools = [
       start: SECONDS,
       duration: z.number().positive(),
       tex: z.string().optional().describe('sub-expression to mark; whole node if omitted'),
+      cells: CELLS_ARG.optional(),
       style: z.enum(['box', 'underline', 'color', 'spotlight']).default('color'),
       color: COLOR.default('#e8c74a'),
     }),
-    async handler(ctx, { projectId, sceneId, nodeId, start, duration, tex, style, color }) {
+    async handler(ctx, { projectId, sceneId, nodeId, start, duration, tex, cells, style, color }) {
       const { doc } = await ctx.getDoc(projectId)
       const node = ctx.nodeOrThrow(doc, sceneId, nodeId)
       if (tex && node.type !== 'latex') {
         throw new CapabilityError(
           `tex targeting only works on latex nodes; ${nodeId} is a ${node.type}. ` +
-            `Omit tex to highlight the whole node.`,
+            `Omit tex to highlight the whole node` +
+            (node.type === 'matrix' || node.type === 'tokens' ? ', or use cells.' : '.'),
         )
       }
+      if (tex && cells) {
+        throw new CapabilityError('pass tex or cells, not both — they target different node types')
+      }
+      if (cells) checkRange(node, gridOrThrow(node, nodeId), cells, nodeId)
       const replaced = node.transitions.filter(
         (t) => t.type === 'highlight' && !outside(t, start, duration),
       ).length
       const transitions: Transition[] = [
         ...node.transitions.filter((t) => t.type !== 'highlight' || outside(t, start, duration)),
-        { type: 'highlight', start, duration, tex, style, color },
+        { type: 'highlight', start, duration, tex, cells, style, color },
       ]
       await ctx.submit(projectId, [op.updateNode(sceneId, nodeId, { transitions })])
+      const target = tex ? `"${tex}" in ` : cells ? `${describeRange(cells)} of ` : ''
       return said(
-        `highlighting ${tex ? `"${tex}" in ` : ''}${nodeId} over ` +
+        `highlighting ${target}${nodeId} over ` +
           `[${start}s, ${start + duration}s] (${style})` +
           (replaced ? ` (replaced ${replaced} overlapping)` : ''),
-        { nodeId, tex, style, start, duration, replaced },
+        { nodeId, tex, cells, style, start, duration, replaced },
       )
     },
   }),

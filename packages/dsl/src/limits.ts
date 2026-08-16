@@ -14,6 +14,12 @@ export const LIMITS = {
    */
   minCameraZoom: 0.05,
   maxCameraZoom: 50,
+  /**
+   * Cells in one matrix or token strip. A structured primitive is one node, so
+   * without this a single call could put 10,000 sprites on the stage and the
+   * per-scene node cap would not notice.
+   */
+  maxCells: 400,
 } as const
 
 /**

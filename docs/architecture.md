@@ -20,14 +20,16 @@ deterministic function of `t` when it's added.
 ## Document model
 
 `packages/dsl` defines the scene document: project → scenes (sequential on
-the global timeline) → nodes (rect/circle/line/path/text/latex/group), plus an
-optional per-scene `camera`. Animation:
+the global timeline) → nodes (rect/circle/line/path/text/latex/matrix/tokens/
+group), plus an optional per-scene `camera`. Animation:
 
 - **Tracks** — per-property keyframes (`position`, `opacity`, `fill`, …),
   eased per-segment (`smooth` = 3b1b smootherstep). The generic mechanism.
 - **Transitions** — effects not expressible as property keyframes: `write`
-  (draw-on reveal), `texMorph` (matched-glyph equation morph — see below) and
-  `highlight` (emphasis, optionally on one term inside an equation).
+  (draw-on reveal), `texMorph` (matched-glyph equation morph — see below),
+  `cellMorph` (the same for a matrix, matched by cell contents) and
+  `highlight` (emphasis, optionally on one term inside an equation or a range
+  of matrix cells).
 
 Agent-facing sugar (`animate`, `write_on`, …) lives in the MCP layer and
 compiles to tracks/transitions; the document stays low-level and uniform so
@@ -120,6 +122,50 @@ Worth noting the shape of that failure, because it will recur: an agent cannot
 tell "the system cannot do this" from "the system does not offer this", and
 will design around the limit it infers. Errors are cheap — a wrong guess costs
 one retry — but an inference costs a whole approach.
+
+## Structured primitives: matrix and tokens
+
+A `matrix` is a grid of LaTeX cells; a `tokens` node is a labelled strip. Both
+are **one node**, and the shape is the point: `highlight` can mark row 1 or
+cell (0,2) without anyone working out where they landed, `morph_matrix` can
+restate the grid and move the cells that survived, and `write_on` fills it in
+cell by cell. Hand-built, a 3x3 matrix is nine nodes whose ids the caller has
+to track and whose alignment breaks when the font size changes.
+
+Cells sit on a **fixed pitch** with their contents centred — nothing is
+measured. Sizing columns to their contents would mean asking MathJax how wide
+`\alpha` renders, which is asynchronous and only knowable after rasterization:
+layout would then differ between a cold frame and a warm one, and the purity
+invariant says a frame is a function of (document, time) and nothing else. The
+cost is that a wide entry can overflow its cell, which `add_matrix` says in its
+response and `preview_frames` shows.
+
+`packages/dsl/src/grid.ts` holds the geometry — `cellCenter`, `rangeBounds`,
+`cellsInRange` — so the stage, the sampler and the tool layer all measure the
+same grid. A `CellRange` is `{rows?: [a,b], cols?: [a,b]}` with inclusive
+bounds and an omitted axis meaning "all of it", which is `row(i)` / `col(j)` /
+`cell(i,j)` / `range(...)` as one shape rather than four. A range naming cells
+the node does not have selects **nothing**, and the tool layer rejects it —
+clamping would mark some other row, which looks like it worked.
+
+Both were additive: new node types and a new transition, so existing documents
+stay valid and `SCHEMA_VERSION` did not move.
+
+### What the glyph work generalised into
+
+Phase B of [plans/006](plans/006-animation-depth.md) was mostly *extracting key
+functions* from the equation morphing built in 002, not writing new animation:
+
+| Was | Is now | Serves |
+|---|---|---|
+| `writeGlyphAlphas(count, progress)` | `staggerAlphas(count, progress, {rank})` | glyphs, matrix cells, group children |
+| `matchGlyphs(from, to)` — LCS over codes | `matchByKey(from, to, key)` | glyphs by codepoint, cells by contents |
+| `morphGlyphs` | unchanged | cells are fed to it as pseudo-glyphs on grid positions |
+
+So a matrix restating itself is the same code path as an equation morphing, and
+a `write` on a **group** now reveals its children one at a time instead of
+sweeping one mask edge across the whole thing. `rank` is where the order lives:
+row-major by default, `columnMajorRank` for a matrix built from column vectors.
 
 ## Camera
 

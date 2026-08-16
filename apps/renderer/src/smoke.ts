@@ -2,7 +2,13 @@
 import assert from 'node:assert'
 import {
   applyOps,
+  cellCenter,
+  cellsInRange,
   defaultCamera,
+  describeRange,
+  gridSize,
+  rangeBounds,
+  resolveRange,
   emptyDoc,
   formatMoments,
   keyMoments,
@@ -16,9 +22,13 @@ import {
   type Track,
 } from '@euclid/dsl'
 import {
+  columnMajorRank,
+  matchByKey,
   pathAtProgress,
   pathLength,
   resolveCamera,
+  staggerAlphas,
+  writeGlyphAlphas,
   resolveNode,
   resolveScene,
   sampleKeyframes,
@@ -415,7 +425,99 @@ assert.equal(keyMoments(held).filter((m) => m.kind === 'camera').length, 0, 'a h
 assert.match(outlineDoc(shot), /cam@\(960,540\) zoom=2 cam-tracks\[position\]/, 'the outline shows the camera')
 assert.doesNotMatch(outlineDoc(applyOps(shot, [op.clearCamera('cs')])), /cam@/, 'and says nothing when there is none')
 
+// ---------- structured primitives: the grid ----------
+// Layout is deliberately unmeasured — fixed pitch, contents centred — so all of
+// it is checkable without a browser, which is the point of keeping it here.
+const spec = { rows: 2, cols: 3, cellWidth: 100, cellHeight: 60 }
+assert.deepEqual(gridSize(spec), { width: 300, height: 120 })
+assert.deepEqual(cellCenter(spec, 0, 0), { x: -100, y: -30 }, 'the grid is centred on the node')
+assert.deepEqual(cellCenter(spec, 1, 2), { x: 100, y: 30 })
+assert.deepEqual(cellCenter({ ...spec, rows: 1, cols: 1 }, 0, 0), { x: 0, y: 0 }, 'a 1x1 sits at the origin')
+
+// `{}` is everything; one axis omitted means all of that axis.
+assert.deepEqual(cellsInRange(spec, undefined), [0, 1, 2, 3, 4, 5], 'no range is every cell')
+assert.deepEqual(cellsInRange(spec, { rows: [1, 1] }), [3, 4, 5], 'a row is contiguous in row-major order')
+assert.deepEqual(cellsInRange(spec, { cols: [2, 2] }), [2, 5], 'a column strides')
+assert.deepEqual(cellsInRange(spec, { rows: [0, 0], cols: [1, 1] }), [1], 'both axes is one cell')
+// A backwards span is the same span read the other way, not an empty one.
+assert.deepEqual(cellsInRange(spec, { rows: [1, 0] }), [0, 1, 2, 3, 4, 5], 'ends are normalised')
+// Out of range must select nothing rather than quietly snapping to the edge:
+// a marker drawn on the wrong row looks like it worked.
+assert.deepEqual(cellsInRange(spec, { rows: [9, 9] }), [], 'a row that does not exist selects nothing')
+assert.equal(resolveRange(spec, { cols: [7, 8] }), null, 'and resolves to null, not to the last column')
+assert.deepEqual(rangeBounds(spec, { rows: [0, 0] }), { x: 0, y: -30, width: 300, height: 60 })
+assert.equal(describeRange({ rows: [1, 1], cols: [2, 2] }), 'cell (1,2)')
+assert.equal(describeRange({ rows: [0, 2] }), 'rows 0–2')
+assert.equal(describeRange(undefined), 'all cells')
+
+// ---------- stagger: one curve, three callers ----------
+// Extracted from writeGlyphAlphas, which had this maths with `glyph` welded on.
+const early = staggerAlphas(4, 0.3)
+assert.ok(early[0]! > early[1]! && early[1]! >= early[2]!, 'earlier elements lead')
+assert.deepEqual(staggerAlphas(4, 0), [0, 0, 0, 0], 'nothing is shown at 0')
+assert.deepEqual(staggerAlphas(4, 1), [1, 1, 1, 1], 'everything is shown at 1')
+assert.deepEqual(staggerAlphas(1, 0.4), [0.4], 'a single element is just the progress')
+assert.deepEqual(staggerAlphas(0, 0.5), [], 'no elements, no alphas')
+// The order is the caller's: a column-major rank reveals down the columns of a
+// row-major grid, which is what a matrix built from column vectors wants.
+const colRank = columnMajorRank(2, 3)
+assert.deepEqual(colRank, [0, 2, 4, 1, 3, 5], 'row-major index → column-major arrival')
+const byColumn = staggerAlphas(6, 0.3, { rank: colRank })
+assert.ok(byColumn[3]! > byColumn[1]!, 'the cell below arrives before the one to the right')
+// The glyph reveal is now this function, so it must not have changed.
+assert.deepEqual(writeGlyphAlphas(5, 0.42), staggerAlphas(5, 0.42), 'the glyph reveal is the same curve')
+
+// ---------- matching by a key: glyphs, then cells ----------
+const cellsA = ['a', 'b', 'c', 'd']
+const cellsB = ['a', 'x', 'c', 'd']
+const cellMatch = matchByKey(cellsA, cellsB, (c) => c)
+assert.equal(cellMatch.pairs.length, 3, 'three cells survive a single replacement')
+assert.deepEqual(cellMatch.removed, [1], 'and the replaced one leaves')
+assert.deepEqual(cellMatch.added, [1], 'as the new one arrives')
+// Order-preserving, exactly as for glyphs: a matched cell must never cross
+// another, or a re-stated matrix reads as chaos rather than as an edit.
+const swapped = matchByKey(['p', 'q'], ['q', 'p'], (c) => c)
+assert.equal(swapped.pairs.length, 1, 'a swap keeps one anchor rather than crossing both over')
+
+// ---------- a matrix restating itself ----------
+let grid = applyOps(emptyDoc('mx', 'Matrix'), [
+  op.addScene({ id: 'g1', name: 'Grid', duration: 8, background: '#101418', nodes: [] }),
+  op.addNode('g1', {
+    ...({ position: { x: 960, y: 540 }, scale: 1, rotation: 0, opacity: 1, tracks: [] } as const),
+    id: 'm', type: 'matrix', cells: [['1', '2'], ['3', '4']],
+    cellWidth: 120, cellHeight: 90, fontSize: 48, color: '#ffffff', brackets: 'square',
+    transitions: [
+      { type: 'cellMorph', start: 2, duration: 2, toCells: [['1', '9'], ['3', '4']], easing: 'linear' },
+    ],
+  }),
+])
+const mat = grid.scenes[0]!.nodes[0]!
+assert.equal(resolveNode(mat, 1).cellMorph, null, 'no morph before it starts')
+const midCells = resolveNode(mat, 3).cellMorph
+assert.ok(midCells && midCells.progress > 0.4 && midCells.progress < 0.6, 'halfway through at the midpoint')
+assert.deepEqual(midCells!.fromCells, [['1', '2'], ['3', '4']], 'morphing from the base grid')
+const settled = resolveNode(mat, 6).cellMorph
+assert.ok(settled && settled.progress === 1 && settled.fromCells[0]![1] === '9', 'settles on the result')
+
+// Shape may change, and the moment survives to the contact sheet.
+const gridMoments = keyMoments(grid).filter((m) => m.kind === 'cellMorph')
+assert.equal(gridMoments.length, 3, 'a cell morph is sampled across its span like a tex morph')
+assert.match(gridMoments[1]!.label, /cells → 2x2/, 'the tile label names the target shape')
+
+// Ragged input is refused by the schema rather than rendering a torn grid.
+assert.throws(
+  () => applyOps(grid, [op.updateNode('g1', 'm', { cells: [['1', '2'], ['3']] })]),
+  /same number of cells/,
+  'rows of different lengths are rejected',
+)
+assert.throws(
+  () => applyOps(grid, [op.updateNode('g1', 'm', { cells: [Array(500).fill('x')] })]),
+  /cell limit/,
+  'and a grid past the cell limit is refused — one node must not become 500 sprites',
+)
+assert.match(outlineDoc(grid), /matrix m .* 2x2 \[1 2 ; 3 4\]/, 'the outline names the shape and contents')
+
 console.log(
   'smoke OK — reducer, sampler, morph resolution, key moments, camera framing, ' +
-    'path reveal, expressions and plot mapping all behave',
+    'grid layout, stagger, cell matching, path reveal, expressions and plot mapping all behave',
 )

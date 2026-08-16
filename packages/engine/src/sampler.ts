@@ -1,6 +1,8 @@
 import {
   ANIMATABLE_PROPS,
   LIMITS,
+  type CellRange,
+  type Easing,
   type EuclidNode,
   type KeyValue,
   type Keyframe,
@@ -28,10 +30,20 @@ const HIGHLIGHT_RAMP = 0.18
 export interface HighlightState {
   /** LaTeX of the sub-expression to mark; whole node when absent. */
   tex?: string
+  /** Cells to mark on a matrix/tokens node; whole node when absent. */
+  cells?: CellRange
   style: 'box' | 'underline' | 'color' | 'spotlight'
   color: string
   /** 0 → invisible, 1 → fully drawn. Ramps up, holds, ramps down. */
   strength: number
+}
+
+/** A matrix restating itself: which grid is leaving, which is arriving, how far. */
+export interface CellMorphState {
+  fromCells: string[][]
+  toCells: string[][]
+  /** eased progress in [0,1] */
+  progress: number
 }
 
 export interface ResolvedNode {
@@ -41,6 +53,7 @@ export interface ResolvedNode {
   /** null = no write transition on this node. 0 = not yet drawn (invisible). */
   writeProgress: number | null
   texMorph: TexMorphState | null
+  cellMorph: CellMorphState | null
   highlight: HighlightState | null
   children: ResolvedNode[]
 }
@@ -103,7 +116,6 @@ export function resolveNode(node: EuclidNode, t: number): ResolvedNode {
   }
 
   let writeProgress: number | null = null
-  let texMorph: TexMorphState | null = null
 
   // An emphasis is a pulse, not a ramp: it appears, holds while the narration
   // talks about the thing, then leaves. A monotonic 0→1 would be a wipe.
@@ -118,29 +130,33 @@ export function resolveNode(node: EuclidNode, t: number): ResolvedNode {
     const ramp = Math.min(HIGHLIGHT_RAMP, 0.5)
     const strength =
       u < ramp ? u / ramp : u > 1 - ramp ? (1 - u) / ramp : 1
-    highlight = { tex: hl.tex, style: hl.style, color: hl.color, strength }
+    highlight = { tex: hl.tex, cells: hl.cells, style: hl.style, color: hl.color, strength }
   }
 
-  const morphs = node.transitions
-    .filter((tr): tr is Extract<typeof tr, { type: 'texMorph' }> => tr.type === 'texMorph')
-    .sort((a, b) => a.start - b.start)
-  if (node.type === 'latex' && morphs.length > 0) {
-    let currentTex = node.tex
-    for (const m of morphs) {
-      if (t >= m.start + m.duration) {
-        currentTex = m.toTex
-      } else if (t > m.start) {
-        const u = clamp01((t - m.start) / m.duration)
-        texMorph = { fromTex: currentTex, toTex: m.toTex, progress: easings[m.easing](u) }
-        break
-      } else {
-        break
-      }
-    }
-    if (!texMorph && currentTex !== node.tex) {
-      // past all morphs: settle on the final tex, fully progressed
-      texMorph = { fromTex: currentTex, toTex: currentTex, progress: 1 }
-    }
+  let texMorph: TexMorphState | null = null
+  if (node.type === 'latex') {
+    const chain = resolveMorphChain(
+      node.transitions
+        .filter((tr): tr is Extract<typeof tr, { type: 'texMorph' }> => tr.type === 'texMorph')
+        .sort((a, b) => a.start - b.start)
+        .map((m) => ({ start: m.start, duration: m.duration, easing: m.easing, value: m.toTex })),
+      node.tex,
+      t,
+    )
+    if (chain) texMorph = { fromTex: chain.from, toTex: chain.to, progress: chain.progress }
+  }
+
+  let cellMorph: CellMorphState | null = null
+  if (node.type === 'matrix') {
+    const chain = resolveMorphChain(
+      node.transitions
+        .filter((tr): tr is Extract<typeof tr, { type: 'cellMorph' }> => tr.type === 'cellMorph')
+        .sort((a, b) => a.start - b.start)
+        .map((m) => ({ start: m.start, duration: m.duration, easing: m.easing, value: m.toCells })),
+      node.cells,
+      t,
+    )
+    if (chain) cellMorph = { fromCells: chain.from, toCells: chain.to, progress: chain.progress }
   }
 
   const write = node.transitions.find((tr) => tr.type === 'write')
@@ -153,9 +169,42 @@ export function resolveNode(node: EuclidNode, t: number): ResolvedNode {
     props,
     writeProgress,
     texMorph,
+    cellMorph,
     highlight,
     children: node.type === 'group' ? node.children.map((c) => resolveNode(c, t)) : [],
   }
+}
+
+/**
+ * Sequential morphs of one kind chain in start-time order: each one's source is
+ * whatever the previous left behind, so a node that has morphed three times is
+ * showing the third result and not the original.
+ *
+ * Shared by `texMorph` and `cellMorph` because the chaining rule is the whole
+ * behaviour and it is identical for both — only the thing being interpolated
+ * differs, and neither is interpolated *here*: the stage does that, with glyph
+ * or cell correspondence.
+ */
+function resolveMorphChain<V>(
+  morphs: { start: number; duration: number; easing: Easing; value: V }[],
+  base: V,
+  t: number,
+): { from: V; to: V; progress: number } | null {
+  let current = base
+  for (const m of morphs) {
+    if (t >= m.start + m.duration) {
+      current = m.value
+    } else if (t > m.start) {
+      const u = clamp01((t - m.start) / m.duration)
+      return { from: current, to: m.value, progress: easings[m.easing](u) }
+    } else {
+      break
+    }
+  }
+  // Past every morph: settle on the final value, fully progressed. Identity
+  // against `base` rather than equality, so a morph back to the original value
+  // still reports as "morphed" and the stage keeps drawing the same way.
+  return current === base ? null : { from: current, to: current, progress: 1 }
 }
 
 /** Keyframes must be sorted by t (the reducer guarantees this on track.set). */

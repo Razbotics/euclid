@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { CellRange } from './grid'
 import { LIMITS } from './limits'
 
 export const SCHEMA_VERSION = 1 as const
@@ -99,6 +100,12 @@ export interface HighlightTransition {
   /** LaTeX of the sub-expression to mark; the whole node when absent. */
   tex?: string
   /**
+   * Cells to mark on a `matrix` or `tokens` node — the structured counterpart
+   * of `tex`. Same idea: name the part by what it *is* (row 2, cell (0,1))
+   * rather than by where it landed on screen.
+   */
+  cells?: CellRange
+  /**
    * `box` / `underline` draw a marker around the term. `color` recolours the
    * term itself and `spotlight` dims everything except it — both need
    * per-glyph rendering, so they apply only to a `tex`-targeted latex node
@@ -107,7 +114,50 @@ export interface HighlightTransition {
   style: 'box' | 'underline' | 'color' | 'spotlight'
   color: Color
 }
-export type Transition = WriteTransition | TexMorphTransition | HighlightTransition
+/**
+ * A matrix restating itself: cells that appear in both grids move to their new
+ * places, and only genuinely new or removed ones fade. The structured twin of
+ * `texMorph`, matched by cell content instead of glyph code.
+ */
+export interface CellMorphTransition {
+  type: 'cellMorph'
+  start: number
+  duration: number
+  /** Row-major, like `MatrixNode.cells`. May change shape. */
+  toCells: string[][]
+  easing: Easing
+}
+export type Transition =
+  | WriteTransition
+  | TexMorphTransition
+  | HighlightTransition
+  | CellMorphTransition
+
+const CellRangeSchema: z.ZodType<CellRange> = z.object({
+  rows: z.tuple([z.number().int().min(0), z.number().int().min(0)]).optional(),
+  cols: z.tuple([z.number().int().min(0), z.number().int().min(0)]).optional(),
+})
+
+/** Row-major grid of LaTeX cells; '' is an empty cell, not a missing one. */
+const CellsSchema = z
+  .array(z.array(z.string()).min(1))
+  .min(1)
+  .superRefine((rows, ctx) => {
+    const width = rows[0]!.length
+    if (rows.some((r) => r.length !== width)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `every row must have the same number of cells; got ${rows.map((r) => r.length).join(', ')}`,
+      })
+    }
+    if (rows.length * width > LIMITS.maxCells) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${rows.length}x${width} exceeds the ${LIMITS.maxCells}-cell limit for one node`,
+      })
+    }
+  })
+
 export const TransitionSchema: z.ZodType<Transition> = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('write'),
@@ -126,8 +176,16 @@ export const TransitionSchema: z.ZodType<Transition> = z.discriminatedUnion('typ
     start: z.number().min(0),
     duration: z.number().positive(),
     tex: z.string().min(1).optional(),
+    cells: CellRangeSchema.optional(),
     style: z.enum(['box', 'underline', 'color', 'spotlight']),
     color: ColorSchema,
+  }),
+  z.object({
+    type: z.literal('cellMorph'),
+    start: z.number().min(0),
+    duration: z.number().positive(),
+    toCells: CellsSchema,
+    easing: EasingSchema,
   }),
 ])
 
@@ -207,11 +265,67 @@ export interface LatexNode extends NodeBase {
   color: Color
   fontSize: number
 }
+/**
+ * A grid of LaTeX cells, addressable by row and column.
+ *
+ * One node rather than a group of positioned latex nodes, because the *shape*
+ * is the point: `highlight` can mark row 2 without anyone computing where row 2
+ * landed, a morph can match cells by content, and a reveal can go cell by cell.
+ * Built by hand, a 3x3 matrix is nine nodes whose ids the caller has to keep
+ * straight and whose alignment breaks the moment the font size changes.
+ *
+ * Cells sit on a fixed pitch (`cellWidth` x `cellHeight`) with their contents
+ * centred — see grid.ts for why nothing is measured.
+ */
+export interface MatrixNode extends NodeBase {
+  type: 'matrix'
+  /** Row-major. Every row the same length; '' is an empty cell. */
+  cells: string[][]
+  cellWidth: number
+  cellHeight: number
+  fontSize: number
+  color: Color
+  /** Delimiters around the grid, sized to it. */
+  brackets: 'square' | 'paren' | 'none'
+}
+
+/**
+ * A labelled strip — words, indices, layer names — laid out in a row or a
+ * column, optionally boxed. The thing arrows will connect in Phase D.
+ *
+ * Separate from `matrix` because its content is prose rather than mathematics:
+ * labels render as text, so a token reads as `cat` rather than as
+ * `\text{cat}` typeset in an italic math font.
+ */
+export interface TokensNode extends NodeBase {
+  type: 'tokens'
+  labels: string[]
+  orientation: 'row' | 'column'
+  cellWidth: number
+  cellHeight: number
+  fontSize: number
+  color: Color
+  fontFamily: string
+  /** Outline around each token; omitted draws the labels bare. */
+  boxStroke?: Color
+  /** Fill behind each token. */
+  boxFill?: Color
+}
+
 export interface GroupNode extends NodeBase {
   type: 'group'
   children: EuclidNode[]
 }
-export type EuclidNode = RectNode | CircleNode | LineNode | PathNode | TextNode | LatexNode | GroupNode
+export type EuclidNode =
+  | RectNode
+  | CircleNode
+  | LineNode
+  | PathNode
+  | TextNode
+  | LatexNode
+  | MatrixNode
+  | TokensNode
+  | GroupNode
 
 const NodeBaseShape = {
   id: z.string().min(1),
@@ -277,6 +391,29 @@ export const NodeSchema: z.ZodType<EuclidNode> = z.lazy(() =>
       tex: z.string().min(1),
       color: ColorSchema,
       fontSize: z.number().positive(),
+    }),
+    z.object({
+      ...NodeBaseShape,
+      type: z.literal('matrix'),
+      cells: CellsSchema,
+      cellWidth: z.number().positive(),
+      cellHeight: z.number().positive(),
+      fontSize: z.number().positive(),
+      color: ColorSchema,
+      brackets: z.enum(['square', 'paren', 'none']),
+    }),
+    z.object({
+      ...NodeBaseShape,
+      type: z.literal('tokens'),
+      labels: z.array(z.string()).min(1).max(LIMITS.maxCells),
+      orientation: z.enum(['row', 'column']),
+      cellWidth: z.number().positive(),
+      cellHeight: z.number().positive(),
+      fontSize: z.number().positive(),
+      color: ColorSchema,
+      fontFamily: z.string().min(1),
+      boxStroke: ColorSchema.optional(),
+      boxFill: ColorSchema.optional(),
     }),
     z.object({
       ...NodeBaseShape,

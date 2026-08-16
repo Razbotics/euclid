@@ -1,4 +1,4 @@
-# 006 — Complex animation and depth (status: in progress — Phase 4)
+# 006 — Complex animation and depth (status: in progress — Phase 4, A+B done)
 
 > **Deferred 2026-08-15, promoted back 2026-08-16.** It was parked for one
 > stated reason: this plan's own verification step — "verify by screenshot at
@@ -69,7 +69,7 @@ Not starting from zero. The glyph work from
 | `drawGlyphs` — pooled sprite per element | pooled sprite per cell/point |
 
 Each of those has `glyph` hardcoded where it wants a key function. Extracting
-that is most of Phase A.
+that is most of Phase B — and it held: see that phase's notes.
 
 ## Phase A: Camera  (status: done, 2026-08-16)
 Smallest piece, improves everything after it, so it goes first.
@@ -143,19 +143,80 @@ moments. An explicitly requested time is a question, and "nothing here" is a
 valid answer to it — especially with a camera, where the honest reading is
 "your framing is wrong", not "your backend is broken".
 
-## Phase B: Structured primitives  (status: planned)
+## Phase B: Structured primitives  (status: done, 2026-08-16)
 Most of that video's density is structured 2D, not 3D. Highest ratio of
 perceived quality to effort.
 
-- [ ] `matrix` node — rows × cols of cells, each a number or LaTeX
-- [ ] `tokens` node — a labelled strip, the thing arrows connect
-- [ ] Cell addressing: `row(i)`, `col(j)`, `cell(i,j)`, `range(...)` — the
+- [x] `matrix` node — rows × cols of cells, each a number or LaTeX
+- [x] `tokens` node — a labelled strip, the thing arrows connect
+- [x] Cell addressing: `row(i)`, `col(j)`, `cell(i,j)`, `range(...)` — the
       `highlight` styles from 002 apply unchanged once cells are addressable
-- [ ] **Generalise `stagger`** out of `writeGlyphAlphas`: reveal any group
+- [x] **Generalise `stagger`** out of `writeGlyphAlphas`: reveal any group
       element by element, in an order the caller picks
-- [ ] **Generalise `matchGlyphs`** with a key function: matrix → matrix
+- [x] **Generalise `matchGlyphs`** with a key function: matrix → matrix
       morphs by matching cell contents
-- [ ] MCP: `add_matrix`, `add_tokens`, `highlight` extended to cell ranges
+- [x] MCP: `add_matrix`, `add_tokens`, `morph_matrix`, `highlight` extended to
+      cell ranges
+
+The prediction at the top of this plan held: most of the work was **extracting
+key functions**, not writing animation. `writeGlyphAlphas(count, progress)`
+became `staggerAlphas(count, progress, {rank})` and now serves glyphs, matrix
+cells and group children; `matchGlyphs` became `matchByKey(from, to, key)` and
+matches cells by contents with `morphGlyphs` unchanged underneath, cells being
+fed to it as pseudo-glyphs on grid positions. A `write` on a **group** reveals
+its children one at a time as a free consequence — it used to sweep one mask
+edge across the whole thing.
+
+**Verified in pixels** by `check-matrix.ts`: a 2×3 grid fills in cell by cell
+(0.42% → 0.58% → 0.74% lit), a 2×2 morphs to 2×4 (0.50% → 0.74%), tokens and
+group children stagger, and every error case teaches. Cell *addressing* is the
+one claim ink cannot make — it measures how much lit, never where — so that
+test **frames the camera on one row at zoom 4**: the same box highlight reads
+97% of that frame when addressed to row 1 and 26% when addressed to row 0.
+Phase A paying for itself inside Phase B's test.
+
+### Decisions
+
+- **Fixed cell pitch, contents centred, nothing measured.** Sizing columns to
+  their contents means asking MathJax how wide `\alpha` renders — asynchronous,
+  and only knowable after rasterization, so layout would differ between a cold
+  frame and a warm one. That trades the purity invariant for tighter columns.
+  A wide cell can overflow; `add_matrix` reports the resulting extent and
+  preview_frames shows the collision.
+- **One `CellRange` shape, not four verbs.** `{rows?: [a,b], cols?: [a,b]}`
+  with inclusive bounds and "omitted = all of it" covers row, column, cell and
+  band. The tool layer also accepts a bare index (`{"rows": 1}`) because that
+  is the obvious guess, and the nested-tuple-only form would have been the
+  `{"position":{...}}` trap again.
+- **An out-of-range index is an error, not a clamp.** Clamping marks a
+  different row and looks like it worked.
+- **`tokens` is its own node type** rather than a 1×N matrix, because its
+  content is prose: labels render as text, so a token reads as `cat` rather
+  than as italic mathematical variables. It shares the grid, the addressing and
+  the stagger; only the drawing differs.
+- **Brackets are drawn at full strength during a staggered fill**, so a matrix
+  reads as a container being filled rather than as delimiters assembling
+  themselves. Deliberate, and easy to change if a run disagrees.
+- Both additions are additive — new node types, one new transition — so
+  documents written before them stay valid and `SCHEMA_VERSION` did not move.
+
+### Notes / gotchas
+
+- **Brackets were inside-out**, `] [` rather than `[ ]`, because the ticks were
+  drawn pointing away from the content. Invisible in every assertion that
+  counts lit pixels — the ink is identical either way — and obvious in the
+  first frame anyone looked at. Ink says *how much*, never *what*.
+- **A settled morph left the brackets on the old shape.** After a `cellMorph`
+  completes, the resolved grid is the morph's target while `node.cells` is
+  still what the node was born with; the static draw path took its cells from
+  the resolved grid and its geometry from the node, so a 2×4 of cells rendered
+  inside 2×2 brackets. Anything that needs the shape must read the *resolved*
+  cells, which is also why `highlightBounds` consults `res.cellMorph`.
+- `packages/engine/src/pixi/stage.ts` contained two **literal NUL bytes** in a
+  cache-key template (pre-existing, from before Phase A). `grep` treats the
+  whole file as binary and prints nothing, and string-matching edit tools
+  cannot match around them. Replaced with `\u0000` escapes — same runtime
+  string, greppable file.
 
 ## Phase C: Pseudo-3D  (status: planned)
 

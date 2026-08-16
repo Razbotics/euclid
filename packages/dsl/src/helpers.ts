@@ -154,7 +154,17 @@ function outlineNodes(nodes: import('./document').EuclidNode[], lines: string[],
     const anim = n.tracks.length > 0 ? ` tracks[${n.tracks.map((t) => t.property).join(',')}]` : ''
     const trans = n.transitions.length > 0 ? ` fx[${n.transitions.map((t) => t.type).join(',')}]` : ''
     const label =
-      n.type === 'text' ? `"${truncate(n.text, 30)}"` : n.type === 'latex' ? `tex="${truncate(n.tex, 40)}"` : ''
+      n.type === 'text'
+        ? `"${truncate(n.text, 30)}"`
+        : n.type === 'latex'
+          ? `tex="${truncate(n.tex, 40)}"`
+          : n.type === 'matrix'
+            ? // Shape first: it is what every cell range is indexed against, and
+              // an off-by-one row index is the obvious way to mis-address one.
+              `${n.cells.length}x${n.cells[0]?.length ?? 0} [${truncate(n.cells.map((r) => r.join(' ')).join(' ; '), 44)}]`
+            : n.type === 'tokens'
+              ? `${n.labels.length} ${n.orientation === 'row' ? '→' : '↓'} [${truncate(n.labels.join(' '), 44)}]`
+              : ''
     lines.push(
       `${indent}${n.type} ${n.id}${n.name ? ` (${n.name})` : ''} @(${n.position.x},${n.position.y}) ${label}${anim}${trans}`,
     )

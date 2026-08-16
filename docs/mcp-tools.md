@@ -67,6 +67,11 @@ shape as `remove_asset`'s `force`.
   out larger than the canvas. `get_project` prints it as `cam@(x,y) zoom=…`,
   because a framing that hides half the scene makes every coordinate in the
   outline misleading otherwise.
+- Structured content is addressed by **what it is, not where it is**: `tex`
+  names a sub-expression of an equation, `cells` names a row, column, cell or
+  band of a `matrix`/`tokens` node (`{"rows":1}`, `{"rows":[0,1],"cols":2}`,
+  0-based). An index the node does not have is an error, not a marker drawn
+  somewhere plausible.
 - Capabilities report what they *did*, not what they were asked to do. Several
   succeed in ways that change nothing on screen — a patch shadowed by a track,
   narration cut at a scene edge — and say so in the result rather than leaving

@@ -110,8 +110,16 @@ arc-length `write_on` is the beginning of path-following.
       tile's own border, and the capture cache was keyed on the document's JSON
       *length*, so any length-preserving edit was served a stale frame. Both
       fixed; see plans/006
-- [ ] Structured primitives: `matrix`, `tokens`, cell-level addressing
-- [ ] Generalise stagger + element matching out of the glyph work in 002
+- [x] Structured primitives: `matrix`, `tokens`, cell-level addressing —
+      **done 2026-08-16**. One node per grid, addressed as `{"rows":1}` /
+      `{"cols":[0,2]}` rather than by coordinates; `morph_matrix` restates a
+      grid and moves the cells that survived. Verified in pixels by
+      `check-matrix.ts`, which proves *placement* by framing the camera on one
+      row — Phase A paying for itself inside Phase B's test
+- [x] Generalise stagger + element matching out of the glyph work in 002 —
+      `writeGlyphAlphas` → `staggerAlphas(count, progress, {rank})` and
+      `matchGlyphs` → `matchByKey(from, to, key)`. A `write` on a **group** now
+      reveals its children one at a time as a free consequence
 - [ ] Flows: arrows anchored to nodes, path-following along a `path`
 - [ ] Axes, ticks and labels — the rest of the graph story `plot_function`
       started; hand-built today
