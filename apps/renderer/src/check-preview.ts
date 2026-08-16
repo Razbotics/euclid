@@ -2,7 +2,8 @@
  * Agent sight (plans/007): key moments → contact sheet → full-res drill-down.
  * Run: pnpm --filter @euclid/renderer exec tsx src/check-preview.ts
  *
- * Free — no credits. Needs `dev:api`, `dev:web`, and `preview-server.ts`.
+ * Free — no credits. Needs `dev:api`, `dev:web`, and `render-worker.ts` (the
+ * render backend, which serves capture as well as draining the queue).
  *
  * The thing being proved is that an agent with **no shell** can see its own
  * output. So the sheet is fetched the way that agent gets it — through the
@@ -26,7 +27,7 @@ const health = await fetch(`${PREVIEW}/health`).catch(() => null)
 if (!health?.ok) {
   console.error(
     `preview backend not running at ${PREVIEW}\n` +
-      '  pnpm --filter @euclid/renderer exec tsx src/preview-server.ts',
+      '  pnpm --filter @euclid/renderer exec tsx src/render-worker.ts',
   )
   process.exit(1)
 }

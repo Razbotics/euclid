@@ -64,8 +64,13 @@ could not have found the first one.
       (12 tiles in ~1.2s, versus ~3 min and ~61 credits for a render)
 - [x] Full-res drill-down for a single suspicious frame
 - [x] `check-preview.ts`; editor marks the same moments on the scrubber
-- [ ] Bind capture to the render backend — **no second renderer**. Runs against
-      a local `preview-server.ts` today; `PREVIEW_ORIGIN` is the only seam.
+- [~] Bind capture to the render backend — **no second renderer**. Both halves
+      always drove the same `render.html` surface (run 4 verified export frames
+      pixel-identical to preview tiles), and as of 2026-08-16 they are one
+      process: `render-worker.ts` serves capture and drains the render queue.
+      What remains is deployment — that process is still local, so an agent can
+      see and export on this machine and nowhere else. Queues → Containers,
+      with `PREVIEW_ORIGIN` as the only seam.
 - [x] Use it in a milestone run — **done, run 4 (2026-08-16)**. 12 preview
       calls, 4 of which changed the video: the parabola's whole coordinate
       scale (the secant visually hugged the curve, invisible in any text

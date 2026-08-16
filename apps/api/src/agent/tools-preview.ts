@@ -33,9 +33,10 @@ async function capture(
   } catch (e) {
     throw new CapabilityError(
       `the preview backend at ${origin} is not reachable (${(e as Error).message}). ` +
-        `It renders the frames, and nothing else can: start it with ` +
-        `\`pnpm --filter @euclid/renderer exec tsx src/preview-server.ts\`, or set ` +
-        `PREVIEW_ORIGIN to a running one.`,
+        `It renders the frames, and nothing else can: start the render backend ` +
+        `with \`pnpm --filter @euclid/renderer exec tsx src/render-worker.ts\` ` +
+        `(it serves preview and drains the render queue), or point PREVIEW_ORIGIN ` +
+        `at a running one.`,
       503,
     )
   }

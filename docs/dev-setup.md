@@ -106,14 +106,12 @@ pnpm dev:api    # :8787 — API + Durable Objects + D1; also starts the public t
 pnpm dev:mcp    # :8788 — MCP worker (service-binds to api; start api first)
 pnpm dev:web    # :5173 — `/` lists projects; ?project=<id> opens one; ?demo=1 = offline demo
 
-# Drains the render queue. Without it, render_video jobs stay `queued` forever
-# with the credits already spent. Needs dev:web (it drives render.html) + ffmpeg.
+# The render backend: drains the render queue AND serves preview_frames on
+# :8790. Without it, render_video jobs stay `queued` forever with the credits
+# already spent, and preview_frames 503s. Needs dev:web (it drives render.html)
+# + ffmpeg.
 pnpm --filter @euclid/renderer exec tsx src/render-worker.ts
 
-# Capture backend for preview_frames. A Worker cannot run Chromium, so the
-# capability posts documents here; without it preview_frames returns a 503
-# that says exactly this. Needs dev:web, since it drives render.html.
-pnpm --filter @euclid/renderer exec tsx src/preview-server.ts   # :8790
 ```
 
 ### Renders do not start themselves in dev
@@ -196,7 +194,7 @@ every run** — re-run and re-paste after restarting.
 | `check-mcp-tools.ts` | MCP surface driven as a real client does: `animate` arg coercion, tool registration (free; needs `dev:api` + `dev:mcp`) |
 | `preview.ts <projectId> [t...]` | contact sheet of a real project at its key moments (`FULL=<i>` also writes that frame full-res; free, needs `dev:api` + `dev:web`) — the developer half of the agent's `preview_frames` |
 | `check-render-queue.ts` | a submitted job reaches `done` unattended with a downloadable MP4, two workers cannot claim the same job, and a failing render reaches `failed` **and refunds** (**spends ~4 credits**; needs `dev:api` + `dev:web`) |
-| `check-preview.ts` | agent sight end to end: key moments → sheet → drill-down, delivered as base64 through the gateway, plus the blank-capture guards (free; needs `dev:api`, `dev:web`, `preview-server.ts`) |
+| `check-preview.ts` | agent sight end to end: key moments → sheet → drill-down, delivered as base64 through the gateway, plus the blank-capture guards (free; needs `dev:api`, `dev:web`, `render-worker.ts`) |
 | `check-gateway.ts` | agent gateway (plans/008): instructions → describe → execute, and **every capability in the catalog** — transitions and overlap-replace, the credit gate, both `update_node` traps, arg coercion, asset in-use refusal (free; needs `dev:api` only) |
 | `check-decisions.ts` | agent → human → agent question loop, driven headless as a shell-less client would (free; needs `dev:api` + `dev:mcp`) |
 | `check-delete.ts` | project deletion: confirm guard, side-effect-free dry run, tenancy, and that the cascade clears D1 rows, R2 bytes **and** the Durable Object's document (free; needs `dev:api`) |

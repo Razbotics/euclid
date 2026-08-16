@@ -99,7 +99,8 @@ resolution when a tile looks wrong.
 - [x] `preview_frames` registered, defaulting to key moments
 - [x] Full-res drill-down for a single frame (`full: <index>`)
 - [x] `check-preview.ts` — driven through the gateway as an agent receives it
-- [x] `preview-server.ts` — the capture backend a Worker cannot be
+- [x] Capture backend a Worker cannot be — now `render-worker.ts`, merged
+      with the render queue consumer (2026-08-16)
 - [x] **Use it in a milestone run.** Everything above is machinery; none of it
       proves an agent *acts* on what it sees. Run 4 (below) says it does: 12
       preview calls, 4 of which changed the video.
@@ -186,8 +187,8 @@ until the agent can verify its own output.
 
 ## What was built (2026-08-15)
 
-`keyMoments(doc)` → `sheet.ts` (capture + grid) → `preview-server.ts` (the
-backend a Worker cannot be) → `preview_frames` in the catalog → an MCP `image`
+`keyMoments(doc)` → `sheet.ts` (capture + grid) → `render-worker.ts` (the
+backend a Worker cannot be, which also drains the render queue) → `preview_frames` in the catalog → an MCP `image`
 content block beside its caption. Free, and refused by `execute_paid` so it
 stays that way.
 
@@ -358,6 +359,11 @@ reading anything into what the agent does.
   where the pixels are, and returned as `x-preview-ink`. That turned a test
   hack into a product safeguard: an all-blank sheet is refused as a capture
   fault rather than handed to an agent that would read it as a broken video.
-- The backend is still the **local path**. `PREVIEW_ORIGIN` is the single seam
-  to move it to Browser Rendering or the render Container; nothing else changes.
-  Until then a shell-less client is served only where that process runs.
+- Capture and rendering are **one process** as of 2026-08-16
+  (`render-worker.ts`), which is what this plan meant by binding capture to the
+  render backend: one warm page for previews, a child process per render job,
+  and no second renderer to keep in step. The listener is best-effort, so a
+  second worker on the same machine just renders.
+- The backend is still **local**, which is the last piece. `PREVIEW_ORIGIN` is
+  the single seam to move it to the render Container; until then a shell-less
+  client is served only where that process runs.

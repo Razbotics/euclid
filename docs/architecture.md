@@ -292,9 +292,10 @@ Three properties carry it:
   an approximation of the export — it *is* one frame of it. Frames are composed
   into the grid inside the page, so a twelve-tile sheet costs one image
   transfer rather than twelve `page.screenshot()` round-trips. A Worker cannot
-  run Chromium, so capture lives behind `PREVIEW_ORIGIN`: a local
-  `preview-server.ts` today, the render backend later, and nothing else changes
-  when it moves.
+  run Chromium, so capture lives behind `PREVIEW_ORIGIN` — served by
+  `render-worker.ts`, the same process that drains the render queue. One
+  process, one warm page for previews, a child process per render job; only
+  its deployment is still local.
 - **Free, deliberately.** Twelve frames is 0.3% of a 3,654-frame render. If
   preview cost credits agents would render instead — 200× dearer and three
   minutes slower — so `preview_frames` refuses the paid executor. This is the
