@@ -1,7 +1,10 @@
 import { z } from 'zod'
 import {
+  axisTicks,
   newId,
+  niceStep,
   op,
+  plotMapping,
   samplePlot,
   type EuclidNode,
   type Track,
@@ -246,6 +249,88 @@ export const nodeTools = [
   }),
 
   capability({
+    name: 'add_axes',
+    summary: 'Add a 2D coordinate frame — axis lines, ticks, numbers — that a plot can share.',
+    doc: [
+      'The reference frame a graph is read against, as one node instead of two axis lines, a dozen ticks and a dozen number labels.',
+      '',
+      '**It owns the mapping, and plot_function can borrow it.** Pass this node\'s id as `axesId` to plot_function and the curve inherits the same rectangle and ranges, so the curve and its ticks agree by construction. Deriving the transform twice is how a real run ended up with a secant that visually hugged its own curve, and it cost fifteen re-lays before a screenshot caught it.',
+      '',
+      'Tick spacing is chosen to land on **round numbers** (1, 2 or 5 times a power of ten) unless you pass `xStep`/`yStep`. Ticks at 0.714 are worse than no ticks.',
+      '',
+      'An axis is drawn at function-space zero when zero is inside the range, and at the edge of the rectangle when it is not — a graph over x ∈ [2,5] shows its y axis on the left rather than off-screen.',
+      '',
+      'Coordinates are absolute canvas px, like a plotted path, so the two live in one space. Group them if they need to move together. `write_on` grows the axes out of their crossing point and brings the ticks in after.',
+    ].join('\n'),
+    args: z.object({
+      projectId: PROJECT_ID,
+      sceneId: SCENE_ID,
+      x: z.number().describe('left edge of the plot area, canvas px'),
+      y: z.number().describe('top edge of the plot area, canvas px'),
+      width: z.number().positive(),
+      height: z.number().positive(),
+      xMin: NUMBERISH,
+      xMax: NUMBERISH,
+      yMin: NUMBERISH,
+      yMax: NUMBERISH,
+      xStep: z.number().positive().optional().describe('tick spacing in x units; round numbers by default'),
+      yStep: z.number().positive().optional(),
+      color: COLOR.default('#8b97a6'),
+      strokeWidth: z.number().positive().default(3),
+      labels: z.boolean().default(true).describe('numbers beside the ticks'),
+      fontSize: z.number().positive().default(26),
+      grid: z.boolean().default(false),
+      xLabel: z.string().optional(),
+      yLabel: z.string().optional(),
+      parentId: PARENT_ID,
+    }),
+    async handler(ctx, a) {
+      if (a.xMin === a.xMax || a.yMin === a.yMax) {
+        throw new CapabilityError('xMin/xMax and yMin/yMax must each be two different numbers')
+      }
+      const rect = { x: a.x, y: a.y, width: a.width, height: a.height }
+      const xRange: [number, number] = [a.xMin, a.xMax]
+      const yRange: [number, number] = [a.yMin, a.yMax]
+      const id = newId('axes')
+      await ctx.submit(a.projectId, [
+        op.addNode(a.sceneId, {
+          // Absolute canvas geometry, so this and a plotted curve share one
+          // coordinate space with no second transform to keep in step.
+          ...baseNode({ x: 0, y: 0 }),
+          id,
+          type: 'axes',
+          rect,
+          xRange,
+          yRange,
+          ...(a.xStep !== undefined ? { xStep: a.xStep } : {}),
+          ...(a.yStep !== undefined ? { yStep: a.yStep } : {}),
+          color: a.color,
+          strokeWidth: a.strokeWidth,
+          labels: a.labels,
+          fontSize: a.fontSize,
+          grid: a.grid,
+          ...(a.xLabel ? { xLabel: a.xLabel } : {}),
+          ...(a.yLabel ? { yLabel: a.yLabel } : {}),
+        }, a.parentId),
+      ])
+      const xStep = a.xStep ?? niceStep(a.xMax - a.xMin)
+      const yStep = a.yStep ?? niceStep(a.yMax - a.yMin)
+      const map = plotMapping(rect, xRange, yRange)
+      return said(
+        `created axes ${id} over x ∈ [${a.xMin}, ${a.xMax}], y ∈ [${a.yMin}, ${a.yMax}] ` +
+          `in ${a.width}x${a.height}px at (${a.x}, ${a.y}) — ticks every ${xStep} and ${yStep}, ` +
+          `${axisTicks(a.xMin, a.xMax, xStep).length} and ` +
+          `${axisTicks(a.yMin, a.yMax, yStep).length} of them.\n` +
+          `Function (0,0) is at canvas (${map.originScreen.x.toFixed(1)}, ` +
+          `${map.originScreen.y.toFixed(1)}); ${map.scale.x.toFixed(2)} px per x-unit, ` +
+          `${map.scale.y.toFixed(2)} px per y-unit. Pass axesId: "${id}" to plot_function ` +
+          `and the curve will use exactly this mapping.`,
+        { nodeId: id, rect, xRange, yRange, xStep, yStep, ...map },
+      )
+    },
+  }),
+
+  capability({
     name: 'plot_function',
     summary: 'Plot y = f(x) into a rectangle — one path node, and it tells you the mapping.',
     doc: [
@@ -265,13 +350,16 @@ export const nodeTools = [
       projectId: PROJECT_ID,
       sceneId: SCENE_ID,
       expression: z.string().min(1).describe('in terms of x, e.g. "x^2"'),
-      xMin: NUMBERISH,
-      xMax: NUMBERISH,
+      axesId: NODE_ID.optional().describe(
+        'an add_axes node to plot into: its rectangle and ranges are used, and x/y/width/height/xMin/xMax/yMin/yMax are not needed',
+      ),
+      xMin: NUMBERISH.optional(),
+      xMax: NUMBERISH.optional(),
       /** The canvas rectangle to draw into: top-left plus size. */
-      x: z.number().describe('left edge of the plot area, canvas px'),
-      y: z.number().describe('top edge of the plot area, canvas px'),
-      width: z.number().positive(),
-      height: z.number().positive(),
+      x: z.number().optional().describe('left edge of the plot area, canvas px'),
+      y: z.number().optional().describe('top edge of the plot area, canvas px'),
+      width: z.number().positive().optional(),
+      height: z.number().positive().optional(),
       samples: z.number().int().min(2).max(2000).default(120),
       yMin: NUMBERISH.optional().describe('fitted to the function when omitted'),
       yMax: NUMBERISH.optional(),
@@ -281,18 +369,43 @@ export const nodeTools = [
       parentId: PARENT_ID,
     }),
     async handler(ctx, a) {
-      const hasRange = a.yMin !== undefined && a.yMax !== undefined
-      if ((a.yMin === undefined) !== (a.yMax === undefined)) {
+      // Borrowing an axes node's mapping is the whole reason it exists: the
+      // curve and the ticks it is read against come from one set of numbers.
+      let rect = { x: a.x ?? 0, y: a.y ?? 0, width: a.width ?? 0, height: a.height ?? 0 }
+      let domain: [number, number] = [a.xMin ?? 0, a.xMax ?? 0]
+      let range = a.yMin !== undefined && a.yMax !== undefined ? [a.yMin, a.yMax] as [number, number] : undefined
+      if (a.axesId) {
+        const { doc } = await ctx.getDoc(a.projectId)
+        const axes = ctx.nodeOrThrow(doc, a.sceneId, a.axesId)
+        if (axes.type !== 'axes') {
+          throw new CapabilityError(
+            `${a.axesId} is a ${axes.type}, not an axes node — add_axes makes one`,
+          )
+        }
+        rect = axes.rect
+        domain = [a.xMin ?? axes.xRange[0], a.xMax ?? axes.xRange[1]]
+        // The axes' range wins outright: a curve fitted to its own extent
+        // inside a frame labelled differently is the disagreement this exists
+        // to prevent.
+        range = axes.yRange
+      } else if ([a.x, a.y, a.width, a.height, a.xMin, a.xMax].some((v) => v === undefined)) {
+        throw new CapabilityError(
+          'without axesId, plotting needs the rectangle and the domain: ' +
+            'x, y, width, height, xMin, xMax. Or call add_axes and pass its id.',
+        )
+      }
+      const hasRange = range !== undefined
+      if (!a.axesId && (a.yMin === undefined) !== (a.yMax === undefined)) {
         throw new CapabilityError('give both yMin and yMax, or neither (the range is fitted)')
       }
       let plot
       try {
         plot = samplePlot({
           expression: a.expression,
-          domain: [a.xMin, a.xMax],
-          rect: { x: a.x, y: a.y, width: a.width, height: a.height },
+          domain,
+          rect,
           samples: a.samples,
-          range: hasRange ? [a.yMin!, a.yMax!] : undefined,
+          range,
           uniform: a.uniform,
         })
       } catch (e) {
@@ -320,8 +433,8 @@ export const nodeTools = [
       const [lo, hi] = plot.range
       return said(
         `plotted "${a.expression}" as ${id} — ${plot.points.length} points over ` +
-          `x ∈ [${a.xMin}, ${a.xMax}], y ∈ [${lo.toFixed(3)}, ${hi.toFixed(3)}]` +
-          `${hasRange ? '' : ' (fitted)'}.\n` +
+          `x ∈ [${domain[0]}, ${domain[1]}], y ∈ [${lo.toFixed(3)}, ${hi.toFixed(3)}]` +
+          `${hasRange ? (a.axesId ? ` (from axes ${a.axesId})` : '') : ' (fitted)'}.\n` +
           `Mapping: function (0,0) is at canvas (${plot.originScreen.x.toFixed(1)}, ` +
           `${plot.originScreen.y.toFixed(1)}); ${plot.scale.x.toFixed(2)} px per x-unit, ` +
           `${plot.scale.y.toFixed(2)} px per y-unit.\n` +

@@ -1,7 +1,11 @@
 import { Container, Graphics, Sprite, Text, Texture, type Renderer } from 'pixi.js'
 import {
+  axisTicks,
   cellCenter,
   cellsInRange,
+  formatTick,
+  niceStep,
+  plotMapping,
   globalToScene,
   gridOf,
   gridSize,
@@ -14,6 +18,7 @@ import {
   type LatexNode,
   type ArrowNode,
   type Axes3dNode,
+  type AxesNode,
   type MatrixNode,
   type Points3Node,
   type TokensNode,
@@ -554,6 +559,7 @@ export class EuclidStage {
       case 'axes3d':
       case 'points3':
       case 'arrow':
+      case 'axes':
         content = new Graphics()
         break
       case 'text': {
@@ -656,6 +662,9 @@ export class EuclidStage {
         return
       case 'arrow':
         this.updateArrow(item, res, node)
+        return
+      case 'axes':
+        this.updateAxes(item, res, node)
         return
       case 'group':
         // A write on a group arrives child by child (applied once the children
@@ -1228,6 +1237,119 @@ export class EuclidStage {
         .closePath()
         .fill({ color })
     }
+  }
+
+  /**
+   * A coordinate frame, drawn from the mapping the node owns.
+   *
+   * Every position here goes through `plotMapping`, the same function
+   * `samplePlot` uses — so a curve plotted into these axes lands on these
+   * ticks by construction rather than by the caller doing the arithmetic
+   * twice and hoping.
+   *
+   * An axis sits at function-space zero when zero is in range, and at the edge
+   * of the rectangle when it is not: a graph over x ∈ [2,5] should show its
+   * y axis at the left, not off-screen.
+   */
+  private updateAxes(item: Item, res: ResolvedNode, node: AxesNode): void {
+    const g = item.content as Graphics
+    g.clear()
+    if (!item.labelTexts) item.labelTexts = []
+    const pool = item.labelTexts
+    let used = 0
+
+    const p = res.props
+    const { rect, xRange, yRange } = node
+    const { originScreen } = plotMapping(rect, xRange, yRange)
+    const color = p.color as string
+    const width = Math.max(0.5, (p.strokeWidth as number) * (p.scale as number))
+    const fontSize = (p.fontSize as number) * (p.scale as number)
+
+    const left = rect.x
+    const right = rect.x + rect.width
+    const top = rect.y
+    const bottom = rect.y + rect.height
+    // Where each axis line sits: on zero if zero is in view, else on the edge.
+    const axisY = Math.min(bottom, Math.max(top, originScreen.y))
+    const axisX = Math.min(right, Math.max(left, originScreen.x))
+
+    const xStep = node.xStep ?? niceStep(xRange[1] - xRange[0])
+    const yStep = node.yStep ?? niceStep(yRange[1] - yRange[0])
+    const xs = axisTicks(xRange[0], xRange[1], xStep)
+    const ys = axisTicks(yRange[0], yRange[1], yStep)
+
+    // A write grows the axes out of the origin and brings the ticks in after,
+    // which reads as a frame being drawn rather than a rectangle wiping in.
+    const wp = res.writeProgress
+    item.glyphWrite = wp !== null
+    const grow = wp === null ? 1 : Math.min(1, wp / 0.45)
+    const tickReveal = wp === null ? 1 : Math.max(0, (wp - 0.35) / 0.65)
+    if (grow <= 0) {
+      for (const t of pool) t.visible = false
+      return
+    }
+
+    const tick = Math.min(rect.width, rect.height) * 0.018
+    const label = (text: string, x: number, y: number, alpha: number): void => {
+      if (!node.labels || alpha <= 0) return
+      let t = pool[used]
+      if (!t) {
+        t = new Text({ text, style: { fontFamily: 'ui-sans-serif, system-ui', fontSize } })
+        t.anchor.set(0.5)
+        pool.push(t)
+        item.content.addChild(t)
+      }
+      if (t.text !== text) t.text = text
+      t.style.fontSize = fontSize
+      t.style.fill = color
+      t.position.set(x, y)
+      t.alpha = alpha
+      t.visible = true
+      used++
+    }
+
+    if (node.grid) {
+      for (const v of xs) {
+        const x = originScreen.x + v * plotMapping(rect, xRange, yRange).scale.x
+        g.moveTo(x, top).lineTo(x, top + (bottom - top) * grow)
+      }
+      for (const v of ys) {
+        const y = originScreen.y - v * plotMapping(rect, xRange, yRange).scale.y
+        g.moveTo(left, y).lineTo(left + (right - left) * grow, y)
+      }
+      g.stroke({ width: Math.max(0.5, width * 0.4), color, alpha: 0.18 })
+    }
+
+    // Axis lines, growing outward from where they cross.
+    g.moveTo(axisX - (axisX - left) * grow, axisY).lineTo(axisX + (right - axisX) * grow, axisY)
+    g.moveTo(axisX, axisY + (bottom - axisY) * grow).lineTo(axisX, axisY - (axisY - top) * grow)
+    g.stroke({ width, color })
+
+    const { scale } = plotMapping(rect, xRange, yRange)
+    const alphas = staggerAlphas(xs.length + ys.length, tickReveal)
+    let i = 0
+    for (const v of xs) {
+      const x = originScreen.x + v * scale.x
+      const a = alphas[i++] ?? 1
+      if (a <= 0) continue
+      g.moveTo(x, axisY - tick).lineTo(x, axisY + tick).stroke({ width, color, alpha: a })
+      // The zero label would sit on top of the other axis; one is enough.
+      if (v !== 0 || Math.abs(axisX - originScreen.x) > 0.5) {
+        label(formatTick(v, xStep), x, axisY + tick + fontSize * 0.8, a)
+      }
+    }
+    for (const v of ys) {
+      const y = originScreen.y - v * scale.y
+      const a = alphas[i++] ?? 1
+      if (a <= 0) continue
+      g.moveTo(axisX - tick, y).lineTo(axisX + tick, y).stroke({ width, color, alpha: a })
+      if (v !== 0) label(formatTick(v, yStep), axisX - tick - fontSize * 1.1, y, a)
+    }
+
+    if (node.xLabel) label(node.xLabel, right, axisY + tick + fontSize * 2, tickReveal)
+    if (node.yLabel) label(node.yLabel, axisX + fontSize * 1.4, top, tickReveal)
+
+    for (let k = used; k < pool.length; k++) pool[k]!.visible = false
   }
 
   /** Shared sprite pool: one sprite per drawn glyph, reused across frames. */

@@ -444,6 +444,41 @@ export interface ArrowNode extends NodeBase {
   gap: number
 }
 
+/**
+ * A 2D coordinate frame: axis lines, ticks, numbers, optional grid.
+ *
+ * It owns the **mapping** — the rectangle it occupies and the function-space
+ * ranges across it — which is the point. A curve plotted into the same axes
+ * inherits that mapping instead of restating it, so the two cannot disagree;
+ * run 4 lost fifteen re-lays to a curve and its reference frame having been
+ * derived separately.
+ *
+ * Its geometry is absolute canvas coordinates, like a plotted `path`, so both
+ * live in one space with no second transform to keep in step. Group them if
+ * they need to move together.
+ */
+export interface AxesNode extends NodeBase {
+  type: 'axes'
+  /** The plot area in canvas px: top-left corner and size. */
+  rect: { x: number; y: number; width: number; height: number }
+  /** Function-space extent across the rectangle. */
+  xRange: [number, number]
+  yRange: [number, number]
+  /** Tick spacing in function units. Omitted = chosen to land on round numbers. */
+  xStep?: number
+  yStep?: number
+  color: Color
+  strokeWidth: number
+  /** Numbers beside the ticks. */
+  labels: boolean
+  fontSize: number
+  /** Faint lines across the plot at every tick. */
+  grid: boolean
+  /** Axis names, drawn at the far end of each axis. */
+  xLabel?: string
+  yLabel?: string
+}
+
 export interface GroupNode extends NodeBase {
   type: 'group'
   children: EuclidNode[]
@@ -461,6 +496,7 @@ export type EuclidNode =
   | Axes3dNode
   | Points3Node
   | ArrowNode
+  | AxesNode
   | GroupNode
 
 const NodeBaseShape = {
@@ -589,6 +625,27 @@ export const NodeSchema: z.ZodType<EuclidNode> = z.lazy(() =>
       headSize: z.number().min(0),
       curve: z.number().finite(),
       gap: z.number().min(0),
+    }),
+    z.object({
+      ...NodeBaseShape,
+      type: z.literal('axes'),
+      rect: z.object({
+        x: z.number().finite(),
+        y: z.number().finite(),
+        width: z.number().positive(),
+        height: z.number().positive(),
+      }),
+      xRange: z.tuple([z.number().finite(), z.number().finite()]),
+      yRange: z.tuple([z.number().finite(), z.number().finite()]),
+      xStep: z.number().positive().optional(),
+      yStep: z.number().positive().optional(),
+      color: ColorSchema,
+      strokeWidth: z.number().positive(),
+      labels: z.boolean(),
+      fontSize: z.number().positive(),
+      grid: z.boolean(),
+      xLabel: z.string().optional(),
+      yLabel: z.string().optional(),
     }),
     z.object({
       ...NodeBaseShape,

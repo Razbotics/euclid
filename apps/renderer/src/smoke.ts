@@ -20,7 +20,11 @@ import {
   OpError,
   outlineDoc,
   SCHEMA_VERSION,
+  axisTicks,
   evaluateExpression,
+  formatTick,
+  niceStep,
+  plotMapping,
   samplePlot,
   type EuclidDoc,
   type Track,
@@ -840,8 +844,57 @@ const linked = applyOps(overrun, [
 ])
 assert.match(outlineDoc(linked), /arrow arw @\(0,0\) dot → \(800,400\)/, 'the outline names both ends')
 
+
+// ---------- axes: ticks a viewer can read ----------
+// Ticks at 0.7142857 are worse than no ticks, and the arithmetic that avoids
+// them is exactly the kind that goes unchecked when done by hand.
+assert.equal(niceStep(10), 2, 'ten across gives twos')
+assert.equal(niceStep(1), 0.2, 'and one across gives fifths')
+assert.equal(niceStep(0.05), 0.01, 'small spans keep round numbers too')
+assert.equal(niceStep(4300), 1000)
+for (const span of [0.003, 0.7, 7, 65, 900, 12345]) {
+  const step = niceStep(span)
+  const norm = step / 10 ** Math.floor(Math.log10(step))
+  assert.ok([1, 2, 5].includes(Math.round(norm)), `${span} → ${step} is 1, 2 or 5 x a power of ten`)
+  const n = axisTicks(0, span, step).length
+  assert.ok(n >= 3 && n <= 14, `${span} → ${n} ticks is a readable number of them`)
+}
+
+assert.deepEqual(axisTicks(0, 1, 0.25), [0, 0.25, 0.5, 0.75, 1], 'ticks land on multiples')
+assert.deepEqual(axisTicks(-2, 2, 1), [-2, -1, 0, 1, 2], 'through zero')
+assert.deepEqual(axisTicks(2.3, 5, 1), [3, 4, 5], 'and start inside the range, not at its edge')
+// Accumulating a float step gives 0.30000000000000004; a tick labelled that is
+// worse than one that is a pixel out.
+assert.deepEqual(axisTicks(0, 0.5, 0.1), [0, 0.1, 0.2, 0.3, 0.4, 0.5], 'no float drift in the values')
+assert.deepEqual(axisTicks(0, 1, 0), [], 'a zero step has no ticks rather than hanging')
+assert.equal(formatTick(0.3, 0.1), '0.3')
+assert.equal(formatTick(2, 1), '2', 'no pointless decimals')
+assert.equal(formatTick(-0, 1), '0', 'and never minus zero')
+
+// The mapping is one function, so a curve and its frame cannot disagree.
+const rect = { x: 200, y: 100, width: 800, height: 400 }
+const map = plotMapping(rect, [0, 4], [-1, 1])
+assert.equal(map.scale.x, 200, '800px across four units')
+assert.equal(map.originScreen.y, 300, 'y=0 is halfway down a symmetric range')
+const curve = samplePlot({ expression: 'x/4', domain: [0, 4], rect, range: [-1, 1] })
+assert.deepEqual(curve.originScreen, map.originScreen, 'the plot uses the same origin as the axes')
+assert.deepEqual(curve.scale, map.scale, 'and the same scale — this is the run-4 bug, in one assert')
+// The claim that matters is not that a sample happens to land on a tick — with
+// 120 samples over [0,4] none lands exactly on x=2 — but that reading a curve
+// point back through the axes' mapping gives the function's own value.
+for (const pt of [curve.points[0]!, curve.points[40]!, curve.points.at(-1)!]) {
+  const u = (pt.x - map.originScreen.x) / map.scale.x
+  const v = (map.originScreen.y - pt.y) / map.scale.y
+  assert.ok(
+    Math.abs(v - u / 4) < 1e-9,
+    `a point on the curve reads back as f(x) through the axes' mapping (x=${u}, y=${v})`,
+  )
+}
+// And the tick at x=2 is where the axes say it is, in the same pixels.
+assert.equal(map.originScreen.x + 2 * map.scale.x, 600, 'the x=2 tick is at canvas 600')
+
 console.log(
   'smoke OK — reducer, sampler, morph resolution, key moments, camera framing, ' +
     'grid layout, stagger, cell matching, projection, flows, path reveal, ' +
-    'expressions and plot mapping all behave',
+    'expressions, axis ticks and plot mapping all behave',
 )

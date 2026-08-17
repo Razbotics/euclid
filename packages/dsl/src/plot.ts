@@ -99,23 +99,92 @@ export function samplePlot(spec: PlotSpec): PlotResult {
     y1 += 0.5
   }
 
-  let sx = spec.rect.width / (x1 - x0)
-  let sy = spec.rect.height / (y1 - y0)
-  if (spec.uniform) {
+  const { scale, originScreen } = plotMapping(spec.rect, [x0, x1], [y0, y1], spec.uniform)
+  const points = raw.map((p) => ({
+    x: originScreen.x + p.u * scale.x,
+    y: originScreen.y - p.v * scale.y,
+  }))
+
+  return { points, range: [y0, y1], scale, originScreen, dropped }
+}
+
+/**
+ * Function space → canvas, as one function.
+ *
+ * Extracted so a curve and its axes cannot disagree: an `axes` node computes
+ * its ticks through this, `samplePlot` places its points through this, and
+ * `plot_function` can hand a plot the mapping an axes node already decided.
+ * Deriving the transform twice is exactly how run 4 ended up with a secant that
+ * hugged its curve.
+ *
+ * Canvas y grows downward, so the mapping flips it — the single most common
+ * thing to get wrong by hand, and the reason run 4's points were all negative.
+ */
+export function plotMapping(
+  rect: { x: number; y: number; width: number; height: number },
+  domain: [number, number],
+  range: [number, number],
+  uniform = false,
+): { scale: Vec2; originScreen: Vec2 } {
+  const [x0, x1] = domain
+  const [y0, y1] = range
+  let sx = rect.width / (x1 - x0)
+  let sy = rect.height / (y1 - y0)
+  if (uniform) {
     const s = Math.min(sx, sy)
     sx = s
     sy = s
   }
+  return {
+    scale: { x: sx, y: sy },
+    originScreen: { x: rect.x - x0 * sx, y: rect.y + y1 * sy },
+  }
+}
 
-  // Canvas y grows downward, so the mapping flips it — the single most common
-  // thing to get wrong by hand, and the reason run 4's points were all negative.
-  const originScreen: Vec2 = { x: spec.rect.x - x0 * sx, y: spec.rect.y + y1 * sy }
-  const points = raw.map((p) => ({
-    x: originScreen.x + p.u * sx,
-    y: originScreen.y - p.v * sy,
-  }))
+/**
+ * A step that lands on round numbers — 1, 2 or 5 times a power of ten.
+ *
+ * Ticks at 0.7142857 are worse than no ticks: the point of a tick is that a
+ * viewer can read a value off it. An agent should not have to work this out,
+ * and the arithmetic to do it by hand is exactly the kind that goes unchecked.
+ */
+export function niceStep(span: number, target = 6): number {
+  const raw = Math.abs(span) / Math.max(1, target)
+  if (!Number.isFinite(raw) || raw <= 0) return 1
+  const mag = 10 ** Math.floor(Math.log10(raw))
+  const norm = raw / mag
+  const step = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10
+  return step * mag
+}
 
-  return { points, range: [y0, y1], scale: { x: sx, y: sy }, originScreen, dropped }
+/**
+ * Tick values inside [min, max], on multiples of `step`.
+ *
+ * Values are snapped to the step's own precision: accumulating a float step
+ * produces 0.30000000000000004, and a tick labelled that is worse than a tick
+ * that is one pixel out.
+ */
+export function axisTicks(min: number, max: number, step: number): number[] {
+  if (!Number.isFinite(step) || step <= 0) return []
+  const lo = Math.min(min, max)
+  const hi = Math.max(min, max)
+  const decimals = Math.max(0, -Math.floor(Math.log10(step)) + 1)
+  const out: number[] = []
+  const first = Math.ceil(lo / step - 1e-9)
+  for (let i = first; i * step <= hi + 1e-9; i++) {
+    const v = Number((i * step).toFixed(decimals))
+    if (v >= lo - 1e-9 && v <= hi + 1e-9) out.push(v)
+    if (out.length > 200) break
+  }
+  return out
+}
+
+/** A tick's label: no trailing zeros, and `0` rather than `-0`. */
+export function formatTick(v: number, step: number): string {
+  const decimals = Math.max(0, Math.min(6, -Math.floor(Math.log10(step))))
+  const text = v.toFixed(decimals)
+  const trimmed = decimals > 0 ? text.replace(/\.?0+$/, '') : text
+  return trimmed === '-0' ? '0' : trimmed
 }
 
 /** Pad the observed extent slightly so the curve does not graze the edges. */
