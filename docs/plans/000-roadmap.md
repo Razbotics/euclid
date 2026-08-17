@@ -127,8 +127,15 @@ arc-length `write_on` is the beginning of path-following.
       path by arc length. Verified by `check-flows.ts`, which proves tracking by
       framing the camera where the arrow can only reach once its anchor has
       moved
-- [ ] Axes, ticks and labels — the rest of the graph story `plot_function`
-      started; hand-built today
+- [x] Axes, ticks and labels — the rest of the graph story `plot_function`
+      started. **Done 2026-08-17**: an `axes` node owns the mapping (rectangle,
+      ranges, ticks) and `plot_function` borrows it by `axesId`, so a curve and
+      its frame come from one set of numbers instead of two derivations that
+      have to agree — the run-4 failure, closed at the source. Ticks land on
+      round numbers; an axis moves to the rectangle's edge when zero is out of
+      range. Verified by `check-axes.ts`, which frames the camera on the point
+      the axes claim is (2,4) at 20x: 6.1% lit there against 0.0% two units
+      off it
 - [ ] Code-block primitive with line-highlight animations
 - [x] Pseudo-3D by projection: optional `z`, camera yaw/pitch, depth cues —
       **done 2026-08-16**, out of order at the user's request. `vector3`,

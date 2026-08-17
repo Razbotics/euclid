@@ -330,6 +330,40 @@ settles. The editor draws a mini-map of the frame within the scene while
 scrubbing, for the same reason: the preview *is* the camera's view, so the one
 thing it cannot show is where that view sits.
 
+## Graphs: the mapping is a node
+
+`plot_function` always owned the mapping and *reported* it — `originScreen` and
+`scale` — so a caller could place anything else in the same coordinate system.
+That was the right half of the answer, and it left the other half to be done by
+hand: every axis line, tick and number derived from the report, every time.
+
+An `axes` node holds the mapping instead: the rectangle it occupies, the
+function-space ranges across it, and its ticks. `plot_function` takes an
+`axesId` and **borrows** it. So the curve and the frame it is read against come
+from one set of numbers rather than two derivations that have to agree — which
+is the run-4 failure exactly (a hand-chosen uniform scale made a secant hug its
+own curve, and only a screenshot caught it).
+
+`plotMapping(rect, domain, range, uniform)` in `packages/dsl/src/plot.ts` is
+that one set of numbers, used by `samplePlot` and by the stage's tick placement
+alike.
+
+Two details worth keeping:
+
+- **Ticks land on round numbers.** `niceStep` picks 1, 2 or 5 times a power of
+  ten, targeting a readable count. Ticks at 0.714 are worse than no ticks, and
+  the arithmetic that avoids them is precisely the kind that goes unchecked.
+  Values are snapped to the step's precision, because accumulating a float step
+  gives 0.30000000000000004 and a tick labelled that is worse than one a pixel
+  out.
+- **An axis sits at function-space zero, or at the rectangle's edge.** A graph
+  over x ∈ [2,5] draws its y axis on the left rather than far off-screen.
+
+Geometry is absolute canvas coordinates, like a plotted path, so both live in
+one space with no second transform to keep in step; group them to move them
+together. `write_on` grows the axes out of their crossing point and staggers
+the ticks in after.
+
 ## Curves
 
 A `path` node holds sampled points and draws them as one polyline. It exists

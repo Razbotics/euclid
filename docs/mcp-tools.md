@@ -82,6 +82,9 @@ shape as `remove_asset`'s `force`.
   (`orbit_camera` is the shorthand). Straight on, a cube is a square. Angles
   are radians everywhere except `orbit_camera`, whose argument is named
   `degrees` because an orbit is naturally "a quarter turn".
+- A graph's **mapping is a node**: `add_axes` owns the rectangle, the ranges
+  and the ticks, and `plot_function` takes its `axesId` to borrow them, so a
+  curve cannot disagree with the frame it is read against.
 - Structured content is addressed by **what it is, not where it is**: `tex`
   names a sub-expression of an equation, `cells` names a row, column, cell or
   band of a `matrix`/`tokens` node (`{"rows":1}`, `{"rows":[0,1],"cols":2}`,
