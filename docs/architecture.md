@@ -469,6 +469,53 @@ agent can read the real duration before choreographing against it and the
 editor sees narration appear live. See
 [plans/002](plans/002-render-pipeline.md) for the wiring.
 
+## Audio tracks
+
+Narration answers "what does this shot say". It does not answer "what does the
+video *sound* like", and the two have different shapes — which is why music is
+not more narration.
+
+**Tracks live on the document; clips are placed in global time.** A music bed
+runs across cuts, so anchoring it to a scene the way narration is anchored
+would make it jump whenever that scene's duration changed. The cost is real
+and worth naming: re-timing an early scene slides every later scene under a
+bed that stays put. Narration keeps the opposite trade for the opposite
+reason — a line belongs to the shot it explains.
+
+`doc.audio?: AudioTrack[]`, each with clips carrying `startSec`, an optional
+head trim (`sourceInSec`) and length (`playSec`), `gain`, and two fades. It is
+optional, so every document written before audio existed stays valid and
+SCHEMA_VERSION does not move — the same trick `camera` used.
+
+**`planAudio(doc)` is the one place placement is decided.** It merges generated
+narration and every track into a single list of `AudioPlacement`s, and three
+consumers read it: the timeline draws from it, the preview mixer schedules
+from it, and the render's ffmpeg mux builds its filter graph from it. That is
+the same discipline `planNarration` established, for the same reason — the
+alternative is an editor that lies about the export. Clips are cut at the end
+of the video exactly as narration is cut at the end of its scene.
+
+Muted placements are **included and flagged**, not dropped: the timeline has to
+draw a muted lane (you cannot unmute what you cannot see), while the player and
+the mux read `audibleAudio`, which filters them. One function, two audiences,
+no second definition of "what plays".
+
+Three smaller decisions that each foreclose a bug:
+
+- **`muted` is in the document; solo is not.** Muting changes what the export
+  contains, so it is part of the work. Solo is a monitoring choice you make for
+  ten seconds — writing it into a shared document would let one person's
+  listening silently change everyone's render. Solo lives in editor state.
+- **Gain attenuates only (0…1).** `HTMLMediaElement.volume` cannot exceed 1, so
+  a document allowing 1.5 would preview at a level it could not export.
+- **Fades are evaluated at the playhead** (`gainAt`), so the preview really
+  fades rather than promising to. In the mux they come *after* `volume` in the
+  filter chain, so a 0.4 bed ramps to 0.4 and never swells to full scale.
+
+Measured end to end on a 19s test render: effects at gain 0.5 read −21.2 dB
+against a −15.2 dB source (halving amplitude is −6.02 dB), the 3→6s gap reads
+−91 dB, and the bed's 3s fade-out reads −47.4 dB.
+
 ## The capability catalog (agent gateway)
 
 `apps/mcp` is a **relay, not a tool surface** — five fixed tools

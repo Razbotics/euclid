@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { CellRange } from './grid'
 import { LIMITS } from './limits'
+import { AudioTrackSchema, type AudioTrack } from './audio'
 
 export const SCHEMA_VERSION = 1 as const
 
@@ -788,6 +789,13 @@ export interface EuclidDoc {
   name: string
   canvas: Canvas
   scenes: Scene[]
+  /**
+   * Music and effects, placed in global time. Optional for the same reason
+   * `camera` is: every document written before audio tracks existed stays
+   * valid and SCHEMA_VERSION does not move. Narration is *not* here — it is
+   * scene-scoped and generated; `planAudio` merges the two into one list.
+   */
+  audio?: AudioTrack[]
 }
 export const EuclidDocSchema: z.ZodType<EuclidDoc> = z
   .object({
@@ -796,6 +804,7 @@ export const EuclidDocSchema: z.ZodType<EuclidDoc> = z
     name: z.string().min(1),
     canvas: CanvasSchema,
     scenes: z.array(SceneSchema).max(LIMITS.maxScenes),
+    audio: z.array(AudioTrackSchema).max(LIMITS.maxAudioTracks).optional(),
   })
   .superRefine((doc, ctx) => {
     const total = doc.scenes.reduce((s, sc) => s + sc.duration, 0)

@@ -133,31 +133,69 @@ main.workbench { display: flex; flex: 1; min-height: 0; }
   border: 1px solid #262d36; border-radius: 4px; padding: 4px 6px;
 }
 
-.timeline { border-top: 1px solid #1d2229; padding: 8px 16px 14px; }
+.timeline { border-top: 1px solid #1d2229; padding: 8px 12px 10px; }
 .timeline-controls { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .timeline-controls button {
   background: #1c2733; color: #e6e8eb; border: none; border-radius: 4px;
-  width: 34px; height: 26px; cursor: pointer;
+  width: 34px; height: 26px; cursor: pointer; font-family: inherit;
 }
+.timeline-controls .zoom { display: flex; gap: 2px; }
+.timeline-controls .solo-clear { color: #e8c74a; }
 .time-readout { color: #9aa3ad; font-variant-numeric: tabular-nums; }
-.timeline-bar {
-  position: relative; display: flex; height: 44px; gap: 2px;
-  cursor: crosshair; user-select: none;
+
+/* ---------- lanes ---------- */
+
+/* Headers on the left, one scroller on the right. Everything that measures
+   time lives inside that single scroller, so the ruler, the scenes and the
+   audio can never disagree about where a second is — which is the bug a
+   per-lane scrollbar would introduce the first time you zoomed in. */
+.tl { display: flex; align-items: flex-start; }
+.tl-heads { flex: none; width: 148px; }
+.tl-head {
+  display: flex; align-items: center; gap: 3px;
+  height: 26px; padding: 0 6px 0 2px; font-size: 11px; color: #7f8c99;
+  border-bottom: 1px solid #12171d;
 }
+.tl-head.ruler-head { height: 16px; border-bottom: none; }
+.tl-head:nth-child(2) { height: 46px; }
+.tl-head.muted .lane-name { color: #4c5661; text-decoration: line-through; }
+.lane-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lane-btn {
+  width: 16px !important; height: 16px !important; padding: 0 !important;
+  background: #161d25 !important; color: #6c7784 !important;
+  font-size: 9px !important; border-radius: 2px !important; line-height: 1;
+}
+.lane-btn.on { background: #2f5d8a !important; color: #dbeaff !important; }
+.lane-gain { width: 40px; accent-color: #4a7fb5; }
+
+.tl-scroll { flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden; }
+.tl-lanes { position: relative; user-select: none; }
+.tl-ruler {
+  position: relative; height: 16px; font-size: 9px; color: #5c646d;
+  font-variant-numeric: tabular-nums;
+}
+.tl-ruler .tick {
+  position: absolute; top: 0; padding-left: 3px;
+  border-left: 1px solid #232a33; height: 100%; white-space: nowrap;
+}
+.tl-lane {
+  position: relative; height: 26px;
+  border-bottom: 1px solid #12171d; background: #0e1319;
+}
+.tl-lane.lane-scenes { height: 46px; background: transparent; display: flex; gap: 2px; }
+.tl-lane.lane-muted { opacity: .45; }
+.tl-lane.drop-target { background: #16283a; box-shadow: inset 0 0 0 1px #2f6b7d; }
+
 .timeline-scene {
   background: #17202b; border: 1px solid #263140; border-radius: 4px;
   padding: 4px 8px; overflow: hidden; white-space: nowrap; font-size: 12px;
-  color: #9aa3ad; display: flex; gap: 6px; align-items: flex-start;
+  color: #9aa3ad; display: flex; gap: 6px; align-items: flex-start; height: 46px;
   pointer-events: none;
 }
 .narration-dot { color: #e8c74a; font-size: 9px; }
-/* Narration lane: absolute clips over the same span as .timeline-bar, so a
-   gap here is exactly the silence in the exported file. */
-.timeline-audio {
-  position: relative; height: 22px; margin-top: 4px;
-  background: #12181f; border: 1px solid #1d2229; border-radius: 4px;
-  overflow: hidden; user-select: none;
-}
+
+/* Clips share one geometry with `planAudio`, so a block sits exactly where the
+   sound is — and the gap between them is the silence in the exported file. */
 .audio-clip {
   position: absolute; top: 2px; bottom: 2px;
   background: #1d3a44; border: 1px solid #2f6b7d; border-radius: 3px;
@@ -166,13 +204,54 @@ main.workbench { display: flex; flex: 1; min-height: 0; }
 }
 /* Narration the mux cuts at the scene edge — the clip is longer than its slot. */
 .audio-clip.trimmed { border-right: 2px solid #fc6255; }
-.lane-empty {
-  position: absolute; left: 8px; top: 4px; font-size: 10px; color: #5c646d;
+.narration-clip { cursor: default; }
+.track-clip {
+  background: #2a2f4a; border-color: #4a5285; color: #b9c0ee;
+  cursor: grab; padding: 0;
 }
+.track-clip.selected { border-color: #a7b4ff; box-shadow: 0 0 0 1px #a7b4ff inset; color: #fff; }
+/* Mid-drag onto another lane: the clip is still drawn on the old lane, but
+   faintly, so that lane does not look like it kept a copy. */
+.track-clip.ghost { opacity: .35; }
+.clip-label { flex: 1; padding: 0 8px; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.clip-handle { position: absolute; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 2; }
+.clip-handle:hover { background: rgba(167, 180, 255, .35); }
+.handle-start { left: 0; }
+.handle-end { right: 0; }
+/* Fades are drawn as the ramps they are: the shape *is* the value, so a fade
+   is visible without opening anything. */
+.fade { position: absolute; top: 0; bottom: 0; pointer-events: none; }
+.fade-in { left: 0; background: linear-gradient(to right, #0e1319, transparent); }
+.fade-out { right: 0; background: linear-gradient(to left, #0e1319, transparent); }
+
+.lane-empty { position: absolute; left: 8px; top: 6px; font-size: 10px; color: #454d56; }
 .playhead {
-  position: absolute; top: -4px; bottom: -4px; width: 2px;
-  background: #fc6255; pointer-events: none;
+  position: absolute; top: 0; bottom: 0; width: 2px;
+  background: #fc6255; pointer-events: none; z-index: 3;
 }
+
+/* The values a drag cannot express. Appears only with a clip selected. */
+.clip-inspector {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  margin-top: 8px; padding: 6px 10px;
+  background: #12171d; border: 1px solid #1d2229; border-radius: 4px;
+  font-size: 11px; color: #9aa3ad;
+}
+.clip-inspector .clip-title { color: #e6e8eb; }
+.clip-inspector label { display: flex; align-items: center; gap: 6px; }
+.clip-inspector input[type='number'] {
+  width: 56px; background: #0e1319; color: #e6e8eb;
+  border: 1px solid #263140; border-radius: 3px; padding: 2px 4px; font-size: 11px;
+}
+.clip-inspector input[type='range'] { width: 80px; accent-color: #4a7fb5; }
+.clip-inspector .num { font-variant-numeric: tabular-nums; min-width: 34px; }
+.clip-inspector .toggle {
+  width: auto !important; padding: 0 8px !important; font-size: 11px; height: 22px !important;
+}
+
+/* An audio file can be dragged onto a lane; say so with the cursor. */
+.asset-file.draggable { cursor: grab; }
+
 .loading { display: flex; height: 100%; align-items: center; justify-content: center; color: #9aa3ad; }
 
 /* ---------- narration ---------- */
@@ -386,7 +465,7 @@ header .back h1 { color: inherit; }
 /* Key moments on the scrubber — the same times `preview_frames` captures.
    Deliberately small and low-contrast: they are a map of where to look, not
    content, and a bar crowded with markers is worse than no markers. */
-.timeline-bar .moment {
+.lane-scenes .moment {
   position: absolute;
   top: 0;
   width: 2px;
@@ -398,18 +477,19 @@ header .back h1 { color: inherit; }
   background: #5b6673;
   cursor: pointer;
 }
-.timeline-bar .moment:hover,
-.timeline-bar .moment:focus-visible {
+.lane-scenes .moment:hover,
+.lane-scenes .moment:focus-visible {
   height: 100%;
+  z-index: 2;
   background: #8b97a6;
   outline: none;
 }
 /* Effects earn a colour; a scene opening stays neutral, since every scene has one. */
-.timeline-bar .moment-texMorph { background: #58c4dd; }
-.timeline-bar .moment-highlight { background: #e8c74a; }
-.timeline-bar .moment-write { background: #7fb069; }
-.timeline-bar .moment-camera { background: #c58af9; }
-.timeline-bar .moment-follow { background: #4ec9b0; }
+.lane-scenes .moment-texMorph { background: #58c4dd; }
+.lane-scenes .moment-highlight { background: #e8c74a; }
+.lane-scenes .moment-write { background: #7fb069; }
+.lane-scenes .moment-camera { background: #c58af9; }
+.lane-scenes .moment-follow { background: #4ec9b0; }
 
 /* Camera mini-map: where the frame sits inside the scene while scrubbing.
    Bottom-left, out of the captions' way, and absent entirely when the scene

@@ -171,8 +171,14 @@ This phase rides on the capture rework agent sight began: WebCodecs removes the
 capability as a document contact sheet.
 - [ ] Replace per-frame screenshot capture with WebCodecs (wins on the current path too)
 - [x] Assets as first-class (registry) — done in Phase 2; proxies/thumbnails still to do
-- [ ] `video` / `audio` node types; tracks and layering within a scene
-- [ ] Multi-track timeline UI
+- [~] `video` / `audio` node types; tracks and layering within a scene —
+      **audio done 2026-08-18** as document-level *tracks* rather than a node
+      type (audio is never drawn, and a bed runs across cuts): `planAudio`
+      feeds the timeline, the preview mixer and the ffmpeg mux from one
+      function, the editor timeline became a lane editor with drag/trim/snap,
+      and the agent got `add_audio_track` / `add_audio_clip` / `update_audio`.
+      Verified in a real export by measured dB. Ducking under narration is the
+      named gap. `video` still needs the WebCodecs rework first- [ ] Multi-track timeline UI
 - [ ] Ingest + analysis (fetch → transcode → STT → shot detection → segments)
 - [ ] Decide the rights/ToS model **before** building the ingest fetcher
 - [ ] Narration-anchored animation (sync to word timestamps)

@@ -179,10 +179,59 @@ Still open:
 ### 2. New node types
 - `video` — `assetId`, `sourceIn`/`sourceOut`, `playbackRate`, fit/crop.
   Trimming is a source-range property, not a document-time property.
-- `audio` — music/SFX with gain, fades, and ducking against narration.
+- ~~`audio` — music/SFX with gain, fades, and ducking against narration.~~
+  **Done 2026-08-18, but not as a node** — see below.
 
 The DSL's discriminated union was built for this; it's an extension, not a
 rewrite. Existing documents stay valid.
+
+#### Audio became a track, not a node — 2026-08-18
+
+This item was written as "a new node type", and building it that way would
+have been wrong. A node is something the sampler *draws*; audio is never on
+screen, and putting it in the scene graph would have given it a position, a
+scale and an opacity that mean nothing, and scoped it to one scene when the
+entire point of a music bed is that it runs across cuts.
+
+So: `doc.audio?: AudioTrack[]`, clips placed in **global** time. What landed:
+
+- **One placement function.** `planAudio(doc)` merges generated narration and
+  every track into one list, and the timeline, the preview mixer and the
+  ffmpeg mux all read it — the discipline `planNarration` set, kept. Muted
+  clips are flagged rather than dropped, because a lane you cannot see is a
+  lane you cannot unmute; `audibleAudio` is what the export uses.
+- **Mute is in the document, solo is not.** Mute changes the render; solo is a
+  monitoring choice, and putting it in a shared document would let one
+  person's listening change everyone's export.
+- **Gain attenuates only (0…1)**, because `HTMLMediaElement.volume` caps at 1
+  and a document that could not be previewed at its own level would be lying.
+- **The timeline became a lane editor**: a ruler, one scroller so no two lanes
+  can disagree about where a second is, zoom to 8×, clips that drag between
+  lanes, trim from either edge, snap to cuts, and fades drawn as the ramps
+  they are.
+- **Drag an audio file from the explorer onto a lane.** This is the
+  "drag-to-timeline" item from §1, arriving early because audio needed it
+  first. A file the user uploaded has no recorded duration — only producers
+  write one — so the browser is asked for it rather than a length being
+  guessed.
+- **The agent got the same surface**: `add_audio_track`, `add_audio_clip`,
+  `update_audio`, and audio lines in `get_project`'s outline.
+
+Verified in a real 19s export, measured rather than eyeballed: effects at gain
+0.5 read −21.2 dB against a −15.2 dB source (halving amplitude is −6.02 dB),
+the 3→6s gap reads −91 dB, and the bed's fade-out reads −47.4 dB at 15s.
+`silencedetect` puts the edges at 3.00s and 6.23s — the second being the 2s
+fade-in crossing the threshold, which is the fade proving itself.
+
+Still open: **ducking** — dropping the bed under narration automatically. It
+needs a sidechain in the mux and an envelope in the preview that both derive
+from the same numbers, which is the same one-placement-function problem again
+and deserves its own pass. Today you set the bed's gain by hand.
+
+One bug this work found and fixed: `get_project`'s new audio lines first
+reported each clip's *file* length, so a 30s bed on an 8s video read as 30s —
+the outline describing audio the export throws away. It reads `planAudio` now,
+and says `(cut from 30s at the end of the video)`.
 
 ### 3. Layers within a scene
 Scenes are currently *sequential* on the global timeline. A reel is one

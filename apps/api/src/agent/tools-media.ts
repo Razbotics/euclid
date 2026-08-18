@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import {
+  clipPlaySec,
+  docDuration,
   effectsPastEnd,
   formatOverruns,
   buildAssetTree,
@@ -7,6 +9,7 @@ import {
   op,
   toSRT,
   toVTT,
+  LIMITS,
   type AssetFolder,
 } from '@euclid/dsl'
 import {
@@ -31,6 +34,9 @@ function asCapabilityError(e: unknown): never {
   }
   throw e
 }
+
+/** Random enough for a document id, short enough to read in an outline. */
+const rid = (prefix: string) => `${prefix}_${crypto.randomUUID().slice(0, 8)}`
 
 export const mediaTools = [
   capability({
@@ -292,6 +298,157 @@ export const mediaTools = [
               `is unaffected, and preview_frames shows the same frames the render would.`
             : ''),
         { jobs },
+      )
+    },
+  }),
+
+  capability({
+    name: 'add_audio_track',
+    summary: 'Add a music or effects lane to the video. Free.',
+    doc: [
+      'Audio tracks are **document-level**: a clip is placed in global time and plays across cuts, which is what a music bed is for. Narration stays scene-scoped and is not managed here.',
+      '',
+      'Muting a track is part of the document and therefore part of the export — an agent muting a lane is choosing what the render contains.',
+    ].join('\n'),
+    args: z.object({
+      projectId: PROJECT_ID,
+      name: z.string().describe('what the lane is called on the timeline'),
+      kind: z.enum(['music', 'sfx', 'voice']).default('music'),
+      gain: z.number().min(0).max(1).optional().describe('lane level, 0–1 (attenuation only)'),
+    }),
+    async handler(ctx, { projectId, name, kind, gain }) {
+      const { doc } = await ctx.getDoc(projectId)
+      if ((doc.audio?.length ?? 0) >= LIMITS.maxAudioTracks) {
+        throw new CapabilityError(`a project may hold ${LIMITS.maxAudioTracks} audio tracks`, 400)
+      }
+      const track = { id: rid('track'), name, kind, gain, clips: [] }
+      await ctx.submit(projectId, [op.addAudioTrack(track)])
+      return said(`added audio track "${name}" (${track.id})`, { trackId: track.id })
+    },
+  }),
+
+  capability({
+    name: 'add_audio_clip',
+    summary: 'Place an audio asset on a track at a given second. Free.',
+    doc: [
+      'Places an existing asset — generated with generate_music, uploaded, or already in the project — on an audio track. `list_assets` is where the assetId comes from.',
+      '',
+      "The clip's length is read from the asset registry. A file stored without a duration cannot be measured server-side without decoding it, so pass `durationSec` yourself in that case; the error says so.",
+      '',
+      'A clip is cut at the end of the video, exactly as narration is cut at the end of its scene: audio past the last frame is silence nobody hears.',
+    ].join('\n'),
+    args: z.object({
+      projectId: PROJECT_ID,
+      trackId: z.string(),
+      assetId: z.string(),
+      startSec: z.number().min(0).default(0).describe('where it starts on the global timeline'),
+      durationSec: z.number().positive().optional().describe("only needed when the asset has no recorded length"),
+      sourceInSec: z.number().min(0).optional().describe('trim from the head of the file'),
+      playSec: z.number().positive().optional().describe('how much to play; default is the rest of it'),
+      gain: z.number().min(0).max(1).optional(),
+      fadeInSec: z.number().min(0).optional(),
+      fadeOutSec: z.number().min(0).optional(),
+      name: z.string().optional(),
+    }),
+    async handler(ctx, args) {
+      const { doc } = await ctx.getDoc(args.projectId)
+      const track = doc.audio?.find((t) => t.id === args.trackId)
+      if (!track) {
+        const known = (doc.audio ?? []).map((t) => t.id).join(', ') || 'none yet'
+        throw new CapabilityError(`no audio track ${args.trackId} (have: ${known})`, 404)
+      }
+      const assets = await listProjectAssets(ctx.env, args.projectId, ctx.userId)
+      const asset = assets.find((a) => a.id === args.assetId)
+      if (!asset) throw new CapabilityError(`no asset ${args.assetId} in this project`, 404)
+      const durationSec = args.durationSec ?? asset.durationSec ?? 0
+      if (!durationSec) {
+        throw new CapabilityError(
+          `asset ${args.assetId} (${asset.path}) has no recorded duration — pass durationSec`,
+          400,
+        )
+      }
+      const clip = {
+        id: rid('clip'),
+        assetId: args.assetId,
+        startSec: args.startSec,
+        durationSec,
+        sourceInSec: args.sourceInSec,
+        playSec: args.playSec,
+        gain: args.gain,
+        fadeInSec: args.fadeInSec,
+        fadeOutSec: args.fadeOutSec,
+        name: args.name ?? asset.path.slice(asset.path.lastIndexOf('/') + 1),
+      }
+      await ctx.submit(args.projectId, [op.addAudioClip(track.id, clip)])
+      // Say what it will actually do, not what was asked for: the difference
+      // between the two is the clip running past the end of the video.
+      const total = docDuration(doc)
+      const plays = Math.min(clipPlaySec(clip), Math.max(0, total - clip.startSec))
+      const cut = plays < clipPlaySec(clip) ? ` (cut at the end of the video, ${total}s)` : ''
+      return said(
+        `placed ${clip.name} on "${track.name}" at ${clip.startSec}s for ${plays.toFixed(2)}s${cut}`,
+        { clipId: clip.id, trackId: track.id, playSec: plays },
+      )
+    },
+  }),
+
+  capability({
+    name: 'update_audio',
+    summary: 'Re-time, re-level, mute or remove an audio clip or track. Free.',
+    doc: [
+      'One verb for every edit to an existing lane or clip, because they are the same act: deciding what the mix contains.',
+      '',
+      'Pass `clipId` to change a clip, or only `trackId` to change the lane itself. `remove: true` deletes whichever you addressed — a track takes its clips with it.',
+    ].join('\n'),
+    args: z.object({
+      projectId: PROJECT_ID,
+      trackId: z.string(),
+      clipId: z.string().optional(),
+      remove: z.boolean().optional(),
+      startSec: z.number().min(0).optional(),
+      sourceInSec: z.number().min(0).optional(),
+      playSec: z.number().positive().optional(),
+      gain: z.number().min(0).max(1).optional(),
+      fadeInSec: z.number().min(0).optional(),
+      fadeOutSec: z.number().min(0).optional(),
+      muted: z.boolean().optional().describe('track only — and it changes the export'),
+      name: z.string().optional(),
+    }),
+    async handler(ctx, args) {
+      const { projectId, trackId, clipId, remove, muted, ...rest } = args
+      const { doc } = await ctx.getDoc(projectId)
+      const track = doc.audio?.find((t) => t.id === trackId)
+      if (!track) throw new CapabilityError(`no audio track ${trackId}`, 404)
+
+      if (remove) {
+        if (clipId) {
+          await ctx.submit(projectId, [op.removeAudioClip(trackId, clipId)])
+          return said(`removed clip ${clipId} from "${track.name}"`, { trackId, clipId })
+        }
+        await ctx.submit(projectId, [op.removeAudioTrack(trackId)])
+        return said(`removed track "${track.name}" and its ${track.clips.length} clip(s)`, { trackId })
+      }
+
+      if (clipId) {
+        if (!track.clips.some((c) => c.id === clipId)) {
+          throw new CapabilityError(`no clip ${clipId} on track ${trackId}`, 404)
+        }
+        const patch = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined))
+        if (Object.keys(patch).length === 0) throw new CapabilityError('nothing to change', 400)
+        await ctx.submit(projectId, [op.updateAudioClip(trackId, clipId, patch)])
+        return said(`updated clip ${clipId}: ${Object.keys(patch).join(', ')}`, { trackId, clipId })
+      }
+
+      const patch: Record<string, unknown> = {}
+      if (muted !== undefined) patch.muted = muted
+      if (rest.gain !== undefined) patch.gain = rest.gain
+      if (rest.name !== undefined) patch.name = rest.name
+      if (Object.keys(patch).length === 0) throw new CapabilityError('nothing to change', 400)
+      await ctx.submit(projectId, [op.updateAudioTrack(trackId, patch)])
+      return said(
+        `updated track "${track.name}": ${Object.keys(patch).join(', ')}` +
+          (patch.muted === true ? ' — this lane is now silent in the export' : ''),
+        { trackId },
       )
     },
   }),

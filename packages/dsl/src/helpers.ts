@@ -6,7 +6,8 @@ import {
   type EuclidNode,
   type Scene,
 } from './document'
-import { LONG_TAIL_SEC, pacingSummary, scenePacing } from './narration'
+import { LONG_TAIL_SEC, pacingSummary, planAudio, scenePacing } from './narration'
+import { clipPlaySec } from './audio'
 
 export function newId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID().slice(0, 8)}`
@@ -204,6 +205,37 @@ export function outlineDoc(doc: EuclidDoc): string {
     )
     outlineNodes(sc.nodes, lines, '    ')
     start += sc.duration
+  }
+  // Audio tracks are document-level, so they cannot hang off a scene line —
+  // and an agent that cannot see the music bed will happily generate a second
+  // one. Muted lanes are listed *and* marked: invisible mute is how a render
+  // comes back missing a sound nobody remembers turning off.
+  //
+  // Geometry from `planAudio`, never from the clip's own numbers: a 30s bed on
+  // an 8s video *plays* for 8s, and an outline reporting 30 would be telling
+  // the agent about audio the export throws away.
+  const audioPlan = new Map(planAudio(doc).map((p) => [p.key, p]))
+  for (const track of doc.audio ?? []) {
+    lines.push(
+      `  audio "${track.name}" (${track.id}) ${track.kind}` +
+        (track.muted ? ' MUTED (silent in the export)' : '') +
+        (track.gain !== undefined && track.gain !== 1 ? ` gain=${round(track.gain)}` : '') +
+        ` ${track.clips.length} clip(s)`,
+    )
+    for (const clip of track.clips) {
+      const play = audioPlan.get(clip.id)?.playSec ?? clipPlaySec(clip)
+      const cut = play < clipPlaySec(clip) - 0.001
+      lines.push(
+        `    clip ${clip.id} [${round(clip.startSec)}s → ${round(clip.startSec + play)}s]` +
+          (cut ? ` (cut from ${round(clipPlaySec(clip))}s at the end of the video)` : '') +
+          ` asset=${clip.assetId}` +
+          (clip.sourceInSec ? ` from=${round(clip.sourceInSec)}s` : '') +
+          (clip.gain !== undefined && clip.gain !== 1 ? ` gain=${round(clip.gain)}` : '') +
+          (clip.fadeInSec ? ` fadeIn=${round(clip.fadeInSec)}s` : '') +
+          (clip.fadeOutSec ? ` fadeOut=${round(clip.fadeOutSec)}s` : '') +
+          (clip.name ? ` "${truncate(clip.name, 40)}"` : ''),
+      )
+    }
   }
   return lines.join('\n')
 }

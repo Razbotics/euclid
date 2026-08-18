@@ -1,5 +1,6 @@
 /**
- * Narration placement and ffmpeg argument construction.
+ * Audio placement (narration *and* music/effect tracks) and ffmpeg argument
+ * construction.
  * Run: pnpm --filter @euclid/renderer exec tsx src/smoke-mux.ts
  *
  * Free — pure logic, no render, no network. check-mux.ts proves the resulting
@@ -9,11 +10,14 @@
 import assert from 'node:assert'
 import {
   applyOps,
+  audibleAudio,
   emptyDoc,
+  gainAt,
   isTrimmed,
   op,
   outlineDoc,
   pacingSummary,
+  planAudio,
   planNarration,
   scenePacing,
 } from '@euclid/dsl'
@@ -95,13 +99,17 @@ assert.match(outline, /narration=text-only/, 'a script with no audio is marked, 
 assert.ok(!/tail=1\.60s \(long\)/.test(outline), 'a short tail is not flagged')
 
 // ---------- ffmpeg arguments ----------
-const args = buildFfmpegArgs(60, plan.map((p) => ({ ...p, path: `/tmp/${p.assetId}.mp3` })), '/tmp/out.mp4')
+// The mux reads `audibleAudio`, not `planNarration` — narration is one lane
+// among several now, and the export must be built from the merged list.
+const withPaths = (doc: Parameters<typeof audibleAudio>[0]) =>
+  audibleAudio(doc).map((p) => ({ ...p, path: `/tmp/${p.assetId}.mp3` }))
+const args = buildFfmpegArgs(60, withPaths(doc), '/tmp/out.mp4')
 const filter = args[args.indexOf('-filter_complex') + 1]!
 
 assert.ok(args.includes('-filter_complex'), 'narrated renders need a filter graph')
 assert.match(filter, /adelay=0:all=1/, 's1 is placed at 0ms')
 assert.match(filter, /adelay=5000:all=1/, 's3 is placed at 5000ms')
-assert.match(filter, /atrim=0:3\.000/, 's3 is trimmed to its 3s scene')
+assert.match(filter, /atrim=0\.000:3\.000/, 's3 is trimmed to its 3s scene')
 assert.match(filter, /amix=inputs=2:normalize=0/, 'normalize=0 keeps narration at full volume')
 assert.match(filter, /apad/, 'apad extends the track over a trailing silent scene')
 assert.ok(args.includes('-shortest'), '-shortest ends the file with the video')
@@ -122,7 +130,131 @@ const silentArgs = buildFfmpegArgs(60, [], '/tmp/out.mp4')
 assert.ok(!silentArgs.includes('-filter_complex'), 'silent renders stay on the old simple path')
 assert.ok(!silentArgs.includes('-c:a'), 'silent renders get no audio stream')
 
+// ---------- audio tracks: music and effects alongside narration ----------
+// A bed under the whole video at 40%, and a sting placed inside scene 2. The
+// bed is deliberately longer than the video and the sting deliberately runs
+// past the end, because both are what a real project does.
+let scored = applyOps(doc, [
+  op.addAudioTrack({ id: 'bed', name: 'Music bed', kind: 'music', gain: 0.4, clips: [] }),
+  op.addAudioTrack({ id: 'fx', name: 'Effects', kind: 'sfx', clips: [] }),
+  op.addAudioClip('bed', {
+    id: 'c-bed',
+    assetId: 'music',
+    startSec: 0,
+    durationSec: 30,
+    fadeInSec: 1,
+    fadeOutSec: 2,
+  }),
+  op.addAudioClip('fx', { id: 'c-sting', assetId: 'sting', startSec: 7, durationSec: 4, gain: 0.8 }),
+])
+
+const full = planAudio(scored)
+assert.equal(full.length, 4, 'two narration clips and two track clips, in one list')
+assert.deepEqual(
+  full.map((p) => p.trackId),
+  ['narration', 'bed', 'narration', 'fx'],
+  'placements are ordered by start time, whatever lane they are on',
+)
+
+const bed = full.find((p) => p.key === 'c-bed')!
+assert.equal(bed.playSec, 8, 'a 30s bed on an 8s video is cut at the end of the video')
+assert.equal(bed.gain, 0.4, 'track gain reaches the placement')
+const sting = full.find((p) => p.key === 'c-sting')!
+assert.equal(sting.playSec, 1, 'a 4s sting starting at 7s of an 8s video plays for 1s')
+assert.equal(sting.gain, 0.8, 'clip gain with no track gain is the clip gain')
+
+// Gains multiply, and a fade never exceeds the clip it is on.
+scored = applyOps(scored, [op.updateAudioClip('fx', 'c-sting', { fadeInSec: 5 })])
+const clamped = planAudio(scored).find((p) => p.key === 'c-sting')!
+assert.equal(clamped.fadeInSec, 1, 'a 5s fade on a 1s clip is clamped to the clip')
+
+// The fade envelope the preview player reads, and the export renders.
+assert.equal(gainAt(bed, 0), 0, 'a fade-in starts at silence')
+assert.equal(gainAt(bed, 0.5), 0.2, 'halfway through a 1s fade-in is half the level')
+assert.equal(gainAt(bed, 4), 0.4, 'the middle of the clip sits at its own level')
+assert.equal(gainAt(bed, 7), 0.2, '1s into a 2s fade-out is half the level')
+assert.equal(gainAt(bed, 8), 0, 'the end of the clip is silence')
+
+// ---------- the outline is where the agent sees the mix ----------
+// An agent that cannot see the music bed will cheerfully generate a second
+// one, and a muted lane it cannot see is a render that comes back missing a
+// sound nobody remembers turning off.
+const scoredOutline = outlineDoc(scored)
+assert.match(scoredOutline, /audio "Music bed" \(bed\) music/, 'tracks are listed')
+assert.match(scoredOutline, /gain=0\.4/, 'a non-default track gain is shown')
+assert.match(
+  scoredOutline,
+  /clip c-bed \[0s → 8s\] \(cut from 30s at the end of the video\)/,
+  'a clip is reported as what it plays, not as how long the file is',
+)
+assert.match(scoredOutline, /fadeIn=1s fadeOut=2s/, 'fades are visible without a second call')
+assert.ok(!/MUTED/.test(scoredOutline), 'nothing is marked muted when nothing is')
+assert.match(
+  outlineDoc(applyOps(scored, [op.updateAudioTrack('bed', { muted: true })])),
+  /MUTED \(silent in the export\)/,
+  'a muted lane says what mute means',
+)
+
+// ---------- muting is part of the document, so it changes the export ----------
+const muted = applyOps(scored, [op.updateAudioTrack('bed', { muted: true })])
+assert.equal(planAudio(muted).length, 4, 'the timeline still draws a muted lane')
+assert.equal(planAudio(muted).find((p) => p.key === 'c-bed')!.muted, true, 'flagged, not dropped')
+assert.equal(audibleAudio(muted).length, 3, 'but the export leaves it out')
+assert.ok(!audibleAudio(muted).some((p) => p.trackId === 'bed'), 'no muted clip reaches ffmpeg')
+
+// ---------- the filter graph for a scored video ----------
+const scoredArgs = buildFfmpegArgs(30, withPaths(scored), '/tmp/out.mp4')
+const scoredFilter = scoredArgs[scoredArgs.indexOf('-filter_complex') + 1]!
+assert.match(scoredFilter, /amix=inputs=4:normalize=0/, 'all four clips are mixed')
+assert.match(scoredFilter, /volume=0\.400/, 'the bed is attenuated to its track gain')
+assert.match(scoredFilter, /afade=t=in:st=0:d=1\.000/, 'the bed fades in over 1s')
+assert.match(scoredFilter, /afade=t=out:st=6\.000:d=2\.000/, 'and out over the last 2s of its 8s')
+assert.match(scoredFilter, /adelay=7000:all=1/, 'the sting is placed at 7s')
+// Order within one chain is what makes a fade ramp to the clip's own level.
+assert.ok(
+  scoredFilter.indexOf('volume=0.400') < scoredFilter.indexOf('afade=t=in'),
+  'volume is applied before the fade, so a 0.4 bed never swells to 1.0',
+)
+// And trimming happens in source time, before the clip is placed.
+assert.ok(
+  scoredFilter.indexOf('atrim') < scoredFilter.indexOf('adelay'),
+  'atrim precedes adelay, or the delay would stack on the source offset',
+)
+
+// ---------- trimming the head of a clip ----------
+const trimmed = applyOps(scored, [
+  op.updateAudioClip('bed', 'c-bed', { sourceInSec: 12, playSec: 3 }),
+])
+const head = planAudio(trimmed).find((p) => p.key === 'c-bed')!
+assert.equal(head.sourceInSec, 12, 'the head trim is carried through')
+assert.equal(head.playSec, 3, 'and the clip plays only what it was asked to')
+const trimFilter = buildFfmpegArgs(30, withPaths(trimmed), '/tmp/o.mp4')[
+  buildFfmpegArgs(30, withPaths(trimmed), '/tmp/o.mp4').indexOf('-filter_complex') + 1
+]!
+assert.match(trimFilter, /atrim=12\.000:15\.000/, 'ffmpeg reads 12s→15s of the source')
+
+// ---------- dragging a clip between lanes ----------
+const moved = applyOps(scored, [op.moveAudioClip('fx', 'bed', 'c-sting', 2)])
+assert.equal(moved.audio!.find((t) => t.id === 'fx')!.clips.length, 0, 'it left the old lane')
+const landed = moved.audio!.find((t) => t.id === 'bed')!.clips.find((c) => c.id === 'c-sting')!
+assert.equal(landed.startSec, 2, 'and arrived at the new time')
+// Same lane, same clip: a no-op move must not lose it.
+const sameLane = applyOps(scored, [op.moveAudioClip('bed', 'bed', 'c-bed', 4)])
+assert.equal(sameLane.audio!.find((t) => t.id === 'bed')!.clips.length, 1, 'a same-lane move keeps the clip')
+assert.equal(
+  sameLane.audio!.find((t) => t.id === 'bed')!.clips[0]!.startSec,
+  4,
+  'and still moves it',
+)
+
+// ---------- removing the last track leaves no empty husk ----------
+const bare = applyOps(scored, [op.removeAudioTrack('bed'), op.removeAudioTrack('fx')])
+assert.equal(bare.audio, undefined, 'an empty audio list is removed, not left as []')
+assert.equal(audibleAudio(bare).length, 2, 'narration survives losing every audio track')
+
 console.log(
-  `mux planning OK — ${plan.length} clips at ${plan.map((p) => `${p.startSec}s`).join('/')}, ` +
-    `s3 cut ${plan[1]!.durationSec}s → ${plan[1]!.playSec}s, silent path unchanged`,
+  `mux planning OK — ${plan.length} narration clips at ${plan.map((p) => `${p.startSec}s`).join('/')}, ` +
+    `s3 cut ${plan[1]!.durationSec}s → ${plan[1]!.playSec}s; ` +
+    `scored: ${full.length} clips over ${new Set(full.map((p) => p.trackId)).size} lanes, ` +
+    `bed cut 30s → ${bed.playSec}s @${bed.gain}, mute removes 1 from the mix; silent path unchanged`,
 )

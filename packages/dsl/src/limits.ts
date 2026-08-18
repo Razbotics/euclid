@@ -7,6 +7,14 @@ export const LIMITS = {
   maxNodesPerScene: 200,
   maxOpsPerEnvelope: 50,
   /**
+   * Audio lanes on one document, and clips on one lane. Every clip becomes an
+   * ffmpeg input with its own filter chain at export, so this is a mux-time
+   * ceiling as much as a UI one — `amix` with hundreds of inputs is where a
+   * render stops being a render and starts being a hang.
+   */
+  maxAudioTracks: 8,
+  maxClipsPerTrack: 100,
+  /**
    * Camera zoom is bounded rather than merely positive. A zoom of 1e-9 or 1e9
    * is a degenerate transform that renders as an empty frame, which reads as a
    * broken renderer rather than as a bad argument — and the agent's only view
