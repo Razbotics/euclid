@@ -1,6 +1,103 @@
 import { z, type ZodError } from 'zod'
+import type { EuclidNode } from '@euclid/dsl'
 import { CATALOG_REVISION, argsSchemaOf, capabilities, getCapability } from './catalog'
 import { CapabilityError, type AgentCtx, type Capability, type CapabilityResult } from './types'
+
+/**
+ * What each node type is, in one phrase, for the orientation block.
+ *
+ * A `Record` keyed by `EuclidNode['type']` rather than a hand-written sentence,
+ * because that sentence went stale twice. Milestone run 6 found the prose
+ * saying "You cannot see the video" two lines above `preview_frames`; run 7
+ * found it listing the spatial types with no mention of `mesh`, which had
+ * shipped hours earlier — so an agent reading orientation could not know solids
+ * existed. Nothing linked the prose to the thing it described.
+ *
+ * Now the compiler does: adding a member to the `EuclidNode` union fails the
+ * build until it is described here. Types that read as one idea share a phrase
+ * and are collapsed once, so rect/circle/line still say "shapes" rather than
+ * turning the paragraph into an inventory.
+ */
+type NodeGroup = 'basic' | 'structured' | 'spatial'
+
+const NODE_BLURBS: Record<EuclidNode['type'], { group: NodeGroup; phrase: string }> = {
+  text: { group: 'basic', phrase: 'text' },
+  latex: { group: 'basic', phrase: 'latex' },
+  rect: { group: 'basic', phrase: 'shapes' },
+  circle: { group: 'basic', phrase: 'shapes' },
+  line: { group: 'basic', phrase: 'shapes' },
+  path: { group: 'basic', phrase: 'paths and plotted curves' },
+  axes: { group: 'basic', phrase: 'axes a plot can borrow' },
+  group: { group: 'basic', phrase: 'groups that move their children together' },
+  matrix: {
+    group: 'structured',
+    phrase: 'matrix and tokens (grids and strips addressable by row/column)',
+  },
+  tokens: {
+    group: 'structured',
+    phrase: 'matrix and tokens (grids and strips addressable by row/column)',
+  },
+  arrow: { group: 'structured', phrase: 'arrows that anchor to other nodes and track them' },
+  vector3: {
+    group: 'spatial',
+    phrase: 'vector3/axes3d/points3 for arrows, frames and clouds in space',
+  },
+  axes3d: {
+    group: 'spatial',
+    phrase: 'vector3/axes3d/points3 for arrows, frames and clouds in space',
+  },
+  points3: {
+    group: 'spatial',
+    phrase: 'vector3/axes3d/points3 for arrows, frames and clouds in space',
+  },
+  mesh: {
+    group: 'spatial',
+    phrase: 'mesh for shaded, self-occluding solids — sphere, cylinder, cone, torus, cube, plane',
+  },
+}
+
+/** Distinct phrases for one group, in declaration order. */
+function nodePhrases(group: NodeGroup): string {
+  const seen = new Set<string>()
+  for (const b of Object.values(NODE_BLURBS)) {
+    if (b.group === group) seen.add(b.phrase)
+  }
+  return [...seen].join(', ')
+}
+
+/**
+ * Name a capability inside prose.
+ *
+ * Throws at module load if it does not exist, so a renamed or removed tool
+ * cannot go on being recommended by the block that teaches the surface. The
+ * catalog already fails this way on duplicate names; this is the same idea
+ * pointed at the prose.
+ */
+function ref(name: string): string {
+  if (!getCapability(name)) {
+    throw new Error(
+      `instructions reference unknown capability "${name}" — rename it here too, ` +
+        `or the orientation block teaches a tool that does not exist`,
+    )
+  }
+  return name
+}
+
+/** Soft-wrap generated prose so the block stays readable as plain text. */
+function wrap(text: string, indent = '  ', width = 78): string[] {
+  const lines: string[] = []
+  let line = indent
+  for (const word of text.split(/\s+/)) {
+    if (line.length > indent.length && line.length + 1 + word.length > width) {
+      lines.push(line)
+      line = indent + word
+    } else {
+      line = line.length > indent.length ? `${line} ${word}` : line + word
+    }
+  }
+  if (line.trim()) lines.push(line)
+  return lines
+}
 
 /** The orientation block. Read once per thread; it is the whole tool list. */
 export function buildInstructions(): string {
@@ -21,27 +118,37 @@ export function buildInstructions(): string {
     '',
     'ORIENTATION',
     '  A project holds scenes; scenes play in sequence on one timeline; scenes',
-    '  hold nodes — latex, text and shapes, plus structured ones worth knowing',
-    '  about before you build anything by hand: matrix and tokens (grids and',
-    '  strips addressable by row/column), arrows that anchor to other nodes, and',
-    '  vector3/axes3d/points3 for space. Coordinates are canvas pixels, origin',
-    '  top-left — a 1920x1080 canvas centres at (960, 540). Nodes anchor at their',
-    '  centre. Every `start` and `duration` is in SCENE-LOCAL seconds.',
+    ...wrap(`hold nodes — ${nodePhrases('basic')}.`),
+    ...wrap(
+      `Structured, and worth knowing about before you build anything by hand: ` +
+        `${nodePhrases('structured')}.`,
+    ),
+    ...wrap(`For space, and inert until the camera turns: ${nodePhrases('spatial')}.`),
     '',
-    '  A scene can also have a camera (set_camera / move_camera). Node coordinates',
-    '  never change — the camera decides which part of the scene the frame shows,',
-    '  so a diagram can be laid out larger than the canvas and read piece by piece.',
+    '  Coordinates are canvas pixels, origin top-left — a 1920x1080 canvas centres',
+    '  at (960, 540). Nodes anchor at their centre. Every `start` and `duration` is',
+    '  in SCENE-LOCAL seconds.',
     '',
-    '  Usual order: create_project → add_scene → add_* nodes → set_narration →',
-    '  generate_narration (gives real timings) → fit_scene_to_narration →',
-    '  animate/morph_latex/highlight against those timings → render_video.',
+    `  A scene can also have a camera (${ref('set_camera')} / ${ref('move_camera')}). Node`,
+    '  coordinates never change — the camera decides which part of the scene the',
+    '  frame shows, so a diagram can be laid out larger than the canvas and read',
+    '  piece by piece.',
+    '',
+    ...wrap(
+      `Usual order: ${ref('create_project')} → ${ref('add_scene')} → add_* nodes → ` +
+        `${ref('set_narration')} → ${ref('generate_narration')} (gives real timings) → ` +
+        `${ref('fit_scene_to_narration')} → ${ref('animate')}/${ref('morph_latex')}/` +
+        `${ref('highlight')} against those timings → ${ref('render_video')}.`,
+    ),
     '',
     'COST',
-    '  Everything is free except the two capabilities marked below. Iterate as',
-    '  much as you like: reading the document, editing it and checking captions',
-    '  cost nothing. Only synthesis and rendering spend credits, and they are',
-    '  reached through a separate `execute_paid` tool so they can never be',
-    '  covered by a standing approval on `execute`.',
+    ...wrap(
+      `Everything is free except the ${paid.length} capabilities marked below. Iterate as ` +
+        `much as you like: reading the document, editing it and checking captions cost ` +
+        `nothing. Only the paid few spend credits, and they are reached through a separate ` +
+        `\`execute_paid\` tool so they can never be covered by a standing approval on ` +
+        `\`execute\`.`,
+    ),
     '',
     `FREE CAPABILITIES (${free.length}) — via execute`,
     ...free.map(row),
@@ -50,13 +157,15 @@ export function buildInstructions(): string {
     ...paid.map(row),
     '',
     'SEEING YOUR WORK',
-    '  You CAN see it. preview_frames returns one labeled contact sheet of the',
-    '  moments that matter — free, a second or two, and the same renderer the',
-    '  export uses, so what you see is what the MP4 will contain. Use it while',
-    '  building, not once at the end: a tool reporting success means the document',
-    '  changed, never that it looks right, and layout errors are invisible in any',
-    '  text you can read. get_project is still the cheap read and reports pacing',
-    '  (dead air is flagged `(long)`); get_scene gives exact keyframes.',
+    ...wrap(
+      `You CAN see it. ${ref('preview_frames')} returns one labeled contact sheet of the ` +
+        `moments that matter — free, a second or two, and the same renderer the export ` +
+        `uses, so what you see is what the MP4 will contain. Use it while building, not ` +
+        `once at the end: a tool reporting success means the document changed, never that ` +
+        `it looks right, and layout errors are invisible in any text you can read. ` +
+        `${ref('get_project')} is still the cheap read and reports pacing (dead air is ` +
+        `flagged \`(long)\`); ${ref('get_scene')} gives exact keyframes.`,
+    ),
     '',
     `catalog revision ${CATALOG_REVISION}`,
   ].join('\n')

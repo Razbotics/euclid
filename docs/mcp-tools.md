@@ -14,7 +14,7 @@ the copy that cannot go stale.
 | `instructions` | Orientation, the workflow, cost rules, and every capability with a one-line summary. **Read once per new thread.** Free |
 | `describe` | Full arguments and behaviour for named capabilities (batched). Free. Call it when a summary isn't enough, or when `execute` rejects your arguments |
 | `execute` | Run one **free** capability: `{name, args}`. Every edit, read, narration script, caption and asset operation goes through here |
-| `execute_paid` | Run one **credit-spending** capability — today `generate_narration` and `render_video`. Separate on purpose (see below) |
+| `execute_paid` | Run one **credit-spending** capability — `generate_narration`, `render_video`, and the `generate_*` family. Separate on purpose (see below) |
 | `ask_user` | Put a choice to the human **in chat** and stop. Free, and blocking by intention. Stays a tool of its own (see below) |
 
 ## Why this shape
@@ -55,7 +55,8 @@ shape as `remove_asset`'s `force`.
 - Capabilities speak **intent** (`animate`, `morph_latex`); everything compiles
   to DSL ops applied through the shared reducer beside the Durable Object.
 - Results are **compact text** — outlines, ids, time ranges — so agent
-  iteration stays free. Only `generate_narration` and `render_video` cost
+  iteration stays free. Only `generate_narration`, `render_video` and the
+  `generate_*` family (image/video/audio/3d) cost
   credits; everything else is free to call as often as needed. (`?format=json`
   on the gateway returns the structured payload instead, which is what the
   editor binds to — same handler, two renderings.)
@@ -77,11 +78,39 @@ shape as `remove_asset`'s `force`.
   camera entirely, for captions and titles that should not swing about when
   the scene orbits.
 - The third dimension is opt-in and inert until asked for: nodes take an
-  optional `z` and `add_vector3`/`add_axes3d`/`add_points3` are spatial by
+  optional `z` and `add_vector3`/`add_axes3d`/`add_points3`/`add_mesh` are
+  spatial by
   type, but **nothing is projected until the camera has a `yaw` or `pitch`**
   (`orbit_camera` is the shorthand). Straight on, a cube is a square. Angles
   are radians everywhere except `orbit_camera`, whose argument is named
   `degrees` because an orbit is naturally "a quarter turn".
+- Solids are **named, not typed out**: `add_mesh` takes `shape: "sphere"` plus
+  a size, and the geometry is expanded from those numbers when drawing. A
+  sphere is ~576 triangles; putting them in the document would push ~100KB
+  through the event log on every op, and no agent can type them. The triangle
+  ceiling (`LIMITS.maxTriangles`) is checked by arithmetic before anything is
+  built. Two solids that physically intersect are the one case per-face
+  sorting cannot draw correctly, and the tool says so rather than hiding it.
+- Generation is **submit-then-collect**: `generate_image` / `generate_video` /
+  `generate_audio` / `generate_3d` hand the request to fal, which holds it in
+  its own queue. Fast models are waited for inline and return the asset;
+  slower ones come back `pending` with a job id. **`get_generation_status` is
+  what advances a job** — there is no background worker, so asking is
+  collecting. Polling is idempotent and a failure refunds in full.
+- A generated file is **a file, not a frame** — with one exception. The
+  document has no image or video node, so generated stills, clips and music
+  land in the project filesystem and are visible to `list_assets` but cannot
+  appear on the stage. **3D models can**: `import_mesh` reads a `model` asset
+  and lands it as an ordinary mesh node, so the camera, animation and
+  `write_on` all work on it.
+- An imported mesh is **simplified for storage, not for speed**. Geometry is
+  kept in the document, the document lives under one Durable Object key, and DO
+  values cap at 128 KiB — so `LIMITS.maxImportedTriangles` (2,000) sits well
+  below the 4,000-triangle render ceiling, and `import_mesh` projects the
+  resulting document size and refuses with a remedy rather than letting the
+  write fail. It also re-winds the faces outward whichever way the file had
+  them, because glTF is Y-up and this system is Y-down; a model that arrived
+  inside out would otherwise draw as a hollow shell with the right outline.
 - **Audio is a lane, not a node.** `add_audio_track` / `add_audio_clip` /
   `update_audio` place music and effects in *global* time, across cuts, because
   that is what a bed is; narration stays scene-scoped and is still managed by
@@ -125,6 +154,28 @@ bearing).
 Verified by `check-gateway.ts` (catalog over HTTP) and `check-mcp-tools.ts`
 (the same surface over JSON-RPC, which is where client-side argument
 stringification shows up).
+
+### Adding a node type — the orientation block will make you describe it
+
+The `instructions` block opens with hand-written prose, and that prose went
+stale three times: it claimed "You cannot see the video" two lines above
+`preview_frames` (run 6), it listed the spatial node types with no mention of
+`mesh` (run 7), and it said "the two capabilities" cost credits long after
+there were six. Each time the *generated* half — the capability list — was
+correct and the sentence above it was not, because nothing connected them.
+
+Three mechanisms now connect them, one per kind of claim:
+
+| The claim | What holds it true |
+|---|---|
+| Which node types exist | `NODE_BLURBS` in `execute.ts` is a `Record<EuclidNode['type'], …>`. Adding a member to the union **fails the build** until it is described |
+| How many capabilities cost credits | counted from the catalog, never typed |
+| A capability named in prose | wrapped in `ref()`, which **throws at module load** if no such capability exists |
+
+So adding a node type is: the DSL union, the schema, the renderer, and a
+phrase in `NODE_BLURBS` — and the compiler names the last one for you. Node
+types that read as one idea share a phrase (`rect`/`circle`/`line` → "shapes"),
+so the paragraph stays prose rather than becoming an inventory.
 
 Auth: currently `dev-user` via the internal service key. OAuth
 (workers-oauth-provider backed by the API's Better Auth), so claude.ai

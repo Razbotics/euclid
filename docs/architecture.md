@@ -250,6 +250,44 @@ occlusion or meshes, and by then [plans/004](plans/004-desktop.md) argues the
 desktop app has the GPU to make it cheap. Deciding later costs nothing;
 deciding now costs the purity invariant.
 
+### Meshes: solids on the same arithmetic
+
+A `mesh` node extends projection from points to **triangles**, and it stays on
+the CPU for the same reason everything else here does. The technique is:
+project every vertex, drop the triangles facing away, sort what is left by
+centroid depth, fill far-to-near, shade each face by Lambert against a fixed
+light.
+
+That sort is the only part in real doubt, since per-face painter's ordering is
+famously not correct in general — so it was **measured** rather than assumed
+([plans/009](plans/009-generative-assets.md)). The same mesh was rasterised
+twice from identical geometry, once with painter sorting and once with a
+per-pixel z-buffer, and the differing pixels counted over four camera angles:
+
+| | wrong pixels |
+|---|---|
+| cube / sphere / **torus**, backface-culled | **0.00%** |
+| torus, culling off | 0.01% |
+| two interpenetrating quads | 11.12% |
+
+So **backface culling is a correctness feature, not an optimisation**: it
+removes the inward-facing half, and what remains of a closed surface can always
+be depth-ordered — which is why a torus, which occludes itself, comes out
+exact. The one real limit is **interpenetration**: sorting whole triangles
+cannot interleave two surfaces that pass through each other, and no flag fixes
+that. `add_mesh` says so rather than hiding it.
+
+Geometry is a **spec, not a vertex list**. `{kind:'sphere', radius, segments}`
+expands to triangles at draw time through the pure `buildMesh` in
+`packages/dsl/src/mesh.ts`. A default sphere is 576 triangles; storing those in
+the document would push ~100KB through the event log on every op and could
+never be typed by an agent. Expansion being pure is what keeps the purity
+invariant — it is a function of the node, exactly like `plot_function`'s
+sampling. `custom` is the escape hatch an importer would use.
+
+Depth dims the **shade**, not the alpha. A solid fading toward transparent
+reads as glass, and you would see the inside of its far wall.
+
 ## Structured primitives: matrix and tokens
 
 A `matrix` is a grid of LaTeX cells; a `tokens` node is a labelled strip. Both
@@ -427,8 +465,9 @@ themselves from estimated to exact the moment TTS lands — no migration.
 
 ## Assets
 
-Binary files owned by a project — narration audio today, video and image
-clips when the general-video phase lands. D1 holds the metadata row
+Binary files owned by a project — narration audio, generated images, video,
+music and 3D models, with ingested footage when the general-video phase lands.
+`kind` is one of `audio | video | image | model`. D1 holds the metadata row
 (`kind`, `mime`, `bytes`, `duration_sec`, R2 key); R2 holds the bytes under
 `assets/<projectId>/<assetId>`.
 
@@ -515,6 +554,68 @@ Three smaller decisions that each foreclose a bug:
 Measured end to end on a 19s test render: effects at gain 0.5 read −21.2 dB
 against a −15.2 dB source (halving amplitude is −6.02 dB), the 3→6s gap reads
 −91 dB, and the bed's 3s fade-out reads −47.4 dB.
+
+## Generative assets (fal)
+
+`apps/api/src/fal.ts` is a second provider seam, shaped after the TTS one and
+written to the same rule — web standards only, no Cloudflare types. It covers
+images, video, music and 3D models. What differs from TTS is that these do not
+answer in one call, so the unit is a **submitted request** rather than a
+finished file.
+
+**The queue belongs to the provider.** A request submitted to `queue.fal.run`
+is held by fal until collected, so the `generation_jobs` table is bookkeeping —
+which project asked, what it cost, what it became — and not a work queue with a
+worker draining it. This is the whole reason the feature adds no second
+process, unlike renders. The consequence is stated in the tool doc:
+`get_generation_status` is what *advances* a job, because nothing else will.
+
+Three decisions worth keeping:
+
+- **Submit before debiting.** A request the provider rejects outright must cost
+  nothing, and only the provider knows. Everything after the debit refunds on
+  failure — including a failure discovered minutes later during a poll.
+- **One path for fast and slow models.** `startGeneration` waits inline for up
+  to 20s, then degrades to returning a job id. An image lands in ~3s and making
+  the agent poll for that would be a worse tool; a video takes minutes and no
+  request can hold that open.
+- **The queue URLs fal returns are used verbatim**, never rebuilt from the
+  model id — an endpoint with a sub-path (`fal-ai/flux/schnell`) is polled at
+  its *app* path, so constructing them would break exactly the models most
+  likely to be used.
+
+A model is one **roster entry** — id, kind, price, and the two functions that
+build its input and read its output. Adding one costs no new tool, no new route
+and no client restart, which is the gateway's argument applied to providers.
+
+What this deliberately does **not** do is display anything. The document has no
+image or video node, so a generation is a file in the project's asset tree and
+not something in a frame; putting media on a timeline is
+[plans/003](plans/003-general-video.md), which wants the WebCodecs capture
+rework first. `generate_3d` returns a GLB, and since 2026-08-18 `import_mesh` turns one into
+an ordinary mesh node — a dependency-free glTF 2.0 reader
+(`packages/dsl/src/glb.ts`), vertex-cluster decimation, and a re-orientation
+pass. Two constraints shape it, and neither is about drawing:
+
+- **Winding, not handedness.** glTF is Y-up and this system is Y-down, so the
+  conversion negates an axis — which reverses orientation and would leave every
+  face pointing inward, rendering as a hollow shell with an identical
+  silhouette. `orientOutward` measures the **signed volume** and reverses the
+  mesh when it is negative. Every generator in `mesh.ts` yields a positive
+  volume, so that single number defines "outward" for the whole system, and it
+  works on non-convex shapes where a normal-versus-centroid test does not.
+- **The document budget.** Imported geometry lives in the document, the
+  document lives under one Durable Object key, and DO values cap at 128 KiB. At
+  4,000 triangles the coordinates alone are ~105KB, so `maxImportedTriangles`
+  is 2,000 — a storage limit that happens to sit far below the render limit.
+
+Authored solids are unaffected: a sphere is still a few numbers, because
+parametric geometry is expanded at draw time. What importing one would take is now measured rather than assumed:
+`trellis` returns 10,236 triangles and `hunyuan3d` 329,128, against a 4,000
+ceiling, and neither is Draco-compressed. So the work is a glTF parser plus a
+decimation pass — roughly 4:1 for trellis, hopeless for hunyuan3d — and not a
+decompressor. Scoping it off trellis makes it a much smaller job than the worst
+case suggests.
 
 ## The capability catalog (agent gateway)
 

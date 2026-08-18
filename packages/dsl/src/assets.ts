@@ -86,6 +86,11 @@ const EXT_BY_MIME: Record<string, string> = {
   'image/png': 'png',
   'image/jpeg': 'jpg',
   'image/webp': 'webp',
+  'image/gif': 'gif',
+  // A generated 3D model. The project holds the file; nothing draws it yet —
+  // the engine's mesh node takes parametric geometry, not imported vertices.
+  'model/gltf-binary': 'glb',
+  'model/gltf+json': 'gltf',
 }
 
 /**

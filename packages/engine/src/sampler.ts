@@ -307,7 +307,8 @@ function hasDepth(n: ResolvedNode): boolean {
     n.props.z !== undefined ||
     n.source.type === 'vector3' ||
     n.source.type === 'axes3d' ||
-    n.source.type === 'points3'
+    n.source.type === 'points3' ||
+    n.source.type === 'mesh'
   )
 }
 

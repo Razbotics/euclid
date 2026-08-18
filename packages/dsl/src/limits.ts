@@ -31,6 +31,22 @@ export const LIMITS = {
   /** Points in one cloud. Drawn as one Graphics, so the cost is per point, not per node. */
   maxPoints: 2000,
   /**
+   * Triangles in one mesh. Every triangle is projected, sorted and filled on
+   * the CPU each frame — there is no GPU in the render container — so this is
+   * a frame-time ceiling rather than a memory one. Measured, not guessed: see
+   * the budget table in plans/009.
+   */
+  maxTriangles: 4000,
+  /**
+   * Triangles in an **imported** mesh, which is far below the render ceiling
+   * above and for an unrelated reason: imported geometry is stored in the
+   * document, the document lives under one Durable Object key, and DO values
+   * are capped at 128 KiB. Measured (plans/009): 4,000 triangles serialise to
+   * ~105KB of coordinates, leaving nothing for the scene around them; 2,000
+   * costs ~48KB. The limit here is the document budget, not the frame budget.
+   */
+  maxImportedTriangles: 2000,
+  /**
    * Camera distance from the focus plane. The floor keeps the perspective
    * divide away from the scene itself — a camera 10px from a diagram turns it
    * inside out — and the ceiling is orthographic for all practical purposes.

@@ -51,11 +51,44 @@ const listed = JSON.parse((await get('/api/agent/tools?format=json')).body) as {
   capabilities: { name: string; costsCredits: boolean }[]
 }
 const paid = listed.capabilities.filter((x) => x.costsCredits).map((x) => x.name).sort()
+// A tripwire on the money surface: changing what costs credits should be a
+// deliberate edit here, not a side effect of adding a capability.
 assert.deepStrictEqual(
   paid,
-  ['generate_narration', 'render_video'],
-  'exactly the two credit-spending capabilities must be flagged paid',
+  [
+    'generate_3d',
+    'generate_audio',
+    'generate_image',
+    'generate_narration',
+    'generate_video',
+    'render_video',
+  ],
+  'the credit-spending capabilities must be exactly these',
 )
+
+// The orientation prose must COUNT the paid capabilities, not claim a number.
+// It said "the two capabilities" for a while after the generate_* family landed
+// — the third time hand-written prose in this block went stale (plans/009,
+// milestone run 7), and the reason the node list and every capability name in
+// it are now derived rather than typed.
+const claimed = instructions.body.match(/free except the (\d+) capabilit/)
+assert.ok(claimed, 'the COST paragraph must state how many capabilities are paid')
+assert.equal(
+  Number(claimed[1]),
+  paid.length,
+  `instructions claim ${claimed[1]} paid capabilities but the catalog has ${paid.length}. ` +
+    `That number is derived — if this fails, someone hardcoded it again.`,
+)
+
+// Every node type the DSL can express must be described in the orientation.
+// The Record in execute.ts is keyed by EuclidNode['type'], so this cannot fail
+// without someone deleting the mechanism; it is here to say so if they do.
+for (const phrase of ['shapes', 'matrix and tokens', 'vector3/axes3d/points3', 'mesh']) {
+  assert.ok(
+    instructions.body.includes(phrase),
+    `orientation must describe ${phrase} — a node type an agent cannot know about is one it cannot use`,
+  )
+}
 console.log(`instructions OK — ${listed.capabilities.length} capabilities, revision ${listed.revision}`)
 
 // ---------- tool 2: describe ----------

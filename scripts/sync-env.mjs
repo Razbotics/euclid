@@ -32,6 +32,7 @@ const targets = {
     'TUNNEL_ORIGIN',
     'PUBLIC_API_ORIGIN',
     'ELEVENLABS_API_KEY',
+    'FAL_KEY',
     'STRIPE_SECRET_KEY',
     'STRIPE_WEBHOOK_SECRET',
     'INTERNAL_API_KEY',
