@@ -105,6 +105,8 @@ an existing local DB won't pick up a new table on its own.
 pnpm dev:api    # :8787 — API + Durable Objects + D1; also starts the public tunnel
 pnpm dev:mcp    # :8788 — MCP worker (service-binds to api; start api first)
 pnpm dev:web    # :5173 — `/` lists projects; ?project=<id> opens one; ?demo=1 = offline demo
+                #        editor: explorer | canvas | scene; ⌘B / ⌘⌥B collapse the
+                #        sides, drag the seams to resize (double-click to reset)
 
 # The render backend: drains the render queue AND serves preview_frames on
 # :8790. Without it, render_video jobs stay `queued` forever with the credits

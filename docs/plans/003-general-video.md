@@ -123,7 +123,54 @@ removed — with renders counted as in-use it flagged almost nothing, and a
 scary label on a file the user may simply not have wired up yet is the wrong
 nudge. The API still returns `usedBy`, because the delete guard needs it.
 
+#### The explorer becomes a workbench — 2026-08-17
+
+The sidebar's two jobs had nothing to do with each other: files, and the
+node/narration inspector for the scene at the playhead. Split them across the
+window the way an editor does — explorer left, canvas centre, scene right,
+both sides collapsible — and clicking a file **opens it in the centre as a
+tab** rather than throwing it at a browser tab and losing the editor.
+
+- **The canvas is a tab, not a thing tabs replace.** It is hidden rather than
+  unmounted, because rebuilding Pixi's app to glance at a text file would
+  restart the preview every time.
+- **`mime` picks the viewer, the extension is only a fallback.** Both apply in
+  practice: the 3D models generated before generic mimes were treated as
+  absent are still stored as `application/octet-stream`, and a `.bin` holding
+  `text/plain` still opens as text.
+- **A model gets a structure view, not a render** — triangles, meshes,
+  materials — read from a 4MB ranged prefix, since the glTF spec puts the JSON
+  chunk first and a `hunyuan3d` GLB is 7.7MB. Verified against the roster
+  numbers this plan's sibling recorded: the viewer reads **329,128 triangles**
+  out of `captions-2.glb`, which is exactly what `check-fal-roster.ts`
+  measured. Pretending to draw it would be the lie — the engine takes
+  parametric geometry, not imported vertices.
+
+This is the display seam the roadmap was careful about, in the one place it
+costs nothing: a *file explorer* showing a file is not a *document* node
+displaying it, so nothing here prejudges the `video`/`image` node work below.
+
+Panels are draggable as well as collapsible (2026-08-17), and both widths
+persist. A drag is bounded by what the *other* panel and a 360px canvas
+already claim, so no drag — and no window resize — can leave the middle column
+at zero.
+
+Two CSS gotchas, both found by running it rather than reading it, both the
+same shape (a rule that is silently inert):
+
+- **A drag handle must be positioned.** `z-index` does nothing on a
+  `position: static` element, so the handle's negative margin tucked half of
+  it *under* the neighbouring panel: dragging from that half selected text
+  instead of resizing. `position: relative` is load-bearing.
+- **`max-height: 100%` needs a parent with a definite height.** The image
+  wrapper sized itself to its content, so the percentage resolved against
+  nothing and a 1024² image ran off the bottom of its pane. The wrapper now
+  stretches (`align-self: stretch; flex: 1; min-height: 0`) and the image is
+  genuinely contained.
+
 Still open:
+- Thumbnails in the tree and drag-to-timeline — both wait on the `video` and
+  `image` nodes, since there is nothing to drop onto yet.
 - Upload from the editor (drag-and-drop) and an `upload_asset` MCP tool —
   `POST /assets` is still internal-key only, so today only producers create
   files.
