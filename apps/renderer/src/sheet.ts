@@ -15,6 +15,13 @@
  */
 import { chromium, type Browser, type Page } from 'playwright'
 import type { EuclidDoc } from '@euclid/dsl'
+import { preloadImages } from './preload'
+
+const API_URL = process.env.API_URL ?? 'http://localhost:8787'
+const INTERNAL_HEADERS = {
+  'x-internal-key': process.env.INTERNAL_API_KEY ?? 'dev-internal-key',
+  'x-user-id': 'internal',
+}
 
 export interface SheetTile {
   t: number
@@ -79,6 +86,11 @@ export class PreviewCapturer {
     if (this.loadedDocId !== doc.id || this.loadedVersion !== version) {
       await page.setViewportSize({ width: doc.canvas.width, height: doc.canvas.height })
       await page.evaluate((d) => window.__euclid.load(d), doc as unknown)
+      // Same images the export will draw. Without this an agent's contact
+      // sheet shows empty boxes where the render has pictures — the preview
+      // lying about the export, which is the failure this path exists to
+      // avoid.
+      await preloadImages(page, doc, { apiUrl: API_URL, headers: INTERNAL_HEADERS })
       this.loadedDocId = doc.id
       this.loadedVersion = version
     }

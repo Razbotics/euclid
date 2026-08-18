@@ -20,6 +20,7 @@ import {
   type ArrowNode,
   type Axes3dNode,
   type AxesNode,
+  type ImageNode,
   type MatrixNode,
   type MeshData,
   type MeshNode,
@@ -56,6 +57,19 @@ import {
  *  - fallback: monospace source text (below), so the engine works with zero setup
  * Must be deterministic for a given (tex, color, fontSize).
  */
+/**
+ * Turns a project `assetId` into a texture.
+ *
+ * A seam rather than a URL builder because the two surfaces answer it
+ * differently: the editor fetches through the API with the user's session,
+ * while the export worker has already downloaded the bytes with the internal
+ * key and hands them over directly. The stage only needs "give me pixels for
+ * this id", and neither surface has to know about the other.
+ */
+export interface ImageProvider {
+  getTexture(assetId: string): Promise<Texture>
+}
+
 export interface TexProvider {
   getTexture(tex: string, color: Color, fontSize: number): Promise<Texture>
   /**
@@ -266,6 +280,9 @@ interface Item {
   /** tokens only: the boxes, and one pooled Text per label */
   boxes?: Graphics
   labelTexts?: Text[]
+  /** image only: the sprite, and the box it is cropped to when fit is `cover` */
+  imageSprite?: Sprite
+  cropMask?: Graphics
   /** emphasis marker, drawn behind the node's content */
   highlight?: Graphics
   /** true when a write is being drawn per-glyph, so applyWrite skips its mask */
@@ -300,17 +317,20 @@ export class EuclidStage {
    * 2000-triangle sphere every frame would be the one avoidable cost here.
    */
   private meshCache = new Map<string, MeshData>()
+  private imageCache = new Map<string, Texture | 'pending'>()
   private pendingTex = new Set<Promise<unknown>>()
   private currentSceneId: string | null = null
   /** The 3D half of the camera while a spatial scene is being drawn; null when flat. */
   private cam3: Camera3 | null = null
   private texProvider: TexProvider | null
+  private imageProvider: ImageProvider | null
 
   constructor(
     private root: Container,
-    opts?: { texProvider?: TexProvider },
+    opts?: { texProvider?: TexProvider; imageProvider?: ImageProvider },
   ) {
     this.texProvider = opts?.texProvider ?? null
+    this.imageProvider = opts?.imageProvider ?? null
     root.addChild(this.bg)
     root.addChild(this.layer)
     root.addChild(this.overlay)
@@ -615,6 +635,16 @@ export class EuclidStage {
       case 'axes':
         content = new Graphics()
         break
+      case 'image': {
+        // A container around the sprite so `cover` can crop with its own mask
+        // without competing for the one a `write` reveal uses.
+        const holder = new Container()
+        const sprite = new Sprite()
+        sprite.anchor.set(0.5)
+        holder.addChild(sprite)
+        content = holder
+        break
+      }
       case 'text': {
         const t = new Text({
           text: node.text,
@@ -695,6 +725,9 @@ export class EuclidStage {
         t.style.fontSize = p.fontSize as number
         return
       }
+      case 'image':
+        this.updateImage(item, res, node)
+        return
       case 'latex':
         this.updateLatex(item, res, node)
         return
@@ -1145,6 +1178,84 @@ export class EuclidStage {
    * them (see syncNode) and everything below is absolute scene space, so the
    * 2D camera still frames it afterwards.
    */
+  /**
+   * Draw an image into its box.
+   *
+   * The texture arrives asynchronously, so a frame rendered before it lands
+   * would be missing the image entirely — the same hazard LaTeX has. It is
+   * handled the same way: the request is registered as pending, `whenIdle()`
+   * waits for it, and the export re-renders. Nothing here guesses at a size
+   * before the pixels exist.
+   */
+  private updateImage(item: Item, res: ResolvedNode, node: ImageNode): void {
+    const holder = item.content as Container
+    if (!item.imageSprite) item.imageSprite = holder.children[0] as Sprite
+    const sprite = item.imageSprite
+
+    const texture = this.imageTexture(node.assetId)
+    if (!texture) {
+      sprite.visible = false
+      return
+    }
+    sprite.visible = true
+    sprite.texture = texture
+
+    const w = res.props.width as number
+    const h = res.props.height as number
+    const tw = texture.width || 1
+    const th = texture.height || 1
+
+    if (node.fit === 'fill') {
+      sprite.width = w
+      sprite.height = h
+    } else {
+      // contain fits inside the box, cover fills it and spills; the spill is
+      // what the crop below removes.
+      const k = node.fit === 'cover' ? Math.max(w / tw, h / th) : Math.min(w / tw, h / th)
+      sprite.width = tw * k
+      sprite.height = th * k
+    }
+
+    if (node.fit === 'cover') {
+      if (!item.cropMask) {
+        item.cropMask = new Graphics()
+        holder.addChild(item.cropMask)
+      }
+      item.cropMask.clear().rect(-w / 2, -h / 2, w, h).fill(0xffffff)
+      holder.mask = item.cropMask
+    } else if (item.cropMask) {
+      holder.mask = null
+      item.cropMask.destroy()
+      item.cropMask = undefined
+    }
+  }
+
+  /**
+   * Cached texture for an asset, or null while it is still loading.
+   *
+   * Mirrors `texTexture`: one request per id, tracked in `pendingTex` so
+   * `whenIdle()` covers it, and a failure caches nothing so a transient
+   * network error can be retried on the next frame rather than blanking the
+   * node for the rest of the render.
+   */
+  private imageTexture(assetId: string): Texture | null {
+    const cached = this.imageCache.get(assetId)
+    if (cached && cached !== 'pending') return cached
+    if (cached === 'pending' || !this.imageProvider) return null
+    this.imageCache.set(assetId, 'pending')
+    const p = this.imageProvider
+      .getTexture(assetId)
+      .then((tex) => {
+        this.imageCache.set(assetId, tex)
+      })
+      .catch(() => {
+        this.imageCache.delete(assetId)
+      })
+      .finally(() => this.pendingTex.delete(p))
+    this.pendingTex.add(p)
+    return null
+  }
+
   private updateSpatial(
     item: Item,
     res: ResolvedNode,

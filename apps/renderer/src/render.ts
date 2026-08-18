@@ -5,8 +5,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { chromium } from 'playwright'
-import { audibleAudio, docDuration, type AudioPlacement, type EuclidDoc } from '@euclid/dsl'
+import {
+  audibleAudio,
+  docDuration,
+  type AudioPlacement,
+  type EuclidDoc,
+} from '@euclid/dsl'
 import { ivfFrame, ivfHeader } from './ivf'
+import { preloadImages } from './preload'
 import { buildFfmpegArgs } from './mux'
 
 /**
@@ -148,6 +154,12 @@ async function main() {
     })
     await page.goto(RENDER_PAGE_URL, { waitUntil: 'networkidle' })
     await page.evaluate((d) => window.__euclid.load(d), doc as unknown)
+
+    await preloadImages(page, doc, {
+      apiUrl: API_URL,
+      headers: INTERNAL_HEADERS,
+      log: (m) => console.log(m),
+    })
 
     // Ask the page rather than the environment: WebCodecs needs a secure
     // context, so whether it exists depends on how the render page is served,

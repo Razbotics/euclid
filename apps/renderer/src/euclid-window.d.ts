@@ -9,6 +9,8 @@ declare interface Window {
   __euclid: {
     load(doc: unknown): Promise<{ width: number; height: number; fps: number }>
     renderFrame(t: number): Promise<void>
+    /** Hand the page an asset's bytes as a data URL; it cannot fetch them itself. */
+    preloadAsset(assetId: string, dataUrl: string): Promise<void>
     /** WebCodecs capture; returns the codec actually configured. */
     startEncode(opts?: { bitrate?: number; codec?: string; realtime?: boolean }): Promise<{ codec: string }>
     /** Render at `t` and hand the frame straight to the encoder — no readback. */

@@ -307,7 +307,11 @@ function outlineNodes(nodes: import('./document').EuclidNode[], lines: string[],
                   ? `size=${n.size}`
                   : n.type === 'points3'
                     ? `${n.points.length} points`
-                    : n.type === 'mesh'
+                    : n.type === 'image'
+                      ? // The asset is the identity; a bare `image img_1a2b`
+                        // says nothing about which picture it is.
+                        `${n.width}x${n.height} ${n.fit} ${n.assetId.slice(0, 8)}`
+                      : n.type === 'mesh'
                       ? // Which solid it is, and how heavy. `mesh mesh_1a2b @(…)`
                         // alone cannot be told from a sphere, and milestone run 7
                         // read an outline of three solids that all looked the same.

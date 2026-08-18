@@ -12,6 +12,7 @@ import {
   type Vec2,
 } from '@euclid/dsl'
 import { COLOR, NODE_ID, NUMBERISH, PROJECT_ID, SCENE_ID } from './schemas'
+import { loadAsset } from '../services/assets'
 import { capability, said, CapabilityError } from './types'
 
 /**
@@ -446,6 +447,62 @@ export const nodeTools = [
             : ''),
         { nodeId: id, ...plot },
       )
+    },
+  }),
+
+  capability({
+    name: 'add_image',
+    summary: 'Place a still image from a project asset into a scene.',
+    doc: [
+      'Free. Draws a `model`-free still — anything generate_image produced, or any image asset in the project — as an ordinary node, so the camera, animation, opacity and write_on all work on it.',
+      '',
+      'Anchored at its centre like every other node. `width`/`height` are the **box**, and `fit` decides what happens when the picture disagrees with it:',
+      '',
+      '- `contain` — the whole picture, letterboxed inside the box',
+      '- `cover` — fills the box and crops the overflow',
+      '- `fill` — stretches to the box, changing the aspect ratio',
+      '',
+      'The document holds the `assetId`, never a URL: a URL would expire, and only one surface could read it. The editor fetches with your session and the export worker preloads the bytes it fetched with its own key, so the same document draws in both.',
+      '',
+      'A referenced image cannot be deleted while a scene draws it — remove_asset refuses and names where it is used.',
+    ].join('\n'),
+    args: z.object({
+      projectId: PROJECT_ID,
+      sceneId: SCENE_ID,
+      assetId: z.string().min(1).describe('an image asset — see list_assets'),
+      x: z.number().describe('centre x'),
+      y: z.number().describe('centre y'),
+      width: z.number().positive(),
+      height: z.number().positive(),
+      fit: z.enum(['contain', 'cover', 'fill']).default('contain'),
+      parentId: z.string().optional().describe('add into this group'),
+    }),
+    async handler(ctx, { projectId, sceneId, assetId, x, y, width, height, fit, parentId }) {
+      await ctx.requireProject(projectId)
+      const asset = await loadAsset(ctx.env, assetId)
+      if (!asset) throw new CapabilityError(`asset ${assetId} not found`, 404)
+      if (asset.project_id !== projectId) {
+        throw new CapabilityError(`asset ${assetId} belongs to another project`, 403)
+      }
+      if (asset.kind !== 'image') {
+        throw new CapabilityError(
+          `asset ${assetId} is ${asset.kind}, not an image. add_image draws stills; ` +
+            (asset.kind === 'model'
+              ? 'a 3D model goes in with import_mesh.'
+              : asset.kind === 'audio'
+                ? 'audio is placed on a lane with add_audio_clip.'
+                : 'video cannot be drawn yet.'),
+        )
+      }
+      const id = newId('img')
+      await ctx.submit(projectId, [
+        op.addNode(
+          sceneId,
+          { ...baseNode({ x, y }), id, type: 'image', assetId, width, height, fit },
+          parentId,
+        ),
+      ])
+      return said(`created image ${id} (${width}x${height}, ${fit}) from ${assetId}`, { nodeId: id })
     },
   }),
 

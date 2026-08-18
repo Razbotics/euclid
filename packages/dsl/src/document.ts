@@ -417,6 +417,28 @@ export interface Points3Node extends NodeBase {
 }
 
 /**
+ * A still image from a project asset.
+ *
+ * Holds an `assetId` rather than a URL: the document must stay portable and
+ * must not embed a location that expires or that only one surface can read.
+ * How an id becomes pixels differs by surface — the editor fetches with the
+ * user's session, the export worker preloads bytes it fetched with the
+ * internal key — which is why the stage takes an `imageProvider` instead of
+ * building a URL itself.
+ *
+ * `width`/`height` are the box to draw into; `fit` decides what happens when
+ * the image's own aspect ratio disagrees with it.
+ */
+export interface ImageNode extends NodeBase {
+  type: 'image'
+  assetId: string
+  width: number
+  height: number
+  /** `contain` letterboxes, `cover` fills and crops, `fill` stretches. */
+  fit: 'contain' | 'cover' | 'fill'
+}
+
+/**
  * A solid surface: triangles projected, depth-sorted and flat-shaded.
  *
  * The geometry is a *spec* rather than a vertex list — see mesh.ts for why —
@@ -528,6 +550,7 @@ export type EuclidNode =
   | Axes3dNode
   | Points3Node
   | MeshNode
+  | ImageNode
   | ArrowNode
   | AxesNode
   | GroupNode
@@ -692,6 +715,14 @@ export const NodeSchema: z.ZodType<EuclidNode> = z.lazy(() =>
       points: z.array(Vec3Schema).min(1).max(LIMITS.maxPoints),
       radius: z.number().positive(),
       fill: ColorSchema,
+    }),
+    z.object({
+      ...NodeBaseShape,
+      type: z.literal('image'),
+      assetId: z.string().min(1),
+      width: z.number().positive(),
+      height: z.number().positive(),
+      fit: z.enum(['contain', 'cover', 'fill']),
     }),
     z.object({
       ...NodeBaseShape,

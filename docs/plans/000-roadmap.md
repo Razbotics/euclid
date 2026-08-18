@@ -242,13 +242,12 @@ now fixed, and the first is the one worth remembering:
   capability named in prose goes through a `ref()` that throws at module load.
   All three were verified to fail before being trusted
 
-Most generated files still stop at the asset tree, and **3D is the exception**.
-The document has no image or video node, so generated stills, clips and music
-are files a project holds rather than things on the stage; a generated *model*
-reaches the stage, because `import_mesh` reads its GLB into a mesh node. Images
-and video belong to Phase 5, which wants the WebCodecs rework first — doing the
-image half alone would put a display seam in the stage that the video work
-would immediately have to rewrite.
+**Video is now the only generated kind that cannot reach the stage.** A
+generated model goes in with `import_mesh`, a still with `add_image`, and music
+onto an audio lane. The worry recorded here — that doing images first would
+build a display seam the video work must rewrite — did not survive contact:
+the seam is an `imageProvider` on the stage plus one shared preload, and a
+video node needs exactly the same two things with a decoder behind them.
 
 The editor can now **look** at one, which is a different claim: the explorer
 opens any asset inline (2026-08-17, plans/003) — image, video, audio, text, and
@@ -297,7 +296,15 @@ capability as a document contact sheet.
 - [x] Assets as first-class (registry) — done in Phase 2; the editor is a
       three-column workbench (explorer | canvas | scene) whose explorer opens
       any file inline (2026-08-17); proxies/thumbnails still to do
-- [~] `video` / `audio` node types; tracks and layering within a scene —
+- [~] `video` / `audio` / `image` node types; tracks and layering within a scene
+      — **image done 2026-08-19**: `add_image` draws a project asset as an
+      ordinary node (contain/cover/fill), so a generated still finally reaches
+      the frame. The document holds an `assetId`, never a URL, and the stage
+      takes an `imageProvider` because the two surfaces answer it differently —
+      the editor fetches with the user's session, the export worker preloads
+      bytes it fetched with the internal key. Both capture paths preload
+      through **one** shared function, since a preview showing pictures the
+      export omits is the one thing that surface must never do.
       **audio done 2026-08-18** as document-level *tracks* rather than a node
       type (audio is never drawn, and a bed runs across cuts): `planAudio`
       feeds the timeline, the preview mixer and the ffmpeg mux from one

@@ -57,7 +57,7 @@ export const genTools = [
       'Iterate on `flux-schnell` and only move up once the prompt is settled — the expensive models are not better at telling you whether the composition is right.',
       WAITING,
       '',
-      '**Nothing puts this in a frame yet.** There is no image node in the document, so a generated still lives in the project filesystem until the video phase lands one. Use it for reference, for export, or for feeding an image-to-3D model.',
+      '**Then put it in a scene with `add_image`**, which draws the still as an ordinary node — camera, animation and write_on all work on it. It can also feed generate_3d, though that needs a publicly reachable URL rather than a project asset.',
     ].join('\n'),
     costsCredits: true,
     args: z.object({

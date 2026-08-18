@@ -190,6 +190,27 @@ Still open:
   Trimming is a source-range property, not a document-time property.
 - ~~`audio` — music/SFX with gain, fades, and ducking against narration.~~
   **Done 2026-08-18, but not as a node** — see below.
+- ~~`image` — a still from a project asset.~~ **Done 2026-08-19**: `assetId`,
+  a box, and `fit` (contain/cover/fill).
+
+#### What the image node settled for video (2026-08-19)
+
+The document holds an **`assetId`, never a URL**: a URL expires, and only one
+surface could read it. Turning that id into pixels is an `imageProvider` on the
+stage, because the surfaces genuinely differ — the editor fetches through the
+API with the user's session, while the export worker has no session and is
+handed bytes it fetched with the internal key.
+
+Both capture paths — the exporter and the preview contact sheet — must push
+those bytes in, and they do it through **one shared `preloadImages`**. That is
+not tidiness: the first cut preloaded only in the exporter, and
+`preview_frames` came back with empty boxes where the render had pictures. A
+preview that disagrees with the export is the single thing that surface must
+never do.
+
+This also retires the reason images were deferred behind WebCodecs. The seam a
+video node needs is the same provider and the same preload with a decoder
+behind it instead of `Assets.load` — not a rewrite.
 
 The DSL's discriminated union was built for this; it's an extension, not a
 rewrite. Existing documents stay valid.

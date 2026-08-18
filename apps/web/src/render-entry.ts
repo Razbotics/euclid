@@ -1,6 +1,7 @@
 import { Application } from 'pixi.js'
 import { EuclidDocSchema, type EuclidDoc } from '@euclid/dsl'
-import { EuclidStage } from '@euclid/engine/pixi'
+import { Assets, Texture } from 'pixi.js'
+import { EuclidStage, type ImageProvider } from '@euclid/engine/pixi'
 import { MathJaxTexProvider } from './tex'
 
 /**
@@ -15,6 +16,15 @@ let app: Application | null = null
 let stage: EuclidStage | null = null
 let doc: EuclidDoc | null = null
 let encoder: VideoEncoder | null = null
+/** assetId → data URL, filled by preloadAsset before the first frame. */
+const assetUrls = new Map<string, string>()
+const preloaded: ImageProvider = {
+  async getTexture(assetId: string) {
+    const url = assetUrls.get(assetId)
+    if (!url) throw new Error(`asset ${assetId} was not preloaded`)
+    return (await Assets.load(url)) as Texture
+  },
+}
 let pending: EncodedChunkOut[] = []
 
 /**
@@ -50,6 +60,12 @@ declare global {
   interface Window {
     __euclid: {
       load(docJson: unknown): Promise<{ width: number; height: number; fps: number }>
+      /**
+       * Hand the page an asset's bytes as a data URL. The page has no session
+       * and no internal key, so it cannot fetch a project asset itself — the
+       * renderer, which can, pushes them in before capture starts.
+       */
+      preloadAsset(assetId: string, dataUrl: string): Promise<void>
       renderFrame(t: number): Promise<void>
       /** WebCodecs capture. Returns the codec actually configured. */
       startEncode(opts?: { bitrate?: number }): Promise<{ codec: string }>
@@ -103,8 +119,15 @@ window.__euclid = {
     })
     document.body.appendChild(app.canvas)
     app.canvas.id = 'euclid-canvas'
-    stage = new EuclidStage(app.stage, { texProvider: new MathJaxTexProvider() })
+    stage = new EuclidStage(app.stage, { texProvider: new MathJaxTexProvider(), imageProvider: preloaded })
     return { width: doc.canvas.width, height: doc.canvas.height, fps: doc.canvas.fps }
+  },
+
+  async preloadAsset(assetId: string, dataUrl: string) {
+    assetUrls.set(assetId, dataUrl)
+    // Warmed here rather than on first draw, so the first captured frame is
+    // never the one that pays for the download.
+    await Assets.load(dataUrl)
   },
 
   async renderFrame(t: number) {

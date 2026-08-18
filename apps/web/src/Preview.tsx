@@ -1,8 +1,29 @@
 import { useEffect, useRef } from 'react'
-import { Application } from 'pixi.js'
+import { Application, Assets, Texture } from 'pixi.js'
 import { EuclidStage } from '@euclid/engine/pixi'
 import type { EuclidDoc } from '@euclid/dsl'
 import { MathJaxTexProvider } from './tex'
+
+const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8787'
+
+/**
+ * The editor's half of the image seam: fetch the asset through the API with
+ * the user's own session. The export worker cannot do this — it has no session
+ * — which is exactly why this is a provider and not a URL the stage builds.
+ */
+const sessionImageProvider = {
+  async getTexture(assetId: string): Promise<Texture> {
+    const res = await fetch(`${API}/api/assets/${assetId}`, { credentials: 'include' })
+    if (!res.ok) throw new Error(`asset ${assetId}: ${res.status}`)
+    const url = URL.createObjectURL(await res.blob())
+    try {
+      return (await Assets.load(url)) as Texture
+    } finally {
+      // Pixi has decoded it by now; holding the object URL only leaks it.
+      URL.revokeObjectURL(url)
+    }
+  },
+}
 
 interface Props {
   doc: EuclidDoc
@@ -42,7 +63,10 @@ export function Preview({ doc, time }: Props) {
         host.appendChild(app.canvas)
         app.canvas.style.width = '100%'
         app.canvas.style.height = 'auto'
-        const stage = new EuclidStage(app.stage, { texProvider: new MathJaxTexProvider() })
+        const stage = new EuclidStage(app.stage, {
+          texProvider: new MathJaxTexProvider(),
+          imageProvider: sessionImageProvider,
+        })
         app.ticker.add(() => {
           stage.update(docRef.current, timeRef.current)
         })
