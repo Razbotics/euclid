@@ -4,6 +4,7 @@ import { animTools } from './tools-anim'
 import { cameraTools } from './tools-camera'
 import { decisionTools } from './tools-decision'
 import { flowTools } from './tools-flow'
+import { genTools } from './tools-gen'
 import { gridTools } from './tools-grid'
 import { mediaTools } from './tools-media'
 import { nodeTools } from './tools-node'
@@ -20,6 +21,7 @@ const ALL: Capability[] = [
   ...animTools,
   ...cameraTools,
   ...mediaTools,
+  ...genTools,
   ...previewTools,
   ...decisionTools,
 ]

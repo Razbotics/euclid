@@ -19,7 +19,7 @@ export interface AssetRow {
   created_at: number
 }
 
-export const ASSET_KINDS = ['audio', 'video', 'image']
+export const ASSET_KINDS = ['audio', 'video', 'image', 'model']
 
 /**
  * Suffix a path until it is free, so a regenerated narration clip sits beside

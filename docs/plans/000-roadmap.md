@@ -160,6 +160,101 @@ whatever was still running, which cost the run 1.6s of a camera orbit. The other
 keeps a caption out of the orbited world, and `connect` takes cell-level
 anchors so an arrow can point at one token rather than a whole strip.
 
+## Phase 4.5: Generative assets + mesh solids → plans/009-generative-assets.md
+Inserted 2026-08-17 at the user's request, ahead of general video. Two pieces
+that arrived together: **fal as an asset provider** (images, video, music, 3D
+models) and **real mesh solids** in the renderer. It sits here rather than
+inside Phase 5 because every generated file lands in the asset registry Phase 2
+already built, so it needs none of Phase 5's capture rework.
+- [x] Mesh feasibility settled by measurement, not opinion — the same solid
+      rasterised under painter's-algorithm sorting and under a per-pixel
+      z-buffer, differing pixels counted. **Backface culling turns out to be a
+      correctness feature**: with it on, ordering is *exactly* right (0.00%
+      wrong) even on a torus, which occludes itself; interpenetrating surfaces
+      are the one real limit (11.12%) and no flag fixes them
+- [x] `mesh` node + `add_mesh` with six parametric shapes, flat Lambert
+      shading, a 4,000-triangle ceiling checked before anything is built.
+      Geometry is a **spec, not a vertex list** — a sphere is a few numbers in
+      the document rather than 576 triangles through the event log. Verified by
+      `check-mesh.ts`: a background-coloured solid takes a bright disc from
+      13.7% lit to 0.00%, and culled/unculled agree to 0.00%
+- [x] fal provider seam + `generate_image` / `generate_video` / `generate_audio`
+      / `generate_3d` / `get_generation_status`. **The provider's queue is the
+      job queue** — a `generation_jobs` row is bookkeeping, so this adds no
+      second process, unlike renders. Verified end to end by `check-fal.ts`
+      (a real image, checked to its magic bytes, debited once, refunded in full
+      on failure, idempotent under polling) and the slow path by a real
+      `ltx-video` clip collected at +100s
+- [x] **All eight roster models verified end to end** (2026-08-17,
+      `check-fal-roster.ts`, ~$0.50): every output reader exercised against a
+      real successful result, with the stored bytes identified by **magic
+      number** rather than the claimed mime. Both GLBs parse as valid glTF 2.0;
+      `stable-audio` returned exactly the requested 10.0s, which checks the
+      input builder too. Found and fixed one real defect: both 3D models report
+      `application/octet-stream`, so every generated model was being stored
+      under a mime that says nothing — generic mimes are now treated as absent
+- [ ] GIF has no roster entry: the category is served by video models that
+      return mp4, so a real GIF path is an ffmpeg transcode
+- [x] **GLB import — `generate_3d` now produces something the engine draws**
+      (2026-08-18). A dependency-free glTF 2.0 reader in the DSL, vertex-cluster
+      decimation, and `import_mesh`. Verified end to end by `check-glb.ts`: a
+      real trellis model at 10,132 → 1,382 triangles, rendered as a recognisable
+      owl. Two findings worth keeping:
+      **(a)** converting glTF's Y-up to this system's Y-down negates an axis,
+      which reverses winding and would render every import as a hollow shell
+      with an identical silhouette — the cylinder bug by another route. Fixed by
+      measuring **signed volume** (positive = outward, as every generator here
+      produces) rather than reasoning about handedness, which also works on the
+      non-convex shapes an `n · centroid` test cannot handle.
+      **(b)** the binding limit is the **document**, not the frame: imported
+      geometry is stored in the document, which lives under one Durable Object
+      key capped at 128 KiB, and 4,000 triangles serialise to ~105KB. Hence
+      `maxImportedTriangles = 2000`, and a projected-size refusal that names the
+      argument to lower
+
+**Milestone run 7 (2026-08-17)** — a 32.6s narrated Archimedes explainer
+(sphere : cylinder : cone), built entirely from primitives with an orbiting
+camera and rendered. The mesh work earns its place: nothing was hand-rolled, and
+four `preview_frames` calls covered the whole build. It found four defects, all
+now fixed, and the first is the one worth remembering:
+
+- **The cylinder was inside out** — all 64 faces wound inward, so culling kept
+  the far wall and dropped the near one, and it rendered as an open cup. It
+  survived `check-mesh.ts` because an inverted solid has the *same silhouette*
+  as a correct one: culled and unculled read `0.14787` both, identical to five
+  decimals. The remedy is not another pixel test but a **pure winding
+  invariant** (`n · centroid > 0` for a convex solid), which names the exact
+  face count and was confirmed to fail when the bug is re-introduced
+- **A shape could be born unfilled but never made unfilled**: `add_shape`
+  teaches `fill: "none"`, `update_node` rejected that word, and the reducer's
+  actual removal signal (`null`) was undocumented. Both spellings now work
+- **The outline could not tell a sphere from a cone** — it printed a bare
+  `mesh <id> @(x,y)`. Now `cone r=180 h=360 80tri`. This is run 6's arrow
+  finding recurring, which says the outline is where a new primitive is most
+  likely to be forgotten
+- **The `instructions` orientation prose never mentioned solids**, exactly as it
+  once said "You cannot see the video" under `preview_frames`. **Fixed
+  structurally** rather than patched a third time — and looking for the general
+  case found a live instance the run had missed: the COST paragraph claimed
+  "the two capabilities" cost credits when six did. The node list is now a
+  `Record` keyed by `EuclidNode['type']` (adding a node type fails the build
+  until it is described), counts are derived from the catalog, and every
+  capability named in prose goes through a `ref()` that throws at module load.
+  All three were verified to fail before being trusted
+
+Nothing here puts a generated file **in a frame**. The document has no image or
+video node, so a generation is a file in the project's asset tree and not
+something on the stage — and `generate_3d` returns a GLB that nothing draws
+(importing one means a binary parser plus decimation from ~100k triangles to
+the 4,000 the CPU renderer affords). Both belong to Phase 5, which wants the
+WebCodecs rework first; doing the image half alone would put a display seam in
+the stage that the video work would immediately have to rewrite.
+
+The editor can now **look** at one, which is a different claim: the explorer
+opens any asset inline (2026-08-17, plans/003) — image, video, audio, text, and
+a structure read-out for a GLB. That is a file browser doing its job, not a
+document node, and it deliberately stops short of the stage.
+
 ## Phase 5: General video → plans/003-general-video.md
 Reinstated as the product direction 2026-08-15, and now sequenced after
 animation depth (2026-08-16) rather than before it — the verification argument
@@ -170,7 +265,9 @@ This phase rides on the capture rework agent sight began: WebCodecs removes the
 `page.screenshot()` round-trip, and asset proxies/thumbnails are the same
 capability as a document contact sheet.
 - [ ] Replace per-frame screenshot capture with WebCodecs (wins on the current path too)
-- [x] Assets as first-class (registry) — done in Phase 2; proxies/thumbnails still to do
+- [x] Assets as first-class (registry) — done in Phase 2; the editor is a
+      three-column workbench (explorer | canvas | scene) whose explorer opens
+      any file inline (2026-08-17); proxies/thumbnails still to do
 - [~] `video` / `audio` node types; tracks and layering within a scene —
       **audio done 2026-08-18** as document-level *tracks* rather than a node
       type (audio is never drawn, and a bed runs across cuts): `planAudio`
@@ -178,7 +275,8 @@ capability as a document contact sheet.
       function, the editor timeline became a lane editor with drag/trim/snap,
       and the agent got `add_audio_track` / `add_audio_clip` / `update_audio`.
       Verified in a real export by measured dB. Ducking under narration is the
-      named gap. `video` still needs the WebCodecs rework first- [ ] Multi-track timeline UI
+      named gap. `video` still needs the WebCodecs rework first
+- [ ] Multi-track timeline UI
 - [ ] Ingest + analysis (fetch → transcode → STT → shot detection → segments)
 - [ ] Decide the rights/ToS model **before** building the ingest fetcher
 - [ ] Narration-anchored animation (sync to word timestamps)

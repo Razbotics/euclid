@@ -2,6 +2,9 @@ import { z } from 'zod'
 import type { CellRange } from './grid'
 import { LIMITS } from './limits'
 import { AudioTrackSchema, type AudioTrack } from './audio'
+// Type-only: mesh.ts imports Vec3 back from here, and erasing this import is
+// what keeps that from becoming a runtime cycle. The Zod mirror lives below.
+import type { MeshGeometry, Tri } from './mesh'
 
 export const SCHEMA_VERSION = 1 as const
 
@@ -414,6 +417,34 @@ export interface Points3Node extends NodeBase {
 }
 
 /**
+ * A solid surface: triangles projected, depth-sorted and flat-shaded.
+ *
+ * The geometry is a *spec* rather than a vertex list — see mesh.ts for why —
+ * so this node stays a few numbers wide whatever it draws.
+ *
+ * `cull` is not an optimisation. Painter's-algorithm ordering is exactly
+ * correct on a closed surface only once the inward-facing triangles are gone;
+ * with them it is merely close. Turn it off for an open surface (a plane seen
+ * from below, a shape with holes), and accept that ordering becomes
+ * approximate. Two solids that physically intersect are the case no per-face
+ * sort can get right, and no flag fixes that.
+ */
+export interface MeshNode extends NodeBase {
+  type: 'mesh'
+  geometry: MeshGeometry
+  fill: Color
+  /** Lambert shading against a fixed light; 'none' fills every face flat. */
+  shading: 'flat' | 'none'
+  /** Floor brightness for a face turned away from the light, 0..1. */
+  ambient: number
+  /** Drop triangles facing away from the camera. See above — correctness, not speed. */
+  cull: boolean
+  /** Wireframe over the fill; omitted draws no edges. */
+  stroke?: Color
+  strokeWidth: number
+}
+
+/**
  * Either end of an arrow: a node to track, or a fixed point.
  *
  * Anchoring to a node is the whole point — the arrow recomputes its endpoints
@@ -496,9 +527,55 @@ export type EuclidNode =
   | Vector3Node
   | Axes3dNode
   | Points3Node
+  | MeshNode
   | ArrowNode
   | AxesNode
   | GroupNode
+
+/**
+ * Mirrors MeshGeometry in mesh.ts. Segment counts are bounded here rather than
+ * clamped silently, so an agent asking for a 500-segment sphere is told the
+ * ceiling instead of quietly getting a different shape than it asked for.
+ */
+const TriSchema: z.ZodType<Tri> = z.tuple([
+  z.number().int().min(0),
+  z.number().int().min(0),
+  z.number().int().min(0),
+])
+const SEGMENTS = z.number().int().min(3).max(96)
+const MeshGeometrySchema: z.ZodType<MeshGeometry> = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('cube'), size: z.number().positive() }),
+  z.object({ kind: z.literal('sphere'), radius: z.number().positive(), segments: SEGMENTS }),
+  z.object({
+    kind: z.literal('torus'),
+    radius: z.number().positive(),
+    tube: z.number().positive(),
+    segments: SEGMENTS,
+  }),
+  z.object({
+    kind: z.literal('cylinder'),
+    radius: z.number().positive(),
+    height: z.number().positive(),
+    segments: SEGMENTS,
+  }),
+  z.object({
+    kind: z.literal('cone'),
+    radius: z.number().positive(),
+    height: z.number().positive(),
+    segments: SEGMENTS,
+  }),
+  z.object({
+    kind: z.literal('plane'),
+    width: z.number().positive(),
+    depth: z.number().positive(),
+    segments: SEGMENTS,
+  }),
+  z.object({
+    kind: z.literal('custom'),
+    verts: z.array(Vec3Schema).min(3),
+    faces: z.array(TriSchema).min(1).max(LIMITS.maxTriangles),
+  }),
+]) as z.ZodType<MeshGeometry>
 
 const NodeBaseShape = {
   id: z.string().min(1),
@@ -615,6 +692,17 @@ export const NodeSchema: z.ZodType<EuclidNode> = z.lazy(() =>
       points: z.array(Vec3Schema).min(1).max(LIMITS.maxPoints),
       radius: z.number().positive(),
       fill: ColorSchema,
+    }),
+    z.object({
+      ...NodeBaseShape,
+      type: z.literal('mesh'),
+      geometry: MeshGeometrySchema,
+      fill: ColorSchema,
+      shading: z.enum(['flat', 'none']),
+      ambient: z.number().min(0).max(1),
+      cull: z.boolean(),
+      stroke: ColorSchema.optional(),
+      strokeWidth: z.number().min(0),
     }),
     z.object({
       ...NodeBaseShape,

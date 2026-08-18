@@ -6,6 +6,7 @@ import {
   type EuclidNode,
   type Scene,
 } from './document'
+import { meshTriangleCount, type MeshGeometry } from './mesh'
 import { LONG_TAIL_SEC, pacingSummary, planAudio, scenePacing } from './narration'
 import { clipPlaySec } from './audio'
 
@@ -210,7 +211,6 @@ export function outlineDoc(doc: EuclidDoc): string {
   // and an agent that cannot see the music bed will happily generate a second
   // one. Muted lanes are listed *and* marked: invisible mute is how a render
   // comes back missing a sound nobody remembers turning off.
-  //
   // Geometry from `planAudio`, never from the clip's own numbers: a 30s bed on
   // an 8s video *plays* for 8s, and an outline reporting 30 would be telling
   // the agent about audio the export throws away.
@@ -267,6 +267,25 @@ function round(n: number): number {
   return Math.round(n * 100) / 100
 }
 
+/** The one or two numbers that distinguish two solids of the same kind. */
+function meshSize(g: MeshGeometry): string {
+  switch (g.kind) {
+    case 'cube':
+      return ` ${g.size}`
+    case 'sphere':
+      return ` r=${g.radius}`
+    case 'torus':
+      return ` r=${g.radius} tube=${g.tube}`
+    case 'cylinder':
+    case 'cone':
+      return ` r=${g.radius} h=${g.height}`
+    case 'plane':
+      return ` ${g.width}x${g.depth}`
+    case 'custom':
+      return ` ${g.verts.length}v`
+  }
+}
+
 function outlineNodes(nodes: import('./document').EuclidNode[], lines: string[], indent: string): void {
   for (const n of nodes) {
     const anim = n.tracks.length > 0 ? ` tracks[${n.tracks.map((t) => t.property).join(',')}]` : ''
@@ -288,11 +307,16 @@ function outlineNodes(nodes: import('./document').EuclidNode[], lines: string[],
                   ? `size=${n.size}`
                   : n.type === 'points3'
                     ? `${n.points.length} points`
-                    : n.type === 'arrow'
-                      ? // An arrow's identity is its endpoints; its own position is
-                        // an offset that is almost always zero.
-                        `${arrowEnd(n.from)} → ${arrowEnd(n.to)}`
-                      : ''
+                    : n.type === 'mesh'
+                      ? // Which solid it is, and how heavy. `mesh mesh_1a2b @(…)`
+                        // alone cannot be told from a sphere, and milestone run 7
+                        // read an outline of three solids that all looked the same.
+                        `${n.geometry.kind}${meshSize(n.geometry)} ${meshTriangleCount(n.geometry)}tri`
+                      : n.type === 'arrow'
+                        ? // An arrow's identity is its endpoints; its own position is
+                          // an offset that is almost always zero.
+                          `${arrowEnd(n.from)} → ${arrowEnd(n.to)}`
+                        : ''
     lines.push(
       `${indent}${n.type} ${n.id}${n.name ? ` (${n.name})` : ''} ` +
         `@(${n.position.x},${n.position.y}${n.z !== undefined ? `,z=${n.z}` : ''}) ${label}${anim}${trans}`,

@@ -123,6 +123,14 @@ removed — with renders counted as in-use it flagged almost nothing, and a
 scary label on a file the user may simply not have wired up yet is the wrong
 nudge. The API still returns `usedBy`, because the delete guard needs it.
 
+**Update 2026-08-17 ([plans/009](009-generative-assets.md)):** the registry
+gained a second class of producer — fal generations (images, video, music, 3D
+models) — and `kind` gained `model` for GLB files. That validates the "assets
+are first-class" bet early: `generate_image` needed no new storage concept, only
+a new producer into `storeAsset`. It also sharpens §2 below, because there is
+now generated media in projects that **nothing can put on screen**, which is
+precisely what the `video`/`image` node work is for.
+
 #### The explorer becomes a workbench — 2026-08-17
 
 The sidebar's two jobs had nothing to do with each other: files, and the
@@ -173,7 +181,8 @@ Still open:
   `image` nodes, since there is nothing to drop onto yet.
 - Upload from the editor (drag-and-drop) and an `upload_asset` MCP tool —
   `POST /assets` is still internal-key only, so today only producers create
-  files.
+  files. `generate_3d` makes this sharper: it needs a *publicly reachable*
+  image URL, so a user cannot lift their own picture into 3D yet.
 - Bulk actions, and a "delete every file no scene references" sweep.
 
 ### 2. New node types

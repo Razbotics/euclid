@@ -458,6 +458,8 @@ export const nodeTools = [
       '1. **Position is nested.** `{"position":{"x":100,"y":200}}` — not the top-level `x`/`y` that add_text/add_latex accept. A patch naming a property the node does not have is now REJECTED, not silently stripped.',
       '2. **A keyframed property ignores you.** If an animation keyframes the property you patch, the document changes but the render does not — the track wins. The result says so. Use `animate` instead, or clear the track first.',
       '',
+      '**To remove a property, pass `null`** — `{"fill": null}` is how a filled shape becomes an outline. `"none"` works too, because that is the spelling add_shape teaches for the same idea. Without this there is no way to un-fill a shape after creating it, which is the trap that sent milestone run 7 looking for one.',
+      '',
       'Invalid patches are rejected atomically: nothing is applied.',
     ].join('\n'),
     args: z.object({
@@ -470,6 +472,13 @@ export const nodeTools = [
     }),
     async handler(ctx, { projectId, sceneId, nodeId, patch }) {
       if (Object.keys(patch).length === 0) throw new CapabilityError('patch is empty')
+      // `add_shape` spells "unfilled" as the string "none" and translates it to
+      // an omitted key; a patch has to mean the same thing by the same word, or
+      // a shape can be *born* unfilled and never *made* unfilled. `null` is the
+      // reducer's own removal signal, so this is a spelling, not a mechanism.
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === 'none') patch[k] = null
+      }
       // Read before the write, so the warning describes the node as the caller
       // found it.
       const { doc } = await ctx.getDoc(projectId)

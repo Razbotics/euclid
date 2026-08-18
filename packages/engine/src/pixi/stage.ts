@@ -1,6 +1,7 @@
 import { Container, Graphics, Sprite, Text, Texture, type Renderer } from 'pixi.js'
 import {
   axisTicks,
+  buildMesh,
   cellCenter,
   cellsInRange,
   formatTick,
@@ -20,6 +21,8 @@ import {
   type Axes3dNode,
   type AxesNode,
   type MatrixNode,
+  type MeshData,
+  type MeshNode,
   type Points3Node,
   type TokensNode,
   type Vec2,
@@ -131,9 +134,52 @@ const lerp3 = (a: Vec3, b: Vec3, u: number): Vec3 => ({
   z: lerp(a.z, b.z, u),
 })
 
+/**
+ * The light a flat-shaded mesh is lit by: fixed in scene space, from above,
+ * ahead and to the left. Fixed rather than authorable on purpose — it is a
+ * depth *cue*, and a scene where every solid agrees about where the light is
+ * reads as one space. `y` is negative because y grows downward.
+ */
+const MESH_LIGHT = (() => {
+  const l = { x: -0.4, y: -0.7, z: 0.6 }
+  const m = Math.hypot(l.x, l.y, l.z)
+  return { x: l.x / m, y: l.y / m, z: l.z / m }
+})()
+
+/** Scale a '#rrggbb' toward black by `k`, returning what Pixi wants. */
+function shadeColor(hex: string, k: number): number {
+  const n = parseInt(hex.slice(1), 16)
+  const f = Math.max(0, Math.min(1, k))
+  const r = Math.round(((n >> 16) & 0xff) * f)
+  const g = Math.round(((n >> 8) & 0xff) * f)
+  const b = Math.round((n & 0xff) * f)
+  return (r << 16) | (g << 8) | b
+}
+
+/** Unit normal of a triangle in scene space, for Lambert shading. */
+function faceNormal(a: Vec3, b: Vec3, c: Vec3): Vec3 {
+  const ux = b.x - a.x
+  const uy = b.y - a.y
+  const uz = b.z - a.z
+  const vx = c.x - a.x
+  const vy = c.y - a.y
+  const vz = c.z - a.z
+  const nx = uy * vz - uz * vy
+  const ny = uz * vx - ux * vz
+  const nz = ux * vy - uy * vx
+  const m = Math.hypot(nx, ny, nz) || 1
+  return { x: nx / m, y: ny / m, z: nz / m }
+}
+
 /** Node types whose geometry spans depth and is projected vertex by vertex. */
 function isSpatialType(type: string): boolean {
-  return type === 'vector3' || type === 'axes3d' || type === 'points3' || type === 'arrow'
+  return (
+    type === 'vector3' ||
+    type === 'axes3d' ||
+    type === 'points3' ||
+    type === 'mesh' ||
+    type === 'arrow'
+  )
 }
 
 /**
@@ -248,6 +294,12 @@ export class EuclidStage {
   private glyphCache = new Map<string, TexGlyphRender[] | 'pending'>()
   /** Matching is O(n·m); the pair is stable for a morph, so compute it once. */
   private matchCache = new Map<string, GlyphMatch>()
+  /**
+   * Expanded mesh geometry, keyed by its spec. Geometry is not animatable, so
+   * a scene has as many entries as it has distinct solids — rebuilding a
+   * 2000-triangle sphere every frame would be the one avoidable cost here.
+   */
+  private meshCache = new Map<string, MeshData>()
   private pendingTex = new Set<Promise<unknown>>()
   private currentSceneId: string | null = null
   /** The 3D half of the camera while a spatial scene is being drawn; null when flat. */
@@ -558,6 +610,7 @@ export class EuclidStage {
       case 'vector3':
       case 'axes3d':
       case 'points3':
+      case 'mesh':
       case 'arrow':
       case 'axes':
         content = new Graphics()
@@ -654,6 +707,7 @@ export class EuclidStage {
       case 'vector3':
       case 'axes3d':
       case 'points3':
+      case 'mesh':
         // Geometry that spans depth projects its own vertices — see
         // updateSpatial. Nothing to do when the scene is flat, because a
         // spatial node without a camera to project through has no position.
@@ -1094,7 +1148,7 @@ export class EuclidStage {
   private updateSpatial(
     item: Item,
     res: ResolvedNode,
-    node: Vector3Node | Axes3dNode | Points3Node,
+    node: Vector3Node | Axes3dNode | Points3Node | MeshNode,
     cam: Camera3,
   ): void {
     const g = item.content as Graphics
@@ -1162,7 +1216,105 @@ export class EuclidStage {
         }
         return
       }
+      case 'mesh':
+        this.drawMesh(g, res, node, cam, anchor, scale, wp)
+        return
     }
+  }
+
+  /**
+   * A solid: project every vertex, drop the triangles facing away, sort what
+   * is left back to front, and fill.
+   *
+   * That sort is the whole correctness story, and it is stronger than it looks.
+   * Measured against a per-pixel z-buffer over four camera angles (plans/009),
+   * this ordering is *exactly* right — zero differing pixels — on a closed
+   * surface with `cull` on, including a torus, which occludes itself. Culling
+   * is what earns that: it removes the inward-facing half, and what remains of
+   * a closed surface can always be depth-ordered. Without it the same torus
+   * lands at 0.01% wrong, and two solids that physically intersect are wrong
+   * by ~11% no matter what, which is a limit of per-face sorting rather than
+   * of this implementation.
+   *
+   * Depth dims the *shade* rather than the alpha, because a solid fading toward
+   * transparent reads as glass — you would see the inside of the far wall.
+   */
+  private drawMesh(
+    g: Graphics,
+    res: ResolvedNode,
+    node: MeshNode,
+    cam: Camera3,
+    anchor: Vec3,
+    scale: number,
+    writeProgress: number | null,
+  ): void {
+    const key = JSON.stringify(node.geometry)
+    let data = this.meshCache.get(key)
+    if (!data) {
+      data = buildMesh(node.geometry)
+      this.meshCache.set(key, data)
+    }
+
+    // Scale is a property of the node, so it belongs to the geometry rather
+    // than to the view — a spatial node's view must stay untransformed or the
+    // camera applies twice.
+    const world = data.verts.map((v) => ({
+      x: anchor.x + v.x * scale,
+      y: anchor.y + v.y * scale,
+      z: anchor.z + v.z * scale,
+    }))
+    const proj = world.map((v) => project3(v, cam))
+
+    const fill = res.props.fill as string
+    const faces: { pts: Projected[]; depth: number; color: number }[] = []
+    for (const [ia, ib, ic] of data.faces) {
+      const pa = proj[ia]
+      const pb = proj[ib]
+      const pc = proj[ic]
+      // A vertex at or behind the camera cannot be projected; dropping the
+      // whole triangle is the honest answer, the same one project3 gives.
+      if (!pa || !pb || !pc) continue
+
+      if (node.cull) {
+        // Screen-space winding, which stays correct under perspective where a
+        // scene-space normal test does not.
+        const area = (pb.x - pa.x) * (pc.y - pa.y) - (pc.x - pa.x) * (pb.y - pa.y)
+        if (area <= 0) continue
+      }
+
+      let k = 1
+      if (node.shading === 'flat') {
+        const n = faceNormal(world[ia]!, world[ib]!, world[ic]!)
+        const lambert = Math.abs(
+          n.x * MESH_LIGHT.x + n.y * MESH_LIGHT.y + n.z * MESH_LIGHT.z,
+        )
+        k = node.ambient + (1 - node.ambient) * lambert
+      }
+      const dim = (pa.dim + pb.dim + pc.dim) / 3
+      faces.push({
+        pts: [pa, pb, pc],
+        depth: (pa.depth + pb.depth + pc.depth) / 3,
+        color: shadeColor(fill, k * dim),
+      })
+    }
+
+    faces.sort((a, b) => a.depth - b.depth)
+
+    // A write reveals the sorted faces in depth order, so a solid builds up
+    // from its far side rather than flickering in document order.
+    const alphas =
+      writeProgress === null ? null : staggerAlphas(faces.length, writeProgress)
+    const strokeWidth = (res.props.strokeWidth as number) * scale
+
+    faces.forEach((f, i) => {
+      const a = alphas?.[i] ?? 1
+      if (a <= 0) return
+      g.poly([f.pts[0]!.x, f.pts[0]!.y, f.pts[1]!.x, f.pts[1]!.y, f.pts[2]!.x, f.pts[2]!.y])
+      g.fill({ color: f.color, alpha: a })
+      if (node.stroke && strokeWidth > 0) {
+        g.stroke({ color: node.stroke, width: strokeWidth, alpha: a })
+      }
+    })
   }
 
   /**
