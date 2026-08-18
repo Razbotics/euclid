@@ -339,6 +339,59 @@ design and a ratio survives an architecture change. And this measured the
 existing screenshot path, not a WebCodecs one — the estimate above is arithmetic
 on two separate benchmarks, not an end-to-end result.
 
+#### Spiked 2026-08-19: it is ~1.6x, not an order of magnitude
+
+The recommendation above says WebCodecs is "likely an order of magnitude
+faster". Built and measured, it is not. `bench-webcodecs-pipe.ts` runs a real
+document through VideoEncoder → IVF → ffmpeg and reports where every
+millisecond goes:
+
+| | render | **VideoFrame** | encode | total | vs screenshot |
+|---|---|---|---|---|---|
+| host | 2.4 ms | **25.1 ms** | 0.0 ms | 32–34 fps | 18.6 → ~1.8x |
+| container | 3.7 ms | **71.9 ms** | 0.0 ms | 13.0 fps | 8.8 → ~1.5x |
+
+**Compression is free.** `encoder.encode()` measures 0.0 ms because it only
+queues; VP9 keeps up with the renderer and back-pressure never engages. VP9 at
+quality settings, VP9 at `latencyMode: 'realtime'` and VP8 all produce
+*identical* timings — which is the proof that the codec was never the cost.
+
+The cost is `new VideoFrame(canvas)`: reading 1920x1080 back out of the WebGL
+canvas and converting RGBA to YUV. Both pipelines are bottlenecked on the same
+thing — **getting pixels out of the canvas** — and WebCodecs halves it rather
+than removing it:
+
+- screenshot: readback + PNG compress + CDP transfer = 51 ms (host), 110 ms (container)
+- WebCodecs: readback + colour conversion = 25 ms (host), 72 ms (container)
+
+What the rework *does* deliver, and it is not nothing:
+
+- **1.5–1.8x** on the wall clock, in both environments.
+- **44x less data across the process boundary**: 1.7 KB a frame against 75 KB
+  of PNG. That matters more in a container than on a laptop, since every byte
+  crosses CDP.
+- **Visually lossless** despite the lossy intermediate: PSNR 52.6 dB average
+  (min 50.3), SSIM 0.9984 against a lossless `-qp 0` reference of the same
+  frames. The extra generation costs nothing anyone can see at 12 Mbps on this
+  kind of content.
+- Transcode is negligible: 158–391 fps, well under a second for a 90-frame clip.
+
+Two things to carry into the implementation:
+
+- **IVF, not WebM.** ffmpeg demuxes IVF natively (`-f ivf`) and it is a 32-byte
+  file header plus 12 bytes a frame, so it replaces a Matroska muxer dependency
+  with `ivf.ts`.
+- **WebCodecs is a secure-context API.** `VideoEncoder` is simply `undefined`
+  over plain http to anything but localhost — which reads as "this browser has
+  no WebCodecs" rather than "this URL is not trusted", and
+  `--unsafely-treat-insecure-origin-as-secure` does not flip `isSecureContext`.
+  The production render page must be https.
+
+So the honest summary: worth doing for the throughput and the data movement,
+not the transformation §4 promised. **The next real speedup is not in the
+codec — it is in not reading the frame back at all**, which means a capture
+path that keeps pixels on the GPU, and there is no GPU here.
+
 #### The original question: WebGL under SwiftShader
 
 The container benchmark encoded a 2D canvas. It did **not** measure Pixi's

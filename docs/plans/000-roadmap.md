@@ -264,8 +264,19 @@ work. The direction is unchanged; only the order is.
 This phase rides on the capture rework agent sight began: WebCodecs removes the
 `page.screenshot()` round-trip, and asset proxies/thumbnails are the same
 capability as a document contact sheet.
-- [ ] Replace per-frame screenshot capture with WebCodecs (wins on the current
-      path too). **Measured 2026-08-19 and now unblocked**: `bench-capture.ts`
+- [~] Replace per-frame screenshot capture with WebCodecs (wins on the current
+      path too). **Spiked and measured 2026-08-19 — it works, and it is
+      ~1.6x rather than the order of magnitude this plan assumed.** VP9 →
+      IVF → ffmpeg produces a correct, visually lossless MP4 (PSNR 52.6 dB,
+      SSIM 0.9984) at 32-34 fps on the host and 13 fps in the container,
+      against 18.6 and 8.8 for screenshots, and moves 1.7 KB a frame instead
+      of 75 KB. Compression turns out to be **free** — `encode()` measures
+      0.0 ms and VP9/VP8 at every quality setting time identically — because
+      the real cost is `new VideoFrame(canvas)`, the readback out of the WebGL
+      canvas. Both paths are bottlenecked on pixel egress; WebCodecs halves it
+      rather than removing it. Not yet wired into `render.ts`: the spike is
+      committed, the premise changed, and landing it is a decision rather than
+      a formality. Earlier measurement: `bench-capture.ts`
       splits the loop and finds the screenshot is **97-99%** of every frame in
       both the host and the Linux container, while rasterising a whole 1080p
       frame — 4,096-triangle solid included — costs 0.7-3.2ms. So plans/003's
