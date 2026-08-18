@@ -6,12 +6,21 @@ import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { chromium } from 'playwright'
 import { audibleAudio, docDuration, type AudioPlacement, type EuclidDoc } from '@euclid/dsl'
+import { ivfFrame, ivfHeader } from './ivf'
 import { buildFfmpegArgs } from './mux'
 
 /**
  * Headless export worker. Replays the scene document frame-by-frame in
- * Chromium (the same EuclidStage code the browser preview runs) and pipes
- * PNG frames into ffmpeg.
+ * Chromium (the same EuclidStage code the browser preview runs) and pipes the
+ * result into ffmpeg.
+ *
+ * Two capture paths. **WebCodecs** is preferred: the page encodes VP9 and
+ * hands back ~1.7KB a frame, wrapped in IVF for ffmpeg. **Screenshots** are the
+ * fallback, at ~75KB of PNG a frame. Measured at 1.6x apart (plans/003), the
+ * difference being that both spend most of a frame reading pixels out of the
+ * canvas and only one of them then compresses and ships a PNG. The fallback is
+ * not vestigial: `VideoEncoder` is a secure-context API, so a render page
+ * served over plain http has none.
  *
  * Deployment target: Cloudflare Containers, fed by a Queue the API's
  * /render endpoint pushes to. Runs identically on a laptop:
@@ -97,6 +106,9 @@ async function downloadAudio(doc: EuclidDoc): Promise<(AudioPlacement & { path: 
   return clips
 }
 
+/** Frames encoded per round-trip into the page. */
+const FRAME_BATCH = 30
+
 async function main() {
   const docRes = await fetch(`${API_URL}/api/projects/${args.project}/doc`, {
     headers: INTERNAL_HEADERS,
@@ -137,19 +149,68 @@ async function main() {
     await page.goto(RENDER_PAGE_URL, { waitUntil: 'networkidle' })
     await page.evaluate((d) => window.__euclid.load(d), doc as unknown)
 
-    const ffmpeg = spawn('ffmpeg', buildFfmpegArgs(fps, clips, outPath), {
+    // Ask the page rather than the environment: WebCodecs needs a secure
+    // context, so whether it exists depends on how the render page is served,
+    // not on which Chromium this is.
+    let capture: 'ivf' | 'png' = 'png'
+    // CAPTURE=png forces the fallback. Worth having: it is the only way to
+    // exercise the path that production takes whenever the render page is not
+    // a secure context, and the only way to compare the two on one document.
+    const forced = process.env.CAPTURE
+    try {
+      if (forced === 'png') {
+        console.log('capture: screenshots (CAPTURE=png)')
+      } else if (await page.evaluate(() => typeof VideoEncoder !== 'undefined')) {
+        const { codec } = await page.evaluate(() => window.__euclid.startEncode())
+        capture = 'ivf'
+        console.log(`capture: WebCodecs (${codec})`)
+      } else {
+        console.log('capture: screenshots — WebCodecs needs a secure context (https or localhost)')
+      }
+    } catch (e) {
+      console.log(`capture: screenshots — WebCodecs unavailable (${(e as Error).message})`)
+    }
+
+    const ffmpeg = spawn('ffmpeg', buildFfmpegArgs(fps, clips, outPath, capture), {
       stdio: ['pipe', 'inherit', 'inherit'],
     })
 
-    const canvas = page.locator('#euclid-canvas')
-    for (let f = 0; f < totalFrames; f++) {
-      const t = f / fps
-      await page.evaluate((tt) => window.__euclid.renderFrame(tt), t)
-      const png = await canvas.screenshot({ type: 'png' })
-      await new Promise<void>((resolve, reject) =>
-        ffmpeg.stdin.write(png, (err) => (err ? reject(err) : resolve())),
+    const write = (b: Buffer) =>
+      new Promise<void>((resolve, reject) =>
+        ffmpeg.stdin.write(b, (err) => (err ? reject(err) : resolve())),
       )
-      if (f % (fps * 5) === 0) console.log(`  frame ${f}/${totalFrames}`)
+
+    if (capture === 'ivf') {
+      await write(ivfHeader(doc.canvas.width, doc.canvas.height, fps, totalFrames))
+      let pts = 0
+      const drain = async () => {
+        for (const chunk of await page.evaluate(() => window.__euclid.takeChunks())) {
+          await write(ivfFrame(Buffer.from(chunk.data, 'base64'), pts++))
+        }
+      }
+      // A batch is one round-trip for many frames, and the point at which
+      // chunks come back — holding them all in the page would grow unbounded
+      // over a long render.
+      for (let f = 0; f < totalFrames; f += FRAME_BATCH) {
+        const n = Math.min(FRAME_BATCH, totalFrames - f)
+        await page.evaluate(
+          ([from, count, keyEvery]) => window.__euclid.encodeRange(from, count, keyEvery),
+          [f, n, fps] as [number, number, number],
+        )
+        await drain()
+        console.log(`  frame ${Math.min(f + n, totalFrames)}/${totalFrames}`)
+      }
+      await page.evaluate(() => window.__euclid.finishEncode())
+      await drain()
+    } else {
+      const canvas = page.locator('#euclid-canvas')
+      for (let f = 0; f < totalFrames; f++) {
+        const t = f / fps
+        await page.evaluate((tt) => window.__euclid.renderFrame(tt), t)
+        const png = await canvas.screenshot({ type: 'png' })
+        await write(png)
+        if (f % (fps * 5) === 0) console.log(`  frame ${f}/${totalFrames}`)
+      }
     }
 
     ffmpeg.stdin.end()

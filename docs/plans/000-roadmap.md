@@ -264,8 +264,18 @@ work. The direction is unchanged; only the order is.
 This phase rides on the capture rework agent sight began: WebCodecs removes the
 `page.screenshot()` round-trip, and asset proxies/thumbnails are the same
 capability as a document contact sheet.
-- [~] Replace per-frame screenshot capture with WebCodecs (wins on the current
-      path too). **Spiked and measured 2026-08-19 — it works, and it is
+- [x] Replace per-frame screenshot capture with WebCodecs — **landed
+      2026-08-19**. A real 32.6s narrated project renders in **45s instead of
+      106s (2.35x)**, and the two outputs are equivalent: same 1957 video and
+      1528 audio frames, same 32.616667s, PSNR 53.5 dB / SSIM 0.9995 between
+      them. Screenshots remain as a fallback, chosen by asking the *page*
+      whether `VideoEncoder` exists — it is a secure-context API, so that
+      depends on how the render page is served rather than on which Chromium
+      this is. `CAPTURE=png` forces it, which is the only way to exercise the
+      fallback deliberately. Measured beforehand as ~1.6x on a synthetic
+      document; a real one does better, because vector and LaTeX frames make
+      larger PNGs and batching removes a round-trip per frame.
+      **Spiked and measured 2026-08-19 — it is
       ~1.6x rather than the order of magnitude this plan assumed.** VP9 →
       IVF → ffmpeg produces a correct, visually lossless MP4 (PSNR 52.6 dB,
       SSIM 0.9984) at 32-34 fps on the host and 13 fps in the container,

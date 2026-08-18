@@ -155,6 +155,12 @@ Three things bite, in order:
 > Containers run. Absolute timings do not transfer; ratios do. Building
 > `--platform linux/amd64` runs under emulation and measures qemu.
 
+> **`CAPTURE=png`** forces the export back onto screenshots. The default is
+> WebCodecs, which is ~2.3x faster and is chosen by asking the page whether
+> `VideoEncoder` exists — a secure-context API, so a render page served over
+> plain http silently has none and the fallback engages by itself. Set it when
+> you want to compare the two, or to rule the encoder out of a rendering bug.
+
 ### Renders do not start themselves in dev
 
 `render_video` debits credits and creates a **`queued`** job, then returns

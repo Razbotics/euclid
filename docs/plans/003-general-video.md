@@ -339,6 +339,24 @@ design and a ratio survives an architecture change. And this measured the
 existing screenshot path, not a WebCodecs one — the estimate above is arithmetic
 on two separate benchmarks, not an end-to-end result.
 
+#### Landed 2026-08-19
+
+Wired into `render.ts` behind a capability check. On a real 32.6s narrated
+project — 1957 frames, mesh solids, LaTeX, four narration clips — it renders in
+**45s against 106s, 2.35x**, better than the synthetic measurement below
+because real frames make larger PNGs and the batched round-trip removes a
+per-frame stall the bench still paid.
+
+The two outputs are equivalent, which is the part that had to be true before
+switching a path that produces the artefact users download: identical frame
+counts (1957 video, 1528 audio), identical duration to the microsecond, file
+sizes 0.3% apart, and PSNR 53.5 dB / SSIM 0.9995 between them.
+
+Screenshots stay as a fallback, selected by asking the **page** whether
+`VideoEncoder` exists rather than by inspecting the environment — it is a
+secure-context API, so the answer depends on how the render page is served.
+`CAPTURE=png` forces it, which is the only way to exercise that path on purpose.
+
 #### Spiked 2026-08-19: it is ~1.6x, not an order of magnitude
 
 The recommendation above says WebCodecs is "likely an order of magnitude

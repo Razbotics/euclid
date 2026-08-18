@@ -10,9 +10,12 @@ import type { AudioPlacement } from '@euclid/dsl'
 const s = (n: number) => n.toFixed(3)
 
 /**
- * Video always comes from the PNG pipe on stdin (input 0); each audio clip —
- * narration, music or effect — is an extra input placed on the timeline with
- * `adelay`.
+ * Video always arrives on stdin (input 0); each audio clip — narration, music
+ * or effect — is an extra input placed on the timeline with `adelay`.
+ *
+ * `source` is which pipe: `png` is the original screenshot path, `ivf` the
+ * WebCodecs one, where the browser has already encoded VP9 and the frame rate
+ * comes from the IVF header's own timebase rather than a flag.
  *
  * `apad` + `-shortest` is what makes the audio track span the whole video:
  * without it the file would end at the last sound, truncating a trailing
@@ -22,8 +25,12 @@ export function buildFfmpegArgs(
   fps: number,
   clips: (AudioPlacement & { path: string })[],
   outPath: string,
+  source: 'png' | 'ivf' = 'png',
 ): string[] {
-  const inputs = ['-y', '-f', 'image2pipe', '-framerate', String(fps), '-i', '-']
+  const inputs =
+    source === 'ivf'
+      ? ['-y', '-f', 'ivf', '-i', '-']
+      : ['-y', '-f', 'image2pipe', '-framerate', String(fps), '-i', '-']
   for (const clip of clips) inputs.push('-i', clip.path)
   const video = ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '18']
   // Move the moov atom to the front. Written last by default, which means a
