@@ -43,4 +43,4 @@ Two kinds of content live here:
 | [plans/006-animation-depth.md](plans/006-animation-depth.md) | **Done**: camera, structured primitives, pseudo-3D, flows — plus milestone run 6, which used all four |
 | [plans/007-agent-sight.md](plans/007-agent-sight.md) | Agent sight: `preview_frames`. Shipped; only its deployment is still local |
 | [plans/008-mcp-gateway.md](plans/008-mcp-gateway.md) | **Done**: the agent gateway — a capability catalog behind five fixed MCP tools |
-| [plans/009-generative-assets.md](plans/009-generative-assets.md) | fal as a generative asset provider, and mesh solids — including the probe that measured painter's-algorithm ordering against a z-buffer |
+| [plans/009-generative-assets.md](plans/009-generative-assets.md) | **Done**: fal as a generative asset provider, mesh solids, and GLB import — including the probe that measured painter's-algorithm ordering against a z-buffer, and milestone run 7 |

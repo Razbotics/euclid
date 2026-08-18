@@ -148,7 +148,9 @@ export const genTools = [
       '`imageUrl` must be reachable by the provider — a public URL, or a data URL. An asset id is not enough on its own, because project assets are not publicly readable.',
       WAITING,
       '',
-      '**The engine cannot draw this.** `add_mesh` renders *parametric* solids — a sphere, a torus, a cube — described by a few numbers. A generated GLB is an imported vertex list, typically 50k–200k triangles against a 4,000-triangle ceiling, and reading one needs a binary parser plus decimation. That work is scoped in plans/009 and is deliberately not in this phase. Generate GLBs to export or hand to another tool; use add_mesh for solids that go in the video.',
+      '**Then put it in the video with `import_mesh`**, which reads the GLB this produces and lands it as an ordinary mesh node — camera, animation and write_on all work on it. It is simplified on the way in, because imported geometry is stored in the document and the document has a hard size budget; the response says what it started from and what it became.',
+      '',
+      '`trellis` is the better source to import: it returns far fewer triangles than `hunyuan3d`, and both are reduced to the same ceiling, so hunyuan3d discards much more of what you paid for. Use `add_mesh` instead when a plain solid — sphere, cylinder, cone — would do, since it costs nothing and stays sharp at any size.',
     ].join('\n'),
     costsCredits: true,
     args: z.object({

@@ -242,13 +242,13 @@ now fixed, and the first is the one worth remembering:
   capability named in prose goes through a `ref()` that throws at module load.
   All three were verified to fail before being trusted
 
-Nothing here puts a generated file **in a frame**. The document has no image or
-video node, so a generation is a file in the project's asset tree and not
-something on the stage — and `generate_3d` returns a GLB that nothing draws
-(importing one means a binary parser plus decimation from ~100k triangles to
-the 4,000 the CPU renderer affords). Both belong to Phase 5, which wants the
-WebCodecs rework first; doing the image half alone would put a display seam in
-the stage that the video work would immediately have to rewrite.
+Most generated files still stop at the asset tree, and **3D is the exception**.
+The document has no image or video node, so generated stills, clips and music
+are files a project holds rather than things on the stage; a generated *model*
+reaches the stage, because `import_mesh` reads its GLB into a mesh node. Images
+and video belong to Phase 5, which wants the WebCodecs rework first — doing the
+image half alone would put a display seam in the stage that the video work
+would immediately have to rewrite.
 
 The editor can now **look** at one, which is a different claim: the explorer
 opens any asset inline (2026-08-17, plans/003) — image, video, audio, text, and

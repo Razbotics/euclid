@@ -237,12 +237,12 @@ export const FAL_MODELS: FalModel[] = [
 
   // ---- 3D ----
   //
-  // These produce a GLB *file*, which the project stores like any other asset.
-  // Nothing draws it: the engine's `mesh` node takes parametric geometry, and
-  // importing a GLB means a binary parser plus decimation from ~100k triangles
-  // to the 4k the CPU renderer can afford. That is deliberately not in this
-  // phase — see plans/009 — so these are useful for export and for handing to
-  // another tool, not yet for putting a generated object in a frame.
+  // These produce a GLB *file*, which the project stores like any other asset —
+  // and `import_mesh` turns one into a mesh node the engine draws, decimating
+  // it to fit the document budget on the way in (plans/009 Phase C). Trellis is
+  // the better source for that: it returns ~10-19k triangles where hunyuan3d
+  // returns ~330k, and both decimate to the same ceiling, so hunyuan3d throws
+  // far more detail away.
   {
     id: 'fal-ai/trellis',
     name: 'trellis',
@@ -250,7 +250,7 @@ export const FAL_MODELS: FalModel[] = [
     credits: 15,
     typicalSec: 60,
     summary:
-      'An image turned into a 3D model, delivered as a GLB file. Stored as a project asset; nothing renders it yet — see add_mesh for solids the engine can actually draw.',
+      'An image turned into a 3D model, delivered as a GLB file. Stored as a project asset; import_mesh puts it in a scene. The better of the two for importing — fewer triangles to throw away.',
     needsImage: true,
     input: (r) => ({ image_url: r.imageUrl, ...r.extra }),
     output: (b) => fileOut(b.model_mesh ?? b.model_glb, 'model/gltf-binary'),

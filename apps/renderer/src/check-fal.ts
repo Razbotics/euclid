@@ -8,7 +8,8 @@
  * failure path without paying for it.
  *
  * Needs `dev:api` with FAL_KEY in the environment. No renderer required —
- * generated files are project assets, and nothing draws them yet.
+ * generated files are project assets; only 3D models reach the stage, via
+ * import_mesh (see check-glb.ts).
  */
 import './load-env'
 import assert from 'node:assert'
@@ -137,8 +138,15 @@ const described = await fetch(`${API}/api/agent/tools/describe`, {
   body: JSON.stringify({ names: ['generate_3d'] }),
 })
 const doc3d = await described.text()
-assert.match(doc3d, /add_mesh/, 'generate_3d should point at what CAN be drawn')
-assert.match(doc3d, /cannot draw/i, 'and say plainly that the engine cannot draw a GLB')
+// This assertion used to require the opposite — that the doc say the engine
+// *cannot* draw a GLB. import_mesh made that false, and a test enforcing a
+// stale sentence is worse than no test: it keeps the lie in place.
+assert.match(doc3d, /import_mesh/, 'generate_3d must point at the tool that draws its output')
+assert.doesNotMatch(
+  doc3d,
+  /engine cannot draw this/i,
+  'and must not still claim the engine cannot draw a GLB',
+)
 
 await ok('delete_project', { projectId, confirm: true })
 
@@ -147,5 +155,5 @@ console.log(
     `for ${gen.data.cost} credits (${before} → ${afterGen}), filed in the project tree. ` +
     `A rejected 3D request failed and refunded in full (${beforeFail} → ${afterFail}), ` +
     `double-polling changed neither the balance nor the file count, and the unknown-model, ` +
-    `missing-image and "cannot draw a GLB" messages all teach. Image at ${OUT}/check-fal-image.jpg`,
+    `missing-image and import_mesh pointers all teach. Image at ${OUT}/check-fal-image.jpg`,
 )

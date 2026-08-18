@@ -1,4 +1,4 @@
-# 009 — Generative assets and mesh solids (status: in progress)
+# 009 — Generative assets and mesh solids (status: done)
 
 Two pieces of work that arrived together on 2026-08-17 and turn out to be
 related only at the end: **fal as a generative asset provider**, and **real
@@ -101,7 +101,7 @@ since the probe already settled the ordering maths:
 - Sampling a `write_on` past its own duration reads as a plateau, not a build.
   Both draft failures were bad tests; neither was a code defect.
 
-## Phase B: fal as a generative asset provider (status: in progress)
+## Phase B: fal as a generative asset provider (status: done)
 
 ### Shape
 
@@ -197,8 +197,11 @@ built on a request fal rejects, so it costs nothing.
 - A rejected 3D request **failed and refunded in full**: 556 → 556.
 - **Polling is idempotent**: two extra `get_generation_status` calls moved
   neither the balance nor the file count.
-- Unknown model, missing image, and the "the engine cannot draw a GLB" doc are
-  all refused or stated plainly.
+- Unknown model, missing image, and the doc pointing at `import_mesh` are all
+  refused or stated plainly. That last assertion originally required the
+  opposite — that the doc say the engine *cannot* draw a GLB. Phase C made it
+  false, and a test enforcing a stale sentence is worse than no test, so it now
+  asserts the pointer exists **and** that the old claim is gone.
 
 **The slow path was verified separately**, because an image never exercises it:
 an `ltx-video` generation returned `pending` after the 21s inline wait, was
@@ -401,7 +404,10 @@ Spends ~17 credits (a seed image and one trellis generation).
   what the asset actually is; the document-budget refusal names
   `targetTriangles`.
 
-## Still open
+## Follow-ups — none of them phase work
+
+The three phases above are complete; these are notes for whoever picks the
+thread up, not unfinished business.
 
 - GIF: no roster entry. The category is served by video models whose output is
   mp4; a real GIF path means an ffmpeg transcode, which the render container

@@ -14,7 +14,8 @@
  * inference, and we refund the user's credits, so a wrong reader is the one
  * bug here that loses money quietly. Hence this script.
  *
- * Needs `dev:api` with FAL_KEY. No renderer — nothing draws these yet.
+ * Needs `dev:api` with FAL_KEY. No renderer needed: this checks that each
+ * model produces a correct *file*; check-glb.ts covers drawing one.
  */
 import './load-env'
 import { writeFileSync } from 'node:fs'
