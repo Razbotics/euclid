@@ -1,22 +1,26 @@
-import type { NarrationPlacement } from '@euclid/dsl'
+import type { AudioPlacement } from '@euclid/dsl'
 
 /**
- * ffmpeg-specific half of the mux. Placement itself (`planNarration`) lives in
+ * ffmpeg-specific half of the mux. Placement itself (`planAudio`) lives in
  * @euclid/dsl so the editor's audio preview and this export derive the same
- * offsets and trims from the document.
+ * offsets, trims, gains and fades from the document.
  */
 
+/** Three decimals is a millisecond — finer than any of this is audible. */
+const s = (n: number) => n.toFixed(3)
+
 /**
- * Video always comes from the PNG pipe on stdin (input 0); each narration clip
- * is an extra input placed on the timeline with `adelay`.
+ * Video always comes from the PNG pipe on stdin (input 0); each audio clip —
+ * narration, music or effect — is an extra input placed on the timeline with
+ * `adelay`.
  *
  * `apad` + `-shortest` is what makes the audio track span the whole video:
- * without it the file would end at the last word, truncating a trailing silent
- * scene.
+ * without it the file would end at the last sound, truncating a trailing
+ * silent scene.
  */
 export function buildFfmpegArgs(
   fps: number,
-  clips: (NarrationPlacement & { path: string })[],
+  clips: (AudioPlacement & { path: string })[],
   outPath: string,
 ): string[] {
   const inputs = ['-y', '-f', 'image2pipe', '-framerate', String(fps), '-i', '-']
@@ -30,19 +34,36 @@ export function buildFfmpegArgs(
   if (clips.length === 0) return [...inputs, ...video, ...web, outPath]
 
   // Normalize every clip to one format first: amix misbehaves when inputs
-  // disagree on sample rate or channel layout.
-  const chains = clips.map(
-    (clip, i) =>
-      `[${i + 1}:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,` +
-      `atrim=0:${clip.playSec.toFixed(3)},asetpts=PTS-STARTPTS,` +
-      `adelay=${Math.round(clip.startSec * 1000)}:all=1[a${i}]`,
-  )
+  // disagree on sample rate or channel layout — and with music in the project
+  // they now routinely do, since a 44.1kHz mono effect and a 48kHz stereo bed
+  // can land on the same timeline.
+  const chains = clips.map((clip, i) => {
+    const filters = [
+      `aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo`,
+      // Trim in source time, then restamp: `adelay` places the result, so the
+      // clip has to start at PTS 0 first or the delay stacks on the offset.
+      `atrim=${s(clip.sourceInSec)}:${s(clip.sourceInSec + clip.playSec)}`,
+      `asetpts=PTS-STARTPTS`,
+    ]
+    if (clip.gain !== 1) filters.push(`volume=${s(clip.gain)}`)
+    // Fades are applied *after* volume, so `afade` ramps to the clip's own
+    // level rather than to full scale — a 0.4-gain bed must not swell to 1.0
+    // as it fades in.
+    if (clip.fadeInSec > 0) filters.push(`afade=t=in:st=0:d=${s(clip.fadeInSec)}`)
+    if (clip.fadeOutSec > 0) {
+      filters.push(`afade=t=out:st=${s(Math.max(0, clip.playSec - clip.fadeOutSec))}:d=${s(clip.fadeOutSec)}`)
+    }
+    filters.push(`adelay=${Math.round(clip.startSec * 1000)}:all=1`)
+    return `[${i + 1}:a]${filters.join(',')}[a${i}]`
+  })
+
   const mixInputs = clips.map((_, i) => `[a${i}]`).join('')
   const filter =
     `${chains.join(';')};` +
     // normalize=0: amix divides by input count by default, so narration would
-    // get quieter the more narrated scenes a project has.
-    `${mixInputs}amix=inputs=${clips.length}:normalize=0[mixed];[mixed]apad[aout]`
+    // get quieter the more narrated scenes a project has — and quieter again
+    // the moment a music bed joined it.
+    `${mixInputs}amix=inputs=${clips.length}:normalize=0:dropout_transition=0[mixed];[mixed]apad[aout]`
 
   return [
     ...inputs,

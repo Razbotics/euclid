@@ -1,4 +1,5 @@
 import type { EuclidDoc } from './document'
+import { clipPlaySec, NARRATION_TRACK_ID } from './audio'
 
 /**
  * Where each scene's narration sits on the global timeline, and how much of it
@@ -112,3 +113,107 @@ export function planNarration(doc: EuclidDoc): NarrationPlacement[] {
   }
   return placements
 }
+
+/**
+ * Every sound in the document, placed on the global timeline: generated
+ * narration *and* the audio tracks, in one list.
+ *
+ * This is `planNarration` grown up, and it exists for the same reason that one
+ * did — three consumers must agree exactly, or the editor lies about the
+ * export. The timeline draws from it, the preview player schedules from it,
+ * and the render's ffmpeg mux builds its filter graph from it.
+ *
+ * Muted placements are **included, flagged** rather than dropped. The timeline
+ * has to draw a muted lane (you cannot unmute what you cannot see), while the
+ * player and the mux skip them — so one function serves both, and there is no
+ * second place where "what plays" is decided.
+ */
+export interface AudioPlacement {
+  /** Stable across re-plans: the clip's id, or `narration:<sceneId>`. */
+  key: string
+  /** `NARRATION_TRACK_ID` for generated speech, otherwise the track's id. */
+  trackId: string
+  assetId: string
+  /** Where it starts on the global timeline. */
+  startSec: number
+  /** How long it plays for, after every trim. */
+  playSec: number
+  /** The asset's full length. */
+  durationSec: number
+  /** Offset into the asset that `startSec` corresponds to. */
+  sourceInSec: number
+  /** Track gain × clip gain, 0…1. */
+  gain: number
+  fadeInSec: number
+  fadeOutSec: number
+  muted: boolean
+  label: string
+}
+
+/** Level for a clip at `local` seconds into it — the fades, as one number. */
+export function gainAt(p: AudioPlacement, local: number): number {
+  if (local < 0 || local > p.playSec) return 0
+  const rise = p.fadeInSec > 0 ? Math.min(1, local / p.fadeInSec) : 1
+  const fall =
+    p.fadeOutSec > 0 ? Math.min(1, Math.max(0, (p.playSec - local) / p.fadeOutSec)) : 1
+  return p.gain * Math.min(rise, fall)
+}
+
+export function planAudio(doc: EuclidDoc): AudioPlacement[] {
+  const total = doc.scenes.reduce((n, s) => n + s.duration, 0)
+  const placements: AudioPlacement[] = []
+
+  for (const p of planNarration(doc)) {
+    placements.push({
+      key: `narration:${p.sceneId}`,
+      trackId: NARRATION_TRACK_ID,
+      assetId: p.assetId,
+      startSec: p.startSec,
+      playSec: p.playSec,
+      durationSec: p.durationSec,
+      sourceInSec: 0,
+      gain: 1,
+      fadeInSec: 0,
+      fadeOutSec: 0,
+      muted: false,
+      label: 'narration',
+    })
+  }
+
+  for (const track of doc.audio ?? []) {
+    for (const clip of track.clips) {
+      // Cut at the end of the video, exactly as narration is cut at the end of
+      // its scene: a clip hanging past the last frame is silence nobody hears
+      // and an ffmpeg input nobody needs.
+      const playSec = Math.min(clipPlaySec(clip), Math.max(0, total - clip.startSec))
+      if (playSec <= 0) continue
+      const gain = (track.gain ?? 1) * (clip.gain ?? 1)
+      placements.push({
+        key: clip.id,
+        trackId: track.id,
+        assetId: clip.assetId,
+        startSec: clip.startSec,
+        playSec,
+        durationSec: clip.durationSec,
+        sourceInSec: clip.sourceInSec ?? 0,
+        gain,
+        // A fade cannot outlast the clip it is on, and two fades cannot
+        // overlap into a clip that never reaches its own level.
+        fadeInSec: Math.min(clip.fadeInSec ?? 0, playSec),
+        fadeOutSec: Math.min(clip.fadeOutSec ?? 0, playSec),
+        muted: !!track.muted,
+        label: clip.name ?? track.name,
+      })
+    }
+  }
+
+  // Sort by start time only. Array#sort is stable, so clips that begin at the
+  // same instant keep the order they were built in — narration first, then
+  // tracks in document order — which is both deterministic and the order a
+  // human reading the render log expects.
+  return placements.sort((a, b) => a.startSec - b.startSec)
+}
+
+/** What the export will actually contain — muted lanes removed. */
+export const audibleAudio = (doc: EuclidDoc): AudioPlacement[] =>
+  planAudio(doc).filter((p) => !p.muted && p.gain > 0)

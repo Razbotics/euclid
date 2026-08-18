@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { buildAssetTree, type AssetFolder, type AssetFile } from '@euclid/dsl'
 import { assetUrl, formatBytes, type AssetsState, type ProjectFile } from './useAssets'
-import { fileGlyph } from './FileViewer'
+import { fileGlyph, viewerKind } from './FileViewer'
+import { AUDIO_DND_TYPE } from './Timeline'
 
 /**
  * The project's files, as a file explorer scoped to this project — the left
@@ -92,11 +93,25 @@ function FileRow({ file, state, activeId, onOpen }: { file: AssetFile } & TreePr
   const row = file as ProjectFile & { name: string }
   const busy = state.busy === file.id
 
+  // An audio file is draggable straight onto a timeline lane — the shortest
+  // path from "the project has music" to "the video has music". The payload
+  // carries the duration so a lane can draw the clip before the file loads;
+  // when the producer never recorded one the timeline probes for it.
+  const audio = viewerKind(file.mime, file.path) === 'audio'
+
   return (
     <div
-      className={`asset-file${activeId === file.id ? ' active' : ''}`}
+      className={`asset-file${activeId === file.id ? ' active' : ''}${audio ? ' draggable' : ''}`}
       onClick={() => onOpen(row)}
-      title={file.path}
+      title={audio ? `${file.path} — drag onto a timeline lane` : file.path}
+      draggable={audio}
+      onDragStart={(e) => {
+        e.dataTransfer.setData(
+          AUDIO_DND_TYPE,
+          JSON.stringify({ assetId: file.id, name: file.name, durationSec: file.durationSec ?? null }),
+        )
+        e.dataTransfer.effectAllowed = 'copy'
+      }}
     >
       <span className="asset-glyph">{fileGlyph(row)}</span>
       <span className="asset-name">{file.name}</span>

@@ -10,7 +10,9 @@ export class OpError extends Error {
       | 'parent_not_group'
       | 'duplicate_id'
       | 'invalid_patch'
-      | 'invalid_result',
+      | 'invalid_result'
+      | 'track_not_found'
+      | 'clip_not_found',
     message: string,
   ) {
     super(message)
@@ -42,6 +44,24 @@ function requireScene(doc: EuclidDoc, sceneId: string) {
   const scene = doc.scenes.find((s) => s.id === sceneId)
   if (!scene) throw new OpError('scene_not_found', `scene ${sceneId} not found`)
   return scene
+}
+
+/**
+ * Audio lives on the document, so an op naming a lane that is gone must say so
+ * rather than silently no-op — the editor sends these from a drag that started
+ * before someone else removed the track.
+ */
+function requireAudioTrack(doc: EuclidDoc, trackId: string) {
+  const track = doc.audio?.find((t) => t.id === trackId)
+  if (!track) throw new OpError('track_not_found', `audio track ${trackId} not found`)
+  return track
+}
+
+function requireAudioClip(doc: EuclidDoc, trackId: string, clipId: string) {
+  const track = requireAudioTrack(doc, trackId)
+  const clip = track.clips.find((c) => c.id === clipId)
+  if (!clip) throw new OpError('clip_not_found', `clip ${clipId} not found on track ${trackId}`)
+  return { track, clip }
 }
 
 const IMMUTABLE_NODE_KEYS = new Set(['id', 'type', 'children'])
@@ -187,6 +207,60 @@ function applyOp(doc: EuclidDoc, op: Op): void {
     }
     case 'narration.clear': {
       delete requireScene(doc, op.sceneId).narration
+      return
+    }
+
+    case 'audio.addTrack': {
+      const tracks = (doc.audio ??= [])
+      if (tracks.some((t) => t.id === op.track.id)) {
+        throw new OpError('duplicate_id', `audio track ${op.track.id} already exists`)
+      }
+      tracks.splice(op.index ?? tracks.length, 0, op.track)
+      return
+    }
+    case 'audio.removeTrack': {
+      const i = doc.audio?.findIndex((t) => t.id === op.trackId) ?? -1
+      if (i === -1) throw new OpError('track_not_found', `audio track ${op.trackId} not found`)
+      doc.audio!.splice(i, 1)
+      // An empty list and no list mean the same thing; keep one of them so two
+      // documents that sound identical compare identical.
+      if (doc.audio!.length === 0) delete doc.audio
+      return
+    }
+    case 'audio.updateTrack': {
+      Object.assign(requireAudioTrack(doc, op.trackId), op.patch)
+      return
+    }
+
+    case 'audio.addClip': {
+      const track = requireAudioTrack(doc, op.trackId)
+      if (track.clips.some((c) => c.id === op.clip.id)) {
+        throw new OpError('duplicate_id', `clip ${op.clip.id} already exists`)
+      }
+      track.clips.push(op.clip)
+      return
+    }
+    case 'audio.removeClip': {
+      const { track } = requireAudioClip(doc, op.trackId, op.clipId)
+      track.clips = track.clips.filter((c) => c.id !== op.clipId)
+      return
+    }
+    case 'audio.updateClip': {
+      Object.assign(requireAudioClip(doc, op.trackId, op.clipId).clip, op.patch)
+      return
+    }
+    case 'audio.moveClip': {
+      const { track, clip } = requireAudioClip(doc, op.fromTrackId, op.clipId)
+      const to = requireAudioTrack(doc, op.toTrackId)
+      if (to !== track && to.clips.some((c) => c.id === op.clipId)) {
+        throw new OpError('duplicate_id', `clip ${op.clipId} already exists on ${op.toTrackId}`)
+      }
+      track.clips = track.clips.filter((c) => c.id !== op.clipId)
+      if (op.startSec !== undefined) clip.startSec = op.startSec
+      // Re-read: `track.clips = ...` above replaced the array, and when the
+      // source and target lanes are the same track that new array is the one
+      // the clip has to land in.
+      requireAudioTrack(doc, op.toTrackId).clips.push(clip)
       return
     }
   }

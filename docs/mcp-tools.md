@@ -82,6 +82,15 @@ shape as `remove_asset`'s `force`.
   (`orbit_camera` is the shorthand). Straight on, a cube is a square. Angles
   are radians everywhere except `orbit_camera`, whose argument is named
   `degrees` because an orbit is naturally "a quarter turn".
+- **Audio is a lane, not a node.** `add_audio_track` / `add_audio_clip` /
+  `update_audio` place music and effects in *global* time, across cuts, because
+  that is what a bed is; narration stays scene-scoped and is still managed by
+  `set_narration` / `generate_narration`. A clip's length comes from the asset
+  registry — a file stored without a duration cannot be measured server-side
+  without decoding it, so the error asks for `durationSec` rather than guessing.
+  `get_project` lists every lane and clip with the times they *actually* play,
+  and marks a muted lane `MUTED (silent in the export)`: an unseen mute is a
+  render that comes back missing a sound nobody remembers turning off.
 - A graph's **mapping is a node**: `add_axes` owns the rectangle, the ranges
   and the ticks, and `plot_function` takes its `axesId` to borrow them, so a
   curve cannot disagree with the frame it is read against.

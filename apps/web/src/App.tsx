@@ -8,7 +8,8 @@ import { Inspector } from './Inspector'
 import { Assets } from './Assets'
 import { FileViewer, fileGlyph } from './FileViewer'
 import { CameraFrame } from './Camera'
-import { CaptionOverlay, NarrationTrack } from './Narration'
+import { CaptionOverlay } from './Narration'
+import { AudioMixer } from './AudioMixer'
 import { ProjectList } from './ProjectList'
 
 /**
@@ -96,6 +97,8 @@ function Editor({ projectId }: { projectId: string | null }) {
   const [playing, setPlaying] = useState(false)
   const [muted, setMuted] = useState(false)
   const [captions, setCaptions] = useState(true)
+  /** Track being auditioned alone. Editor-only: solo must never reach a render. */
+  const [solo, setSolo] = useState<string | null>(null)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [panels, setPanels] = useState<Panels>(loadPanels)
   /** True mid-drag, so the whole app can stop selecting text under the cursor. */
@@ -347,13 +350,16 @@ function Editor({ projectId }: { projectId: string | null }) {
         )}
       </main>
 
-      <NarrationTrack doc={doc} time={time} playing={playing} muted={muted} />
+      <AudioMixer doc={doc} time={time} playing={playing} muted={muted} solo={solo} />
       <Timeline
         doc={doc}
         time={time}
         playing={playing}
         muted={muted}
         captions={captions}
+        solo={solo}
+        onSolo={setSolo}
+        submit={submit}
         onToggleMute={() => setMuted((m) => !m)}
         onToggleCaptions={() => setCaptions((c) => !c)}
         onSeek={(t) => {

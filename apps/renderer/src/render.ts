@@ -5,13 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { chromium } from 'playwright'
-import {
-  docDuration,
-  isTrimmed,
-  planNarration,
-  type EuclidDoc,
-  type NarrationPlacement,
-} from '@euclid/dsl'
+import { audibleAudio, docDuration, type AudioPlacement, type EuclidDoc } from '@euclid/dsl'
 import { buildFfmpegArgs } from './mux'
 
 /**
@@ -75,20 +69,29 @@ async function uploadOutput(file: string): Promise<void> {
   console.log(`uploaded ${(body.byteLength / 1024).toFixed(0)}KiB → ${(await res.json() as {key:string}).key}`)
 }
 
-/** Download the planned narration clips to temp files ffmpeg can read. */
-async function downloadNarration(
-  doc: EuclidDoc,
-): Promise<(NarrationPlacement & { path: string })[]> {
-  const clips: (NarrationPlacement & { path: string })[] = []
-  for (const placement of planNarration(doc)) {
-    const res = await fetch(`${API_URL}/api/assets/${placement.assetId}`, {
-      headers: INTERNAL_HEADERS,
-    })
-    if (!res.ok) {
-      throw new Error(`narration asset ${placement.assetId} (scene ${placement.sceneId}): ${res.status}`)
+/**
+ * Download everything the document will play — narration and audio tracks
+ * alike — to temp files ffmpeg can read. Muted lanes are never fetched: the
+ * mix is decided by `audibleAudio`, not here.
+ */
+async function downloadAudio(doc: EuclidDoc): Promise<(AudioPlacement & { path: string })[]> {
+  const clips: (AudioPlacement & { path: string })[] = []
+  const byAsset = new Map<string, string>()
+  for (const placement of audibleAudio(doc)) {
+    // One asset used by several clips (a sting reused three times) is fetched
+    // once and handed to ffmpeg as three inputs against the same file.
+    let path = byAsset.get(placement.assetId)
+    if (!path) {
+      const res = await fetch(`${API_URL}/api/assets/${placement.assetId}`, {
+        headers: INTERNAL_HEADERS,
+      })
+      if (!res.ok) {
+        throw new Error(`audio asset ${placement.assetId} (${placement.label}): ${res.status}`)
+      }
+      path = join(tmpdir(), `euclid-audio-${placement.assetId}`)
+      await writeFile(path, Buffer.from(await res.arrayBuffer()))
+      byAsset.set(placement.assetId, path)
     }
-    const path = join(tmpdir(), `euclid-narr-${placement.sceneId}-${placement.assetId}.mp3`)
-    await writeFile(path, Buffer.from(await res.arrayBuffer()))
     clips.push({ ...placement, path })
   }
   return clips
@@ -109,13 +112,17 @@ async function main() {
   const outPath = args.job ? join(tmpdir(), `euclid-${args.job}.mp4`) : args.out!
   await setJobStatus('rendering')
 
-  const clips = await downloadNarration(doc)
+  const clips = await downloadAudio(doc)
   if (clips.length === 0) {
-    console.log('no narration audio in this document — rendering silent')
+    console.log('no audio in this document — rendering silent')
   } else {
     for (const c of clips) {
-      const cut = isTrimmed(c) ? ` (cut from ${c.durationSec.toFixed(2)}s)` : ''
-      console.log(`  narration ${c.sceneId}: ${c.startSec}s → ${(c.startSec + c.playSec).toFixed(2)}s${cut}`)
+      const cut = c.playSec < c.durationSec - 0.001 ? ` (cut from ${c.durationSec.toFixed(2)}s)` : ''
+      const level = c.gain !== 1 ? ` @${c.gain.toFixed(2)}` : ''
+      console.log(
+        `  ${c.trackId}/${c.label}: ${c.startSec.toFixed(2)}s → ` +
+          `${(c.startSec + c.playSec).toFixed(2)}s${cut}${level}`,
+      )
     }
   }
 

@@ -190,7 +190,7 @@ every run** — re-run and re-paste after restarting.
 | `smoke-tts.ts [--live]` | TTS alignment → word timings (free; `--live` makes one real call) |
 | `smoke-texmorph.ts` | glyph matching + morph interpolation, on real MathJax coordinates (free) |
 | `smoke-assets.ts` | asset paths (traversal-safe), virtual folder tree, and which assets the document references (free, no browser) |
-| `smoke-mux.ts` | narration placement + ffmpeg args: offsets, trims, silent path (free) |
+| `smoke-mux.ts` | audio placement + ffmpeg args: narration offsets and trims, music/effect tracks (gain, fades, cut at the end of the video), mute removing a lane from the mix but not from the timeline, clips dragged between lanes, and the silent path staying filter-free (free) |
 | `shot.ts <t...>` | pixel-accurate frames of the demo doc through the export surface |
 | `shot-project.ts <projectId> <t...>` | the same, for a **real project** at global seconds — how every milestone run has actually found its visual bugs (`OUT_DIR=` to choose where; needs `dev:api` + `dev:web`). Superseded once `preview_frames` lands (plans/007) |
 | `check-mcp-tools.ts` | MCP surface driven as a real client does: `animate` arg coercion, tool registration (free; needs `dev:api` + `dev:mcp`) |

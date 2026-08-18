@@ -14,6 +14,7 @@ import {
   type Scene,
   type Track,
 } from './document'
+import { AudioClipSchema, AudioTrackSchema, type AudioClip, type AudioTrack } from './audio'
 import { LIMITS } from './limits'
 
 /**
@@ -68,6 +69,54 @@ export const OpSchema = z.discriminatedUnion('kind', [
 
   z.object({ kind: z.literal('narration.set'), sceneId: z.string(), narration: NarrationSchema }),
   z.object({ kind: z.literal('narration.clear'), sceneId: z.string() }),
+
+  /**
+   * Audio lanes. A track is added and removed whole, but a clip is *patched* —
+   * the opposite of the camera above, and for the opposite reason: dragging a
+   * clip along its lane touches one number many times a second, and sending a
+   * whole track on every mouse move would make two people editing different
+   * clips on one lane clobber each other.
+   */
+  z.object({ kind: z.literal('audio.addTrack'), track: AudioTrackSchema, index: z.number().int().min(0).optional() }),
+  z.object({ kind: z.literal('audio.removeTrack'), trackId: z.string() }),
+  z.object({
+    kind: z.literal('audio.updateTrack'),
+    trackId: z.string(),
+    patch: z
+      .object({
+        name: z.string().min(1),
+        kind: z.union([z.literal('music'), z.literal('sfx'), z.literal('voice')]),
+        muted: z.boolean(),
+        gain: z.number().min(0).max(1),
+      })
+      .partial(),
+  }),
+  z.object({ kind: z.literal('audio.addClip'), trackId: z.string(), clip: AudioClipSchema }),
+  z.object({ kind: z.literal('audio.removeClip'), trackId: z.string(), clipId: z.string() }),
+  z.object({
+    kind: z.literal('audio.updateClip'),
+    trackId: z.string(),
+    clipId: z.string(),
+    patch: z
+      .object({
+        startSec: z.number().min(0).max(LIMITS.maxDurationSec),
+        playSec: z.number().positive().max(LIMITS.maxDurationSec),
+        sourceInSec: z.number().min(0).max(LIMITS.maxDurationSec),
+        gain: z.number().min(0).max(1),
+        fadeInSec: z.number().min(0).max(LIMITS.maxDurationSec),
+        fadeOutSec: z.number().min(0).max(LIMITS.maxDurationSec),
+        name: z.string(),
+      })
+      .partial(),
+  }),
+  /** Dragging a clip to another lane. One op, so it can never exist twice or not at all. */
+  z.object({
+    kind: z.literal('audio.moveClip'),
+    fromTrackId: z.string(),
+    toTrackId: z.string(),
+    clipId: z.string(),
+    startSec: z.number().min(0).max(LIMITS.maxDurationSec).optional(),
+  }),
 ])
 export type Op = z.infer<typeof OpSchema>
 
@@ -117,4 +166,24 @@ export const op = {
   setCamera: (sceneId: string, camera: Camera): Op => ({ kind: 'scene.setCamera', sceneId, camera }),
   clearCamera: (sceneId: string): Op => ({ kind: 'scene.clearCamera', sceneId }),
   setCanvas: (canvas: Canvas): Op => ({ kind: 'project.setCanvas', canvas }),
+  addAudioTrack: (track: AudioTrack, index?: number): Op => ({ kind: 'audio.addTrack', track, index }),
+  removeAudioTrack: (trackId: string): Op => ({ kind: 'audio.removeTrack', trackId }),
+  updateAudioTrack: (
+    trackId: string,
+    patch: Partial<Pick<AudioTrack, 'name' | 'kind' | 'muted' | 'gain'>>,
+  ): Op => ({ kind: 'audio.updateTrack', trackId, patch }),
+  addAudioClip: (trackId: string, clip: AudioClip): Op => ({ kind: 'audio.addClip', trackId, clip }),
+  removeAudioClip: (trackId: string, clipId: string): Op => ({ kind: 'audio.removeClip', trackId, clipId }),
+  updateAudioClip: (
+    trackId: string,
+    clipId: string,
+    patch: Partial<Omit<AudioClip, 'id' | 'assetId' | 'durationSec'>>,
+  ): Op => ({ kind: 'audio.updateClip', trackId, clipId, patch }),
+  moveAudioClip: (fromTrackId: string, toTrackId: string, clipId: string, startSec?: number): Op => ({
+    kind: 'audio.moveClip',
+    fromTrackId,
+    toTrackId,
+    clipId,
+    startSec,
+  }),
 }
