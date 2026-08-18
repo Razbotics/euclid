@@ -182,6 +182,7 @@ export async function moveAsset(
 export class AssetInUse extends Error {
   constructor(
     readonly assetId: string,
+    /** Where the references are, in words — narration, timeline clips. */
     readonly scenes: string[],
     readonly isRenderOutput: boolean,
   ) {
@@ -211,10 +212,19 @@ export async function deleteAsset(
   const inUse = used.has(asset.id) || isRenderOutput
 
   if (inUse && !force) {
-    const scenes = (doc?.scenes ?? [])
-      .filter((s) => s.narration?.audio?.assetId === asset.id)
-      .map((s) => s.name)
-    throw new AssetInUse(asset.id, scenes, isRenderOutput)
+    // Name the places, not just the fact. A refusal reading "used by: the
+    // document" is true and useless — the caller still has to go looking.
+    const where = [
+      ...(doc?.scenes ?? [])
+        .filter((s) => s.narration?.audio?.assetId === asset.id)
+        .map((s) => `narration in "${s.name}"`),
+      ...(doc?.audio ?? []).flatMap((track) =>
+        track.clips
+          .filter((c) => c.assetId === asset.id)
+          .map((c) => `a clip on "${track.name}" at ${c.startSec}s`),
+      ),
+    ]
+    throw new AssetInUse(asset.id, where, isRenderOutput)
   }
 
   await env.ASSETS.delete(asset.r2_key)

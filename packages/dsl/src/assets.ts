@@ -140,15 +140,33 @@ export function buildAssetTree(assets: AssetRecord[]): AssetFolder {
  *
  * Deleting one of these would leave the document holding an id that resolves
  * to nothing — the invariant Phase 2 established when it made `storeAsset`
- * write the row only after the bytes land. Today only narration audio
- * references an asset; `video`/`audio` nodes will join this list, so callers
- * should treat it as "ask the document", not "check narration".
+ * write the row only after the bytes land.
+ *
+ * **Found by walking, not by listing.** This used to check
+ * `scene.narration.audio.assetId` and nothing else, with a comment asking
+ * callers to treat it as "ask the document". Then audio tracks arrived with an
+ * `assetId` on every clip, and a file playing on the timeline read as *unused*
+ * — `list_assets` offered it for deletion and `remove_asset` would have taken
+ * the bytes out from under it. An enumerated list has to be revised by whoever
+ * adds a reference, and that is exactly what does not happen.
+ *
+ * A deep walk cannot go stale: any `assetId` anywhere in the document is a
+ * reference by definition, so narration, audio clips, and the image and video
+ * nodes still to come are all covered without this function being touched.
  */
 export function assetIdsInDoc(doc: EuclidDoc): Set<string> {
   const ids = new Set<string>()
-  for (const scene of doc.scenes) {
-    const id = scene.narration?.audio?.assetId
-    if (id) ids.add(id)
+  const walk = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item)
+      return
+    }
+    if (value === null || typeof value !== 'object') return
+    for (const [key, child] of Object.entries(value)) {
+      if (key === 'assetId' && typeof child === 'string' && child) ids.add(child)
+      else walk(child)
+    }
   }
+  walk(doc)
   return ids
 }
