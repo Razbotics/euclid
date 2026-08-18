@@ -264,7 +264,15 @@ work. The direction is unchanged; only the order is.
 This phase rides on the capture rework agent sight began: WebCodecs removes the
 `page.screenshot()` round-trip, and asset proxies/thumbnails are the same
 capability as a document contact sheet.
-- [ ] Replace per-frame screenshot capture with WebCodecs (wins on the current path too)
+- [ ] Replace per-frame screenshot capture with WebCodecs (wins on the current
+      path too). **Measured 2026-08-19 and now unblocked**: `bench-capture.ts`
+      splits the loop and finds the screenshot is **97-99%** of every frame in
+      both the host and the Linux container, while rasterising a whole 1080p
+      frame — 4,096-triangle solid included — costs 0.7-3.2ms. So plans/003's
+      "unmeasured risk: WebGL under SwiftShader" is settled and is not a risk.
+      It was also mis-framed: headless Chromium reports SwiftShader **on macOS
+      too**, so there was never GPU acceleration to lose and the container is
+      simply a uniformly slower CPU
 - [x] Assets as first-class (registry) — done in Phase 2; the editor is a
       three-column workbench (explorer | canvas | scene) whose explorer opens
       any file inline (2026-08-17); proxies/thumbnails still to do
@@ -276,7 +284,10 @@ capability as a document contact sheet.
       and the agent got `add_audio_track` / `add_audio_clip` / `update_audio`.
       Verified in a real export by measured dB. Ducking under narration is the
       named gap. `video` still needs the WebCodecs rework first
-- [ ] Multi-track timeline UI
+- [x] Multi-track timeline UI — landed with the audio work (2026-08-18): a
+      ruler, one scroller so no two lanes disagree about where a second is,
+      zoom to 8x, clips that drag between lanes, trim from either edge, snap to
+      cuts, and fades drawn as the ramps they are
 - [ ] Ingest + analysis (fetch → transcode → STT → shot detection → segments)
 - [ ] Decide the rights/ToS model **before** building the ingest fetcher
 - [ ] Narration-anchored animation (sync to word timestamps)

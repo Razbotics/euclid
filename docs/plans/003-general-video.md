@@ -299,7 +299,47 @@ image. The double encode costs some CPU, but the PNG round-trip that
 currently dominates is gone either way. Deliver WebM directly where the
 target is the web.
 
-#### Unmeasured risk: WebGL under SwiftShader
+#### Measured 2026-08-19: SwiftShader is not the bottleneck
+
+`bench-capture.ts` times the two halves of the capture loop separately —
+`renderFrame` (Pixi, WebGL) against `canvas.screenshot()` (PNG encode + CDP
+transfer) — and was run on the host and inside the Linux image against the same
+two documents:
+
+| | render | screenshot | total |
+|---|---|---|---|
+| host, vector + latex | 0.7 ms — **1%** | 57 ms — **99%** | 17.5 fps |
+| host, mesh (4,096 tri) | 2.4 ms — 4% | 51 ms — 96% | 18.6 fps |
+| container, vector + latex | 0.7 ms — **1%** | 102 ms — **99%** | 9.7 fps |
+| container, mesh (4,096 tri) | 3.2 ms — 3% | 110 ms — 97% | 8.8 fps |
+
+**The question below is answered: no.** Rasterising a whole 1080p frame,
+including a 4,096-triangle shaded solid, costs single-digit milliseconds. The
+screenshot costs a hundred. The ratio is 97–99% screenshot in both
+environments, so WebCodecs is the right fix and the SwiftShader worry does not
+change the plan.
+
+The framing was wrong in a way worth keeping. This section feared *falling back*
+to SwiftShader in a GPU-less container — but headless Chromium reports
+`ANGLE (… SwiftShader driver)` **on macOS too**. Every render this project has
+ever done was software-rasterised; there was no GPU acceleration to lose. The
+container is ~2x slower across the board because it is a slower CPU, uniformly,
+with no cliff where rasterisation suddenly dominates.
+
+Headroom, therefore: remove a ~100 ms/frame round-trip from a ~3 ms/frame
+render and the pipeline becomes encode-bound. At the ~114 fps VP9 measured
+above that is roughly **1.9x realtime instead of 0.16x** — a 60s video in about
+half a minute rather than six.
+
+Two caveats, stated rather than buried. The container was **arm64** (this is an
+Apple Silicon machine); Cloudflare Containers are x86_64, and building
+`--platform linux/amd64` here would run under emulation and produce meaningless
+timings. Absolute fps will not transfer, but the *ratio* is what decides the
+design and a ratio survives an architecture change. And this measured the
+existing screenshot path, not a WebCodecs one — the estimate above is arithmetic
+on two separate benchmarks, not an end-to-end result.
+
+#### The original question: WebGL under SwiftShader
 
 The container benchmark encoded a 2D canvas. It did **not** measure Pixi's
 WebGL rendering, which in a GPU-less container falls back to SwiftShader
@@ -311,6 +351,9 @@ existing `render.ts` inside the Linux image against a real project and
 measure end-to-end fps. If SwiftShader is the bottleneck rather than
 encoding, the answer changes (bigger instance types, or a GPU host
 elsewhere, or moving compositing to ffmpeg).
+
+> **Done 2026-08-19 — see above.** It is not the bottleneck, so none of those
+> alternatives is needed and WebCodecs stays the plan.
 
 ### 5. Ingest + analysis subsystem (new)
 `link or upload → fetch → transcode + proxy → probe → STT transcript →

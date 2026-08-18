@@ -124,6 +124,37 @@ pnpm --filter @euclid/renderer exec tsx src/render-worker.ts
 
 ```
 
+### Running the renderer in its container
+
+The export image is `apps/renderer/Dockerfile`. Build from the **repo root**,
+because the build context has to include `packages`:
+
+```sh
+docker build -f apps/renderer/Dockerfile -t euclid-renderer:bench .
+```
+
+```sh
+docker run --rm -e RENDER_PAGE_URL=http://<your-lan-ip>:5173/render.html \
+  -e FRAMES=60 -v "$PWD/apps/renderer/src:/app/apps/renderer/src:ro" \
+  euclid-renderer:bench pnpm exec tsx src/bench-capture.ts
+```
+
+Three things bite, in order:
+
+> **The image tag must match the playwright version in the lockfile.** The
+> image ships the browser builds that version expects. The Dockerfile said
+> `v1.49.1-jammy` while the repo had moved to 1.62.1.
+
+> **`host.docker.internal` reaches the host but Vite refuses it.** Vite blocks
+> requests whose `Host` header it does not recognise, so the page loads and
+> `window.__euclid` is simply never defined — which looks like a renderer bug
+> rather than a network one. Use the LAN address Vite prints as `Network:`,
+> and start it with `--host` or nothing outside the machine can reach it at all.
+
+> **On Apple Silicon the container is arm64**, not the x86_64 Cloudflare
+> Containers run. Absolute timings do not transfer; ratios do. Building
+> `--platform linux/amd64` runs under emulation and measures qemu.
+
 ### Renders do not start themselves in dev
 
 `render_video` debits credits and creates a **`queued`** job, then returns
@@ -209,6 +240,7 @@ every run** — re-run and re-paste after restarting.
 | `check-flows.ts` | flows (plans/006 Phase D): an arrow recomputed as its anchor moves (proved by framing the camera on the corridor the arrow must stretch across — an arrow baked at creation leaves it empty), curved pairs that separate, a token travelling a path by arc length, and the dangling/self-link/wrong-type/track-shadowing messages (free; needs `dev:api`, `dev:web`, `render-worker.ts`) |
 | `check-mesh.ts` | mesh solids (plans/009). Starts with a **pure winding invariant** — for a convex solid centred on the origin every face must satisfy `n · centroid > 0` — which is the only thing that catches an inside-out solid, since an inverted one has an identical silhouette and identical ink (milestone run 7 shipped a cylinder wound inward on all 64 faces). Then in pixels: a background-coloured sphere in front of a bright disc takes it from 13.7% lit to **0.00%** (so the solid really is solid), flat shading reads 15.8% against 18.0% unshaded (so shading is per face), culled and unculled agree to 0.00% (the visible consequence of the sort being right), a cube framed at 8x reads 100% on it and 0% beside it, a pitch orbit moves a torus 12.8%→22.9%, and `write_on` builds it face by face (free; needs `dev:api`, `dev:web`, `render-worker.ts`) |
 | `check-fal.ts` | generative assets (plans/009) end to end: a real flux-schnell image arrives, is checked to its **magic bytes**, and is filed at the path asked for; credits debit exactly once; a rejected 3D request fails and **refunds in full**; polling twice moves neither balance nor file count (**spends a few tenths of a US cent**; needs `dev:api` with `FAL_KEY`, no renderer) |
+| `bench-capture.ts` | where export time actually goes: times `renderFrame` (Pixi/WebGL) against `canvas.screenshot()` (PNG round-trip) separately, on a vector document and a 4,096-triangle mesh. Answers plans/003's SwiftShader question — screenshot is **97-99%** of a frame in both the host and the container, so rasterisation is not the bottleneck (free; needs `dev:web`) |
 | `check-glb.ts` | GLB import (plans/009): an inside-out fixture (a trusted cube with every face reversed) is detected by **signed volume** and repaired, a real trellis model imports at 10,132 → 1,382 triangles and draws, culled and unculled agree to 0.00% (the assertion that catches a bad Y-up→Y-down flip, since a hollow shell has the same silhouette), and the non-GLB, wrong-asset-kind and document-budget errors all teach (**spends ~17 credits**; needs `dev:api` with `FAL_KEY`, `dev:web`, `render-worker.ts`) |
 | `check-fal-roster.ts` | every fal roster model end to end, verifying the one thing submitting cannot: each entry's `output()` reader, which only runs on a *successful* result. Bytes are sniffed by magic number rather than trusted from the mime. Takes model names as arguments, or all of them (**spends real money, ~$0.50 for the full roster**, most of it `kling-video`; needs `dev:api` with `FAL_KEY`). Run when the roster changes, not per commit — a wrong reader is the one bug here that loses money quietly, since fal has already charged for the inference we then refund |
 | `check-3d.ts` | pseudo-3D (plans/006 Phase C) in pixels: depth decides draw order (the same two discs read 6.1% lit one way round and 0.0% with only their depths swapped), nearer draws 2.8x larger, an arrow orbited end-on foreshortens to a dot, a lattice stays lit through a 120° orbit, a cloud reveals dot by dot, and a spatial node with no camera still draws flat (free; needs `dev:api`, `dev:web`, `render-worker.ts`) |
