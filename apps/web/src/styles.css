@@ -19,15 +19,107 @@ header h1 { font-size: 16px; margin: 0; letter-spacing: 0.06em; }
 .badge.offline { background: #3d3417; color: #e8c74a; }
 .badge.error { background: #3d1717; color: #e86a6a; }
 
-main { display: flex; flex: 1; min-height: 0; }
+/* ---------- workbench: explorer | editor | scene ---------- */
+
+/* Three columns, VS Code's arrangement: files on the left, the thing you are
+   working on in the middle at full stretch, properties on the right. The
+   middle column is the only one that grows — `flex: none` on the panels is
+   load-bearing, or one long agent question or file path widens a sidebar and
+   squeezes the canvas to a sliver. */
+main.workbench { display: flex; flex: 1; min-height: 0; }
+
+.panel {
+  display: flex; flex-direction: column; min-width: 0; flex: none;
+  background: #0d1116;
+}
+.panel-left { width: 260px; border-right: 1px solid #1d2229; }
+.panel-right { width: 320px; border-left: 1px solid #1d2229; }
+.panel-head {
+  display: flex; align-items: center; gap: 6px; padding: 7px 8px 7px 12px;
+  font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #7f8c99;
+  border-bottom: 1px solid #161b21; flex: none;
+}
+.panel-head .count { color: #4c5661; letter-spacing: 0; }
+.panel-body { flex: 1; min-height: 0; overflow: auto; }
+.grow { flex: 1; }
+
+.icon-btn {
+  background: none; border: none; color: #6c7784; cursor: pointer;
+  padding: 3px 6px; border-radius: 3px; font-size: 11px; line-height: 1.4;
+  font-family: inherit; letter-spacing: .04em;
+}
+.icon-btn:hover { background: #1b222a; color: #e6e8eb; }
+.icon-btn.on { color: #c8ced5; }
+
+/* A collapsed panel leaves a clickable strip rather than vanishing — otherwise
+   nothing on screen says the files are still there. */
+.rail {
+  flex: none; width: 26px; background: #0d1116; color: #6c7784;
+  border: none; cursor: pointer; padding: 10px 0;
+  font-size: 10px; letter-spacing: .12em; text-transform: uppercase; font-family: inherit;
+  writing-mode: vertical-rl; text-orientation: mixed;
+}
+.rail-left { border-right: 1px solid #1d2229; }
+.rail-right { border-left: 1px solid #1d2229; transform: rotate(180deg); }
+.rail:hover { background: #131a22; color: #e6e8eb; }
+
+/* The drag handle. 6px of grab area sitting *over* the panel's border via a
+   negative margin, so the seam still reads as one hairline: a visible 6px
+   gutter between columns would be furniture, this is just a place to grab. */
+.splitter {
+  flex: none; width: 6px; margin: 0 -3px;
+  cursor: col-resize; background: transparent;
+  /* `position` is load-bearing, not decoration: a static element ignores
+     z-index, so half the handle sat *under* the neighbouring panel and a drag
+     started there selected text instead of resizing. */
+  position: relative; z-index: 2;
+  touch-action: none; user-select: none;
+}
+.splitter::after {
+  content: ''; display: block; height: 100%; width: 2px; margin-left: 2px;
+  background: transparent; transition: background 120ms ease;
+}
+.splitter:hover::after, .app.resizing .splitter:active::after { background: #2f6b7d; }
+/* Mid-drag the pointer is captured, so the cursor must be declared for the
+   whole app — and nothing under it should highlight as if it were text. */
+.app.resizing { cursor: col-resize; user-select: none; }
+
+/* ---------- the editor column ---------- */
+
+.editor { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.tabstrip {
+  display: flex; align-items: stretch; flex: none;
+  background: #0d1116; border-bottom: 1px solid #1d2229; overflow-x: auto;
+}
+.tab {
+  display: flex; align-items: center; background: transparent; border: none;
+  border-right: 1px solid #161b21; color: #7f8c99; font-family: inherit; font-size: 12px;
+  white-space: nowrap; cursor: pointer; padding: 0;
+}
+/* A generated filename can be a whole sentence — clip it rather than let four
+   open files push the strip past the window. */
+.tab > .tab-open {
+  padding: 7px 4px 7px 12px; max-width: 220px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tab-canvas { padding: 7px 12px; }
+.tab.active { background: #131a22; color: #e6e8eb; box-shadow: inset 0 2px 0 #58c4dd; }
+.tab:hover { color: #e6e8eb; }
+.tab-glyph { color: #5f6a76; margin-right: 6px; }
+.tab.active .tab-glyph { color: #58c4dd; }
+.tab-open, .tab-close {
+  background: none; border: none; color: inherit; font: inherit; cursor: pointer;
+}
+.tab-close { padding: 7px 10px 7px 6px; color: #4c5661; }
+.tab-close:hover { color: #e6e8eb; }
+
+.editor-body { flex: 1; min-height: 0; display: flex; }
 /* Wraps the canvas so the caption overlay can position against it. */
 .stage { flex: 1; position: relative; display: flex; min-width: 0; }
 .preview { flex: 1; display: flex; align-items: center; justify-content: center; background: #000; overflow: hidden; }
 .preview canvas { max-width: 100%; max-height: 100%; object-fit: contain; }
 
-.inspector {
-  width: 280px; border-left: 1px solid #1d2229; padding: 12px; overflow-y: auto;
-}
+.inspector { padding: 12px; }
 .inspector h3 { margin: 0 0 8px; font-size: 13px; color: #9aa3ad; }
 .node-list { list-style: none; margin: 0 0 12px; padding: 0; }
 .node-list li { padding: 4px 8px; border-radius: 4px; cursor: pointer; }
@@ -123,21 +215,9 @@ main { display: flex; flex: 1; min-height: 0; }
 
 /* ---------- agent questions ---------- */
 
-/* The side column now stacks questions above the inspector; an unanswered
-   question means an agent is stalled, so it sits at the top and is loud. */
-/*
- * The side column owns the width now that it holds more than the inspector.
- * `flex: none` is load-bearing: without it this is a content-sized flex item,
- * and one long agent question stretches it across the window, squeezing the
- * canvas to a sliver.
- */
-.side {
-  width: 320px; flex: none;
-  display: flex; flex-direction: column; min-width: 0;
-  border-left: 1px solid #1d2229; overflow-y: auto;
-}
-.side .inspector { width: auto; flex: 1; border-left: none; overflow-y: visible; }
-/* Agent questions are prose and can be long; never let one widen the column. */
+/* An unanswered question means an agent is stalled, so it sits at the top of
+   its panel and is loud. Agent questions are prose and can be long; never let
+   one widen the column. */
 .decisions { overflow-wrap: anywhere; }
 
 .decisions { border-bottom: 1px solid #1d2229; padding: 12px 14px; }
@@ -206,15 +286,24 @@ header .back h1 { color: inherit; }
 
 /* ---------- project files (asset explorer) ---------- */
 
-.assets { padding: 10px 12px; border-bottom: 1px solid #1d2229; }
-.assets h4 { margin: 0 0 8px; font-size: 11px; letter-spacing: .08em; color: #7f8c99; }
-.assets .muted { color: #5c646d; font-weight: 400; letter-spacing: 0; }
-.asset-folder { font-size: 11px; color: #7f8c99; margin: 4px 0 2px; }
+.tree { padding: 2px 0; }
+.explorer-note { color: #5c646d; font-size: 12px; padding: 10px 12px; margin: 0; }
+.asset-folder {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11px; color: #7f8c99; padding: 3px 8px; cursor: pointer; user-select: none;
+}
+.asset-folder:hover { color: #c8ced5; }
+.twisty { color: #4c5661; font-size: 9px; width: 9px; }
 .asset-file {
   display: flex; align-items: center; gap: 6px;
-  padding: 3px 4px; border-radius: 3px; font-size: 12px; color: #c8ced5;
+  padding: 3px 8px; font-size: 12px; color: #c8ced5; cursor: pointer;
 }
 .asset-file:hover { background: #171d24; }
+/* The open file is highlighted in the tree the way an editor keeps its
+   selection visible — the tab strip and the tree agree on what you are on. */
+.asset-file.active { background: #1c2733; color: #fff; }
+.asset-glyph { color: #5f6a76; font-size: 11px; }
+.asset-file.active .asset-glyph { color: #58c4dd; }
 .asset-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .asset-meta { font-size: 10px; color: #5c646d; white-space: nowrap; }
 .asset-actions { display: flex; gap: 2px; opacity: 0; }
@@ -225,6 +314,74 @@ header .back h1 { color: inherit; }
 }
 .asset-actions a:hover, .asset-actions button:hover { color: #e6e8eb; }
 .asset-actions button:disabled { opacity: .4; cursor: default; }
+
+/* ---------- inline file viewers ---------- */
+
+.file-view { flex: 1; display: flex; flex-direction: column; min-width: 0; background: #0b0e12; }
+.file-view-head {
+  display: flex; align-items: center; gap: 12px; flex: none;
+  padding: 6px 12px; border-bottom: 1px solid #161b21; font-size: 11px; color: #7f8c99;
+}
+.file-view-path { color: #c8ced5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-view-meta { white-space: nowrap; }
+.file-view-head a { color: #7f8c99; text-decoration: none; white-space: nowrap; }
+.file-view-head a:hover { color: #e6e8eb; }
+.file-view-body {
+  flex: 1; min-height: 0; overflow: auto;
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+/* Text and structure read from the top-left, not the centre. */
+.file-view-body.scroll { display: block; padding: 0; }
+.file-view-body .center { text-align: center; }
+.file-view-body .muted { color: #5c646d; font-size: 12px; }
+
+/* The wrapper *stretches* rather than shrink-wrapping the image. That is the
+   whole fix for containment: `max-height: 100%` on the image needs a parent
+   with a definite height to resolve against, and an auto-height wrapper gives
+   it none — so a tall image ignored the limit and ran off the bottom. */
+.image-view {
+  align-self: stretch; flex: 1; min-width: 0; min-height: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+/* Checkerboard, so a transparent PNG is distinguishable from a black one —
+   which is exactly the difference between compositable and not. */
+.image-view img {
+  display: block; max-width: 100%; max-height: 100%;
+  width: auto; height: auto; object-fit: contain;
+  background-color: #14181d;
+  background-image:
+    linear-gradient(45deg, #1c222a 25%, transparent 25%, transparent 75%, #1c222a 75%),
+    linear-gradient(45deg, #1c222a 25%, transparent 25%, transparent 75%, #1c222a 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 8px 8px;
+}
+.media { max-width: 100%; max-height: 100%; background: #000; }
+.audio-view { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.audio-view audio { width: min(420px, 70vw); }
+.pdf-view { width: 100%; height: 100%; border: none; background: #fff; }
+
+.text-file {
+  display: flex; align-items: flex-start; flex-wrap: wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.55;
+}
+.text-gutter {
+  padding: 10px 8px; text-align: right; color: #3f4852; user-select: none;
+  border-right: 1px solid #161b21; position: sticky; left: 0; background: #0b0e12;
+}
+.text-code { margin: 0; padding: 10px 14px; color: #c8ced5; white-space: pre; }
+.text-truncated { flex-basis: 100%; padding: 8px 14px; color: #7d868f; font-size: 11px; }
+
+.model-view { padding: 20px 24px; max-width: 520px; }
+.model-view h4 {
+  margin: 0 0 12px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #7f8c99;
+}
+.model-facts {
+  display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 0;
+  font-size: 13px; font-variant-numeric: tabular-nums;
+}
+.model-facts dt { color: #7f8c99; }
+.model-facts dd { margin: 0; color: #e6e8eb; }
+.model-note { margin: 16px 0 0; font-size: 11px; line-height: 1.5; color: #5c646d; }
 
 /* Key moments on the scrubber — the same times `preview_frames` captures.
    Deliberately small and low-contrast: they are a map of where to look, not

@@ -1,12 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
-import { buildAssetTree, type AssetFolder, type AssetRecord } from '@euclid/dsl'
-
-const API = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8787'
-
-type Row = AssetRecord & { usedBy: boolean }
+import { useState } from 'react'
+import { buildAssetTree, type AssetFolder, type AssetFile } from '@euclid/dsl'
+import { assetUrl, formatBytes, type AssetsState, type ProjectFile } from './useAssets'
+import { fileGlyph } from './FileViewer'
 
 /**
- * The project's files, as a file explorer scoped to this project.
+ * The project's files, as a file explorer scoped to this project — the left
+ * panel of the workbench.
  *
  * Assets were previously invisible: `generate_narration` mints one and its id
  * appears in exactly one tool response, so a stale clip from a regenerated
@@ -14,136 +13,108 @@ type Row = AssetRecord & { usedBy: boolean }
  * — derived from each file's `path` by `buildAssetTree`, the same helper the
  * MCP `list_assets` tool uses — so renaming is a single PATCH and there are no
  * empty folders to clean up.
+ *
+ * Clicking a file opens it in the editor rather than navigating away: the tree
+ * selects, the centre column shows. The rows themselves are state-free; the
+ * list and its mutations live in `useAssets` because the tab strip reads the
+ * same records.
  */
 export function Assets({
-  projectId,
-  reloadKey,
+  state,
+  activeId,
+  onOpen,
+  offline,
 }: {
-  projectId: string
-  reloadKey?: string | number
+  state: AssetsState
+  activeId: string | null
+  onOpen: (file: ProjectFile) => void
+  offline?: boolean
 }) {
-  const [rows, setRows] = useState<Row[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState<string | null>(null)
-
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch(`${API}/api/projects/${projectId}/assets`, { credentials: 'include' })
-      if (!res.ok) throw new Error(`${res.status}`)
-      const { assets } = (await res.json()) as { assets: Row[] }
-      setRows(assets)
-      setError(null)
-    } catch (e) {
-      setError(String(e))
-    }
-  }, [projectId])
-
-  useEffect(() => {
-    void load()
-  }, [load, reloadKey])
-
-  const rename = async (row: Row) => {
-    const next = window.prompt('New path', row.path)
-    if (!next || next === row.path) return
-    setBusy(row.id)
-    const res = await fetch(`${API}/api/assets/${row.id}`, {
-      method: 'PATCH',
-      credentials: 'include',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ path: next }),
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const toggle = (path: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(path)) next.add(path)
+      return next
     })
-    setBusy(null)
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string; detail?: string }
-      window.alert(`Could not move: ${body.detail ?? body.error ?? res.status}`)
-      return
-    }
-    await load()
-  }
 
-  const remove = async (row: Row) => {
-    // The guard lives in the API — it knows what the document references. The
-    // UI only has to explain the refusal.
-    if (!window.confirm(`Delete ${row.path}?`)) return
-    setBusy(row.id)
-    let res = await fetch(`${API}/api/assets/${row.id}`, { method: 'DELETE', credentials: 'include' })
-    if (res.status === 409) {
-      const body = (await res.json()) as { scenes?: string[] }
-      const scenes = (body.scenes ?? []).join(', ') || 'the document'
-      if (!window.confirm(`Still used by ${scenes}. Delete anyway and leave it pointing at nothing?`)) {
-        setBusy(null)
-        return
-      }
-      res = await fetch(`${API}/api/assets/${row.id}?force=1`, { method: 'DELETE', credentials: 'include' })
-    }
-    setBusy(null)
-    if (!res.ok) return window.alert(`Could not delete: ${res.status}`)
-    await load()
-  }
-
-  if (error) return <div className="assets"><h4>FILES</h4><span className="muted">{error}</span></div>
-  if (!rows) return <div className="assets"><h4>FILES</h4><span className="muted">loading…</span></div>
+  if (offline) return <p className="explorer-note">the offline demo has no project files</p>
+  if (state.error) return <p className="explorer-note">{state.error}</p>
+  if (!state.files) return <p className="explorer-note">loading…</p>
+  if (state.files.length === 0) return <p className="explorer-note">no files yet</p>
 
   return (
-    <div className="assets">
-      <h4>
-        FILES <span className="muted">{rows.length}</span>
-      </h4>
-      {rows.length === 0 ? (
-        <span className="muted">no files yet</span>
-      ) : (
-        <Folder folder={buildAssetTree(rows)} depth={0} onRename={rename} onRemove={remove} busy={busy} />
-      )}
+    <Folder
+      folder={buildAssetTree(state.files)}
+      depth={0}
+      collapsed={collapsed}
+      onToggle={toggle}
+      state={state}
+      activeId={activeId}
+      onOpen={onOpen}
+    />
+  )
+}
+
+interface TreeProps {
+  collapsed: Set<string>
+  onToggle: (path: string) => void
+  state: AssetsState
+  activeId: string | null
+  onOpen: (file: ProjectFile) => void
+}
+
+function Folder({ folder, depth, ...t }: { folder: AssetFolder; depth: number } & TreeProps) {
+  return (
+    <div className="tree" style={{ paddingLeft: depth === 0 ? 0 : 10 }}>
+      {folder.folders.map((f) => {
+        const shut = t.collapsed.has(f.path)
+        return (
+          <div key={f.path}>
+            <div className="asset-folder" onClick={() => t.onToggle(f.path)}>
+              <span className="twisty">{shut ? '▸' : '▾'}</span>
+              {f.name}
+            </div>
+            {!shut && <Folder folder={f} depth={depth + 1} {...t} />}
+          </div>
+        )
+      })}
+      {folder.files.map((file) => (
+        <FileRow key={file.id} file={file} {...t} />
+      ))}
     </div>
   )
 }
 
-function Folder({
-  folder,
-  depth,
-  onRename,
-  onRemove,
-  busy,
-}: {
-  folder: AssetFolder
-  depth: number
-  onRename: (r: Row) => void
-  onRemove: (r: Row) => void
-  busy: string | null
-}) {
+function FileRow({ file, state, activeId, onOpen }: { file: AssetFile } & TreeProps) {
+  // buildAssetTree carries every record field through and adds `name`, so the
+  // row it hands back is still the row the API served.
+  const row = file as ProjectFile & { name: string }
+  const busy = state.busy === file.id
+
   return (
-    <div style={{ paddingLeft: depth === 0 ? 0 : 10 }}>
-      {folder.folders.map((f) => (
-        <div key={f.path}>
-          <div className="asset-folder">{f.name}/</div>
-          <Folder folder={f} depth={depth + 1} onRename={onRename} onRemove={onRemove} busy={busy} />
-        </div>
-      ))}
-      {folder.files.map((file) => {
-        const row = file as unknown as Row
-        return (
-          <div key={file.id} className="asset-file">
-            <span className="asset-name" title={file.path}>
-              {file.name}
-            </span>
-            <span className="asset-meta">
-              {Math.round(file.bytes / 1024)}KB
-              {file.durationSec ? ` · ${file.durationSec.toFixed(1)}s` : ''}
-            </span>
-            <span className="asset-actions">
-              <a href={`${API}/api/assets/${file.id}`} target="_blank" rel="noreferrer" title="open">
-                ↗
-              </a>
-              <button onClick={() => onRename(row)} disabled={busy === file.id} title="rename or move">
-                ✎
-              </button>
-              <button onClick={() => onRemove(row)} disabled={busy === file.id} title="delete">
-                ✕
-              </button>
-            </span>
-          </div>
-        )
-      })}
+    <div
+      className={`asset-file${activeId === file.id ? ' active' : ''}`}
+      onClick={() => onOpen(row)}
+      title={file.path}
+    >
+      <span className="asset-glyph">{fileGlyph(row)}</span>
+      <span className="asset-name">{file.name}</span>
+      <span className="asset-meta">
+        {formatBytes(file.bytes)}
+        {file.durationSec ? ` · ${file.durationSec.toFixed(1)}s` : ''}
+      </span>
+      <span className="asset-actions" onClick={(e) => e.stopPropagation()}>
+        <a href={assetUrl(file.id)} target="_blank" rel="noreferrer" title="open in a browser tab">
+          ↗
+        </a>
+        <button onClick={() => state.rename(row)} disabled={busy} title="rename or move">
+          ✎
+        </button>
+        <button onClick={() => state.remove(row)} disabled={busy} title="delete">
+          ✕
+        </button>
+      </span>
     </div>
   )
 }

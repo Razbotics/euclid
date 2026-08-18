@@ -609,6 +609,68 @@ a tool response, so without it the work is invisible unless someone copies a
 UUID by hand. Bare `/` used to show the demo, which is indistinguishable
 from "connected but not syncing" — the demo now says so on its badge.
 
+## Editor layout: explorer | editor | scene
+
+Three columns, arranged the way a code editor is, because the editor has two
+unrelated kinds of sidebar content and stacking them in one column made both
+worse:
+
+- **Left — the explorer.** The project's files (`Assets.tsx`), a virtual
+  folder tree over `buildAssetTree`.
+- **Centre — the editor**, and the only column that grows. A tab strip whose
+  first tab is the canvas and whose other tabs are open files.
+- **Right — the scene.** The inspector: nodes at the playhead, numeric fields,
+  the narration panel. Everything that edits the *document* lives here, so the
+  question "am I looking at a file or at the video?" has a side of the screen
+  as its answer.
+
+Both side panels collapse to a clickable rail (⌘B / ⌘⌥B, VS Code's own
+bindings) and drag to resize from the seam beside them; double-clicking a
+handle restores its default width. Open/closed and both widths are remembered
+in `localStorage`. The timeline stays full width beneath all three — it is the
+transport for the document, not for whatever tab is showing.
+
+Resizing is clamped rather than free: a panel is bounded by what the *other*
+panel and a 360px minimum canvas already claim, and the same clamp re-runs on
+window resize, so no drag and no narrow window can leave the middle column at
+zero. A drag uses pointer capture and recomputes width from where the drag
+*started* — accumulating per-move deltas would let the handle drift away from
+the cursor every time the clamp bit, and without capture a fast drag would die
+the moment it crossed the `<canvas>` or a PDF `<iframe>`.
+
+Two decisions inside that are load-bearing:
+
+- **The canvas is hidden, never unmounted.** Pixi's `Application` and its
+  ticker are expensive to rebuild, and unmounting to read a text file would
+  restart the preview every time you glanced at one. Opening a file toggles
+  `display`, so playback and narration audio carry on behind it.
+- **The file list lives in `useAssets`, not in the explorer.** The tab strip
+  needs the same records (mime, size, path) to know which viewer to draw, and
+  a delete has to close the tab it invalidates. One fetch, one truth.
+
+### Viewing a file
+
+`FileViewer.tsx` renders images (on a checkerboard, so a transparent PNG is
+distinguishable from a black one), video, audio, text with a line gutter, PDF,
+and glTF/GLB. **`mime` decides, not the extension** — it is what the producer
+recorded and what the API serves the bytes back as — but the extension is a
+fallback, which matters because fal's 3D models arrived as
+`application/octet-stream` before generic mimes were treated as absent, and
+those rows are still in projects.
+
+Two limits keep a tab from wedging on a big file, both leaning on the same
+range support that makes narration audio seekable (`serveR2Range`): text is
+read as a 512KB prefix, and a GLB is read as a 4MB prefix, which is ample
+because the spec puts the JSON chunk first.
+
+The model view reports structure — triangles, meshes, materials, textures —
+and says so. It is not a render: the engine's mesh node takes *parametric*
+geometry (`{kind:'sphere', radius, segments}`), not imported vertices, so
+nothing here can put a downloaded model on the canvas. Triangle count is the
+number [plans/009](plans/009-generative-assets.md) records for every
+generation and the number a future importer has to decimate, so it is the one
+worth showing.
+
 ## Agent questions
 
 The agent can put a choice to the human rather than deciding alone —
