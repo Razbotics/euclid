@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { CellRange } from './grid'
+import type { TimeAnchor } from './narration'
 import { LIMITS } from './limits'
 import { AudioTrackSchema, type AudioTrack } from './audio'
 // Type-only: mesh.ts imports Vec3 back from here, and erasing this import is
@@ -94,12 +95,25 @@ export const TrackSchema: z.ZodType<Track> = z.object({
  * Transitions are animated effects that are not expressible as property keyframes.
  * Sugar like fadeIn/moveTo lives in the MCP tool layer and compiles down to Tracks.
  */
-export interface WriteTransition {
+/**
+ * Every transition may be anchored to a spoken word instead of a number.
+ *
+ * `start` stays required and is what an unanchored effect uses, what an
+ * anchored one falls back to when the word is not spoken, and what the editor
+ * shows before narration exists. So adding an anchor never makes a document
+ * unrenderable — the worst case is that it plays where it was written to.
+ */
+export interface Anchorable {
+  /** Resolved against this scene's narration words; see `anchorTime`. */
+  anchor?: TimeAnchor
+}
+
+export interface WriteTransition extends Anchorable {
   type: 'write'
   start: number
   duration: number
 }
-export interface TexMorphTransition {
+export interface TexMorphTransition extends Anchorable {
   type: 'texMorph'
   start: number
   duration: number
@@ -114,7 +128,7 @@ export interface TexMorphTransition {
  * that lands on screen. The engine renders the fragment, finds its glyph
  * sequence inside the node's, and marks exactly those glyphs.
  */
-export interface HighlightTransition {
+export interface HighlightTransition extends Anchorable {
   type: 'highlight'
   start: number
   duration: number
@@ -140,7 +154,7 @@ export interface HighlightTransition {
  * places, and only genuinely new or removed ones fade. The structured twin of
  * `texMorph`, matched by cell content instead of glyph code.
  */
-export interface CellMorphTransition {
+export interface CellMorphTransition extends Anchorable {
   type: 'cellMorph'
   start: number
   duration: number
@@ -155,7 +169,7 @@ export interface CellMorphTransition {
  * which is what makes a token flowing along a curve one call instead of a
  * keyframe per bend.
  */
-export interface FollowTransition {
+export interface FollowTransition extends Anchorable {
   type: 'follow'
   start: number
   duration: number
@@ -197,13 +211,22 @@ const CellsSchema = z
     }
   })
 
+const TimeAnchorSchema: z.ZodType<TimeAnchor> = z.object({
+  word: z.string().min(1),
+  occurrence: z.number().int().min(1).optional(),
+  offsetSec: z.number().finite().optional(),
+})
+const AnchorShape = { anchor: TimeAnchorSchema.optional() }
+
 export const TransitionSchema: z.ZodType<Transition> = z.discriminatedUnion('type', [
   z.object({
+    ...AnchorShape,
     type: z.literal('write'),
     start: z.number().min(0),
     duration: z.number().positive(),
   }),
   z.object({
+    ...AnchorShape,
     type: z.literal('texMorph'),
     start: z.number().min(0),
     duration: z.number().positive(),
@@ -211,6 +234,7 @@ export const TransitionSchema: z.ZodType<Transition> = z.discriminatedUnion('typ
     easing: EasingSchema,
   }),
   z.object({
+    ...AnchorShape,
     type: z.literal('highlight'),
     start: z.number().min(0),
     duration: z.number().positive(),
@@ -220,6 +244,7 @@ export const TransitionSchema: z.ZodType<Transition> = z.discriminatedUnion('typ
     color: ColorSchema,
   }),
   z.object({
+    ...AnchorShape,
     type: z.literal('cellMorph'),
     start: z.number().min(0),
     duration: z.number().positive(),
@@ -227,6 +252,7 @@ export const TransitionSchema: z.ZodType<Transition> = z.discriminatedUnion('typ
     easing: EasingSchema,
   }),
   z.object({
+    ...AnchorShape,
     type: z.literal('follow'),
     start: z.number().min(0),
     duration: z.number().positive(),

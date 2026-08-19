@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import {
+  anchorableWords,
   clipPlaySec,
   docDuration,
   effectsPastEnd,
@@ -127,6 +128,57 @@ export const mediaTools = [
           `(${audio.durationSec.toFixed(2)}s speech + ${tailSec}s tail)` +
           formatOverruns(cut, duration),
         { sceneId, was: scene.duration, duration, speechSec: audio.durationSec, tailSec, cut },
+      )
+    },
+  }),
+
+  capability({
+    name: 'get_narration_timing',
+    summary: "When each word of a scene's narration is spoken. Free.",
+    doc: [
+      'Free. Lists the words of a generated narration with the second each begins, which is what `atWord` on write_on and highlight anchors to.',
+      '',
+      'Repeated words are numbered, so `atWordOccurrence: 2` has something to name. Words are shown stripped of punctuation, which is how they are matched — asking for "equation" finds "equation." — and case is ignored.',
+      '',
+      '**Requires generated narration.** A script that has only been set with set_narration has no timings yet, because timings come from the synthesis. Anchors written before then are kept and resolve the moment generate_narration runs.',
+    ].join('\n'),
+    args: z.object({
+      projectId: PROJECT_ID,
+      sceneId: SCENE_ID,
+      contains: z
+        .string()
+        .optional()
+        .describe('only words containing this, for finding one in a long script'),
+    }),
+    async handler(ctx, { projectId, sceneId, contains }) {
+      const { doc } = await ctx.getDoc(projectId)
+      const scene = ctx.sceneOrThrow(doc, sceneId)
+      const words = anchorableWords(scene.narration?.audio?.words)
+      if (words.length === 0) {
+        throw new CapabilityError(
+          `scene ${sceneId} has no generated narration, so there are no word timings. ` +
+            `set_narration writes the script; generate_narration is what produces the timings ` +
+            `(and costs credits). An anchor written now will resolve as soon as it has.`,
+        )
+      }
+      const needle = contains?.toLowerCase()
+      const shown = needle ? words.filter((w) => w.word.includes(needle)) : words
+      if (shown.length === 0) {
+        return said(
+          `no word containing "${contains}" is spoken in ${sceneId}. ` +
+            `The script says: ${(scene.narration?.text ?? '').slice(0, 200)}`,
+          { words: [] },
+        )
+      }
+      return said(
+        shown
+          .map(
+            (w) =>
+              `${w.start.toFixed(2)}s  ${w.word}` +
+              (w.occurrence > 1 ? `  (occurrence ${w.occurrence})` : ''),
+          )
+          .join('\n'),
+        { words: shown },
       )
     },
   }),

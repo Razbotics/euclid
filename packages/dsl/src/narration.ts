@@ -1,4 +1,4 @@
-import type { EuclidDoc } from './document'
+import type { EuclidDoc, NarrationWord } from './document'
 import { clipPlaySec, NARRATION_TRACK_ID } from './audio'
 
 /**
@@ -217,3 +217,73 @@ export function planAudio(doc: EuclidDoc): AudioPlacement[] {
 /** What the export will actually contain — muted lanes removed. */
 export const audibleAudio = (doc: EuclidDoc): AudioPlacement[] =>
   planAudio(doc).filter((p) => !p.muted && p.gain > 0)
+
+/**
+ * When an effect should happen, expressed as a **word** rather than a number.
+ *
+ * The same argument `connect` makes by taking node ids instead of coordinates:
+ * a highlight that fires at 4.2s is correct until the narration is regenerated
+ * with a different phrasing, at which point it is silently wrong and every
+ * frame still looks plausible. A highlight anchored to "derivative" re-syncs
+ * itself, because the words move with the audio that defines them.
+ *
+ * Resolution stays pure — the words live in the document — so an anchored
+ * effect is still a function of (document, time).
+ */
+export interface TimeAnchor {
+  /** The spoken word to fire on. Matched ignoring case and punctuation. */
+  word: string
+  /** Which occurrence of it, 1-based. Default 1. */
+  occurrence?: number
+  /** Shift from the word's start: negative fires early, positive late. */
+  offsetSec?: number
+}
+
+/**
+ * Bare form of a word, for matching.
+ *
+ * TTS alignment deliberately keeps punctuation attached — `cuesFromWords`
+ * breaks subtitle cues on /[.!?]$/ — so "equation." must still match a request
+ * for "equation". Curly apostrophes are folded too, because an agent writing
+ * the script and an agent writing the anchor rarely agree on which one to use.
+ */
+function bareWord(w: string): string {
+  return w
+    .toLowerCase()
+    .replace(/[‘’]/g, "'")
+    .replace(/[^\p{L}\p{N}']/gu, '')
+}
+
+/**
+ * The scene-local second an anchor points at, or null when the word is not
+ * spoken in this scene — including when there is no generated narration yet,
+ * which is the ordinary case while a script is still being written.
+ */
+export function anchorTime(
+  words: NarrationWord[] | undefined,
+  anchor: TimeAnchor,
+): number | null {
+  if (!words?.length) return null
+  const want = bareWord(anchor.word)
+  if (!want) return null
+  const nth = Math.max(1, Math.round(anchor.occurrence ?? 1))
+  let seen = 0
+  for (const w of words) {
+    if (bareWord(w.word) !== want) continue
+    if (++seen === nth) return Math.max(0, w.start + (anchor.offsetSec ?? 0))
+  }
+  return null
+}
+
+/** Every distinct word an anchor could name in this scene, with its times. */
+export function anchorableWords(
+  words: NarrationWord[] | undefined,
+): { word: string; occurrence: number; start: number; end: number }[] {
+  const seen = new Map<string, number>()
+  return (words ?? []).map((w) => {
+    const bare = bareWord(w.word)
+    const occurrence = (seen.get(bare) ?? 0) + 1
+    seen.set(bare, occurrence)
+    return { word: bare, occurrence, start: w.start, end: w.end }
+  })
+}

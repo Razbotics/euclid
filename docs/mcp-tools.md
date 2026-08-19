@@ -120,6 +120,12 @@ shape as `remove_asset`'s `force`.
   `get_project` lists every lane and clip with the times they *actually* play,
   and marks a muted lane `MUTED (silent in the export)`: an unseen mute is a
   render that comes back missing a sound nobody remembers turning off.
+- Timing can be **anchored to speech**: `write_on` and `highlight` take
+  `atWord` instead of a `start`, and the anchor is stored rather than resolved
+  away — so re-generating the narration re-syncs the effect instead of leaving
+  it behind. `get_narration_timing` lists the words and when they are spoken.
+  The written `start` remains as the fallback for a word that is not spoken, so
+  an anchor can never break a render.
 - A graph's **mapping is a node**: `add_axes` owns the rectangle, the ranges
   and the ticks, and `plot_function` takes its `axesId` to borrow them, so a
   curve cannot disagree with the frame it is read against.

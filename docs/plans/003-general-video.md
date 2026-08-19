@@ -1,4 +1,9 @@
-# 003 — General video: assets, clips, reels (status: queued — Phase 5)
+# 003 — General video: assets, clips, reels (status: in progress — Phase 5)
+
+**Where this stands (2026-08-19).** §1 assets, §2 node types and §4 the render
+pipeline are done. §3 has an audio half and no video half. §5 ingest has not
+started and is gated on the rights decision below, which is a product choice
+rather than an implementation one.
 
 Sequenced after animation depth (plans/006) as of 2026-08-16: the argument
 that put general video first was that verification, not visual vocabulary, was
@@ -291,7 +296,13 @@ reported each clip's *file* length, so a 30s bed on an 8s video read as 30s —
 the outline describing audio the export throws away. It reads `planAudio` now,
 and says `(cut from 30s at the end of the video)`.
 
-### 3. Layers within a scene
+### 3. Layers within a scene  (audio done; video half open)
+**Audio landed 2026-08-18** as document-level lanes with mute, gain and fades —
+real tracks, drawn as a lane editor, mixed by one `planAudio`. What that did
+*not* settle is stacking **visual** layers: video, overlay graphics and captions
+still share a scene's node list and z-order, which is enough for a still or a
+clip behind a caption and not enough for a reel.
+
 Scenes are currently *sequential* on the global timeline. A reel is one
 composition with **stacked tracks** (footage, overlay graphics, captions,
 music). Groups give partial z-ordering, but real tracks need explicit
@@ -483,6 +494,34 @@ shot/scene detection → candidate segments`.
 segments; it selects and arranges the ones analysis surfaced, using the
 transcript and shot boundaries as its handles. Each stage is a metered,
 creditable operation.
+
+## Narration-anchored animation (done 2026-08-19)
+
+TTS was chosen for **word-level timestamps** rather than voice quality, and for
+two phases nothing consumed them for animation. Now `write_on` and `highlight`
+accept `atWord`.
+
+The decision that matters is *where the anchor lives*. Resolving a word to a
+number at call time would have been a third of the code and wrong: a highlight
+at 4.2s is correct until the script is rewritten, and then it is silently wrong
+while every frame still looks plausible — the failure mode that has cost two
+milestone runs. So the **anchor is stored** and resolved when the scene is
+sampled. Re-generating narration re-syncs every anchored effect for free.
+
+- `start` stays in the document as the fallback, used when the word is not
+  spoken, so an anchor can never make a render fail — only mis-time it exactly
+  as much as it would have been mis-timed anyway.
+- Resolution happens **once per sampled scene**, in `resolveAnchors`, rather
+  than at each of the dozen places comparing `t` to `tr.start`. An anchor that
+  resolved in some of them and not others would be worse than none.
+- Matching ignores case and punctuation, because the alignment deliberately
+  keeps "equation." attached (`cuesFromWords` breaks cues on sentence ends) and
+  an agent asking for "equation" means that word.
+- Purity survives: the words are part of the document, so an anchored effect is
+  still a function of (document, time).
+
+Proved by rewriting a script so the anchor word moved 1.26s → 6.14s, then
+measuring: 0.41% lit at the old time, 4.87% at the new. `check-narration-sync.ts`.
 
 ## Rights and platform ToS — decide before building the fetcher
 

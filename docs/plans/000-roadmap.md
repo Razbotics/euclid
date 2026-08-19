@@ -251,6 +251,11 @@ a structure read-out for a GLB. That is a file browser doing its job, not a
 document node, and it deliberately stops short of the stage.
 
 ## Phase 5: General video → plans/003-general-video.md
+**In progress.** The capture rework and every node type are done; what remains
+is ingest (gated on a rights decision), narration-anchored animation, and
+stacking *visual* layers — the audio half of that landed, the video half did
+not.
+
 Reinstated as the product direction 2026-08-15, and now sequenced after
 animation depth (2026-08-16) rather than before it — the verification argument
 that promoted it has been satisfied, and depth is the cheaper, more checkable
@@ -324,7 +329,17 @@ capability as a document contact sheet.
       cuts, and fades drawn as the ramps they are
 - [ ] Ingest + analysis (fetch → transcode → STT → shot detection → segments)
 - [ ] Decide the rights/ToS model **before** building the ingest fetcher
-- [ ] Narration-anchored animation (sync to word timestamps)
+- [x] Narration-anchored animation — **done 2026-08-19**. `write_on` and
+      `highlight` take `atWord` instead of a number, and the **anchor is stored
+      in the document** rather than resolved away, so re-generating the
+      narration re-syncs the effect instead of silently leaving it behind. Same
+      argument `connect` makes by taking node ids rather than coordinates:
+      anchored, not positioned. Resolution stays pure — the words are in the
+      document — and happens once per sampled scene, so the dozen places that
+      read `tr.start` are untouched. `get_narration_timing` is the discovery
+      surface. Proved by rewriting a script so "equation" moved 1.26s → 6.14s
+      and measuring the marker follow it: 0.41% lit at the old time against
+      4.87% at the new
 
 ## Phase 6: Real users — launch, and deliberately last
 Moved to the end 2026-08-15. Auth, billing UI and a production deploy are

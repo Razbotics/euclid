@@ -1,4 +1,5 @@
 import {
+  anchorTime,
   ANIMATABLE_PROPS,
   DEFAULT_CAMERA_DISTANCE,
   LIMITS,
@@ -118,7 +119,34 @@ export interface ResolvedScene {
   cam3: Camera3 | null
 }
 
-export function resolveScene(scene: Scene, t: number, canvas?: Canvas): ResolvedScene {
+/**
+ * Replace anchored transition starts with the second the word is actually
+ * spoken, before anything reads them.
+ *
+ * Done once, here, rather than at each of the dozen places that compare `t`
+ * against `tr.start` — an anchor that resolved in some of them and not others
+ * would be worse than one that never resolved. An unmatched word keeps the
+ * written `start`, so an anchor can only improve timing, never break a render.
+ */
+function resolveAnchors(scene: Scene): Scene {
+  const words = scene.narration?.audio?.words
+  if (!words?.length) return scene
+  const fix = (nodes: Scene['nodes']): Scene['nodes'] =>
+    nodes.map((n) => {
+      const transitions = n.transitions.map((tr) => {
+        if (!tr.anchor) return tr
+        const at = anchorTime(words, tr.anchor)
+        return at === null ? tr : { ...tr, start: at }
+      })
+      const children = n.type === 'group' ? fix(n.children) : null
+      if (transitions === n.transitions && !children) return n
+      return { ...n, transitions, ...(children ? { children } : {}) } as typeof n
+    })
+  return { ...scene, nodes: fix(scene.nodes) }
+}
+
+export function resolveScene(rawScene: Scene, t: number, canvas?: Canvas): ResolvedScene {
+  const scene = resolveAnchors(rawScene)
   const camera = resolveCamera(scene, t)
   const nodes = scene.nodes.map((n) => resolveNode(n, t))
 
