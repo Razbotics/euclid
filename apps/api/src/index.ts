@@ -1,6 +1,15 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { docDuration, documentCues, toSRT, toVTT, type EuclidDoc } from '@euclid/dsl'
+import {
+  docDuration,
+  documentCues,
+  toSRT,
+  toVTT,
+  uploadKindFor,
+  LIMITS,
+  UPLOADABLE_MIMES,
+  type EuclidDoc,
+} from '@euclid/dsl'
 import { makeAuth } from './auth'
 import { adjustCredits, billing, handleStripeWebhook } from './billing'
 import { AccessError, docOf, projectStub, requireProjectAccess, slugify } from './shared'
@@ -411,14 +420,53 @@ app.get('/api/jobs/:jobId/download', async (c) => {
  * the query string.
  */
 app.post('/api/projects/:id/assets', async (c) => {
-  if (!isInternal(c)) return c.json({ error: 'forbidden' }, 403)
   const projectId = c.req.param('id')
   const project = await c.env.DB.prepare('SELECT user_id FROM projects WHERE id = ?')
     .bind(projectId)
     .first<{ user_id: string }>()
   if (!project) return c.json({ error: 'project_not_found' }, 404)
 
-  const kind = c.req.query('kind') ?? 'audio'
+  // Two callers with different rights. Server-side producers (TTS, fal, the
+  // render worker) present the internal key and are trusted about `kind`.
+  // **A user uploading their own file** is the other, and is the whole ingest
+  // story since plans/003 chose "users bring their own media" — so this is no
+  // longer internal-only, and what a user sends is checked rather than
+  // believed.
+  const internal = isInternal(c)
+  if (!internal && project.user_id !== c.get('userId')) {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+
+  const mime = c.req.header('content-type') ?? 'application/octet-stream'
+  if (!internal) {
+    const allowed = uploadKindFor(mime)
+    if (!allowed) {
+      return c.json(
+        {
+          error: 'unsupported_type',
+          detail: `${mime} cannot be uploaded`,
+          allowed: Object.keys(UPLOADABLE_MIMES),
+        },
+        415,
+      )
+    }
+    const declared = Number(c.req.header('content-length') ?? 0)
+    if (declared > LIMITS.maxUploadBytes) {
+      return c.json(
+        {
+          error: 'too_large',
+          detail: `${Math.round(declared / 1024 / 1024)}MB exceeds the ` +
+            `${Math.round(LIMITS.maxUploadBytes / 1024 / 1024)}MB limit for one file`,
+        },
+        413,
+      )
+    }
+  }
+
+  // A user's `kind` comes from their file's type, not from their query string:
+  // the two disagreeing is how an image ends up filed as audio and invisible
+  // to add_image.
+  const kind = internal ? (c.req.query('kind') ?? 'audio') : uploadKindFor(mime)!
   if (!ASSET_KINDS.includes(kind)) return c.json({ error: 'invalid_kind', allowed: ASSET_KINDS }, 400)
 
   const durationRaw = c.req.query('durationSec')
@@ -427,17 +475,19 @@ app.post('/api/projects/:id/assets', async (c) => {
     return c.json({ error: 'invalid_duration' }, 400)
   }
 
-  const mime = c.req.header('content-type') ?? 'application/octet-stream'
   if (!c.req.raw.body) return c.json({ error: 'empty_body' }, 400)
 
   try {
-    const { assetId, bytes } = await storeAsset(c.env, projectId, {
+    const { assetId, bytes, path } = await storeAsset(c.env, projectId, {
       kind,
       mime,
       durationSec,
+      // A user's file keeps its name, which is the only thing that makes an
+      // uploaded project navigable; producers pass their own path already.
+      path: c.req.query('name') ? `/${kind}s/${c.req.query('name')}` : null,
       body: c.req.raw.body,
     })
-    return c.json({ assetId, kind, mime, bytes, durationSec })
+    return c.json({ assetId, kind, mime, bytes, durationSec, path })
   } catch {
     return c.json({ error: 'empty_body' }, 400)
   }

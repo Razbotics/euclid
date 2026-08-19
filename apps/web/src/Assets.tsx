@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { buildAssetTree, type AssetFolder, type AssetFile } from '@euclid/dsl'
-import { assetUrl, formatBytes, type AssetsState, type ProjectFile } from './useAssets'
+import { assetUrl, formatBytes, uploadFile, type AssetsState, type ProjectFile } from './useAssets'
 import { fileGlyph, viewerKind } from './FileViewer'
 import { AUDIO_DND_TYPE } from './Timeline'
 
@@ -25,13 +25,48 @@ export function Assets({
   activeId,
   onOpen,
   offline,
+  projectId,
+  onUploaded,
 }: {
   state: AssetsState
   activeId: string | null
   onOpen: (file: ProjectFile) => void
   offline?: boolean
+  /** Project to upload into, and how to tell the explorer to reload after. */
+  projectId?: string | null
+  onUploaded?: () => void
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const [over, setOver] = useState(false)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [failed, setFailed] = useState<string | null>(null)
+
+  // Files dragged from the desktop. The explorer already emits drags *out* of
+  // itself onto the timeline, so `AUDIO_DND_TYPE` is checked first — without
+  // that, dragging a clip to a lane would also read as an upload.
+  const isFileDrag = (e: React.DragEvent) =>
+    e.dataTransfer.types.includes('Files') && !e.dataTransfer.types.includes(AUDIO_DND_TYPE)
+
+  const onDrop = async (e: React.DragEvent) => {
+    if (!projectId || !isFileDrag(e)) return
+    e.preventDefault()
+    setOver(false)
+    setFailed(null)
+    const files = [...e.dataTransfer.files]
+    for (const file of files) {
+      setBusy(file.name)
+      try {
+        await uploadFile(projectId, file)
+      } catch (err) {
+        // Stop at the first refusal and say which file and why: uploading
+        // three of five and reporting "failed" leaves the user guessing.
+        setFailed(`${file.name}: ${(err as Error).message}`)
+        break
+      }
+    }
+    setBusy(null)
+    onUploaded?.()
+  }
   const toggle = (path: string) =>
     setCollapsed((prev) => {
       const next = new Set(prev)
@@ -42,18 +77,45 @@ export function Assets({
   if (offline) return <p className="explorer-note">the offline demo has no project files</p>
   if (state.error) return <p className="explorer-note">{state.error}</p>
   if (!state.files) return <p className="explorer-note">loading…</p>
-  if (state.files.length === 0) return <p className="explorer-note">no files yet</p>
+
+  const body =
+    state.files.length === 0 ? (
+      <p className="explorer-note">
+        no files yet — drop images, video, audio or a .glb here
+      </p>
+    ) : (
+      <Folder
+        folder={buildAssetTree(state.files)}
+        depth={0}
+        collapsed={collapsed}
+        onToggle={toggle}
+        state={state}
+        activeId={activeId}
+        onOpen={onOpen}
+      />
+    )
+
+  if (!projectId) return body
 
   return (
-    <Folder
-      folder={buildAssetTree(state.files)}
-      depth={0}
-      collapsed={collapsed}
-      onToggle={toggle}
-      state={state}
-      activeId={activeId}
-      onOpen={onOpen}
-    />
+    <div
+      className={`explorer-drop${over ? ' over' : ''}`}
+      onDragOver={(e) => {
+        if (!isFileDrag(e)) return
+        e.preventDefault()
+        setOver(true)
+      }}
+      onDragLeave={(e) => {
+        // Only when the pointer really left the explorer: dragging across a
+        // child fires dragleave for the child and would flicker the highlight.
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false)
+      }}
+      onDrop={onDrop}
+    >
+      {body}
+      {busy && <p className="explorer-note">uploading {busy}…</p>}
+      {failed && <p className="explorer-note explorer-error">{failed}</p>}
+    </div>
   )
 }
 

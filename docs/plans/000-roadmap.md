@@ -327,8 +327,17 @@ capability as a document contact sheet.
       ruler, one scroller so no two lanes disagree about where a second is,
       zoom to 8x, clips that drag between lanes, trim from either edge, snap to
       cuts, and fades drawn as the ramps they are
-- [ ] Ingest + analysis (fetch → transcode → STT → shot detection → segments)
-- [ ] Decide the rights/ToS model **before** building the ingest fetcher
+- [~] Ingest + analysis — the **front door is done** (upload); the analysis half
+      (transcode → proxy → probe → STT → shot detection → candidate segments)
+      has not started. "Generate segments" *is* that pipeline: the agent selects
+      from what analysis surfaces rather than inventing cuts
+- [x] Decide the rights/ToS model — **decided 2026-08-19: users bring their own
+      media.** No ToS exposure, no copyright question, smallest build, and it
+      forecloses nothing. The consequence: **there is no fetcher** — upload is
+      the ingest entry point, so `POST /assets` opened to the owning user with
+      a type allowlist, a 500MB ceiling, and `kind` derived from the file
+      rather than from the caller. The editor explorer takes drag-and-drop.
+      Not an MCP tool: bytes stay on REST
 - [x] Narration-anchored animation — **done 2026-08-19**. `write_on` and
       `highlight` take `atWord` instead of a number, and the **anchor is stored
       in the document** rather than resolved away, so re-generating the

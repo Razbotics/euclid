@@ -44,6 +44,37 @@ const ILLEGAL_SEGMENT = /[\u0000-\u001f\u007f\\]/
 export class AssetPathError extends Error {}
 
 /**
+ * What a user is allowed to upload, and which `kind` each type counts as.
+ *
+ * An allowlist rather than a sniff: uploads are the only route media takes
+ * into a project, and "whatever the browser said" is not a decision. Anything
+ * absent here is refused with its own type named, which is more useful than a
+ * generic rejection when someone drags in a `.mov` the browser labelled
+ * `video/quicktime`.
+ */
+export const UPLOADABLE_MIMES: Record<string, string> = {
+  'image/png': 'image',
+  'image/jpeg': 'image',
+  'image/webp': 'image',
+  'image/gif': 'image',
+  'video/mp4': 'video',
+  'video/webm': 'video',
+  'video/quicktime': 'video',
+  'audio/mpeg': 'audio',
+  'audio/mp4': 'audio',
+  'audio/wav': 'audio',
+  'audio/x-wav': 'audio',
+  'audio/ogg': 'audio',
+  'audio/flac': 'audio',
+  'model/gltf-binary': 'model',
+}
+
+/** The asset `kind` for an uploaded mime, or null when it is not allowed. */
+export function uploadKindFor(mime: string): string | null {
+  return UPLOADABLE_MIMES[mime.split(';')[0]!.trim().toLowerCase()] ?? null
+}
+
+/**
  * Canonicalise a virtual path: always absolute, no empty or relative segments,
  * no trailing slash. Rejects `..` outright rather than resolving it — these
  * paths never touch a filesystem, so traversal has no legitimate meaning here

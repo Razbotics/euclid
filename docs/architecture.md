@@ -476,8 +476,14 @@ one. That is what makes an `assetId` embedded in a document safe — a
 `narration.audio.assetId` can never silently start pointing at different
 bytes — and it lets reads cache indefinitely.
 
-Creation (`POST /api/projects/:id/assets`) is internal-key only, because
-producers are server-side (TTS now, ingest later) and never the browser. The
+Creation (`POST /api/projects/:id/assets`) has two callers. Server-side
+producers (TTS, fal, the render worker) present the internal key and are
+trusted about `kind`. **The owning user may also upload**, which since the
+rights decision in plans/003 — users bring their own media, so there is no
+fetcher — is how footage enters a project at all. A user's upload is checked
+rather than believed: a type allowlist, a size ceiling, and `kind` taken from
+the file's own type rather than the query string, because those disagreeing is
+how an image gets filed as audio and becomes invisible to `add_image`. The
 bytes stream straight into R2 so a large clip never has to fit in worker
 memory, and the D1 row is written only once they land — a document must never
 hold an id that resolves to nothing. Reads (`GET /api/assets/:assetId`) are

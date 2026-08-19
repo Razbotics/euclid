@@ -505,3 +505,20 @@ header .back h1 { color: inherit; }
 .camera-frame .canvas-rect { fill: none; stroke: #4a545f; stroke-width: 1; stroke-dasharray: 4 3; }
 .camera-frame .view-rect { fill: rgba(197, 138, 249, 0.16); stroke: #c58af9; stroke-width: 1.5; }
 .camera-readout { font-size: 11px; color: #9aa3ad; font-variant-numeric: tabular-nums; }
+
+/* Drop target for uploads. plans/003 chose "users bring their own media", so
+   this is how footage enters a project at all — it needs to look like a place
+   you can drop something even when the explorer is empty. */
+.explorer-drop {
+  min-height: 100%;
+  border: 1px dashed transparent;
+  border-radius: 6px;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.explorer-drop.over {
+  border-color: var(--accent, #58c4dd);
+  background: color-mix(in srgb, var(--accent, #58c4dd) 8%, transparent);
+}
+.explorer-error {
+  color: #fc6255;
+}

@@ -109,6 +109,31 @@ export function useAssets(projectId: string | null, reloadKey?: string | number)
 }
 
 /** 341KB, 1.2MB — sized to be read at a glance in a tree, not to be exact. */
+/**
+ * Send a user's own file to their project.
+ *
+ * This is the ingest path — plans/003 chose "users bring their own media", so
+ * there is no fetcher and this endpoint is how footage enters at all. The
+ * server decides `kind` from the file's type rather than trusting anything
+ * sent here, and refuses what is not on its allowlist; the message it gives
+ * back is shown as-is, because "video/x-matroska cannot be uploaded" is more
+ * use than "upload failed".
+ */
+export async function uploadFile(projectId: string, file: File): Promise<string> {
+  const res = await fetch(
+    `${API}/api/projects/${projectId}/assets?name=${encodeURIComponent(file.name)}`,
+    {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'content-type': file.type || 'application/octet-stream' },
+      body: file,
+    },
+  )
+  const body = (await res.json().catch(() => ({}))) as { detail?: string; error?: string; assetId?: string }
+  if (!res.ok) throw new Error(body.detail ?? body.error ?? `upload failed (${res.status})`)
+  return body.assetId!
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`

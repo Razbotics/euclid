@@ -106,7 +106,13 @@ function Editor({ projectId }: { projectId: string | null }) {
 
   // Reload the file list when the document's asset references change — that is
   // what a new narration clip looks like from here.
-  const assets = useAssets(projectId, doc ? [...assetIdsInDoc(doc)].sort().join(',') : '')
+  // Uploading does not touch the document, so the document-derived key cannot
+  // notice it — hence a counter the drop handler bumps.
+  const [assetReload, setAssetReload] = useState(0)
+  const assets = useAssets(
+    projectId,
+    `${assetReload}:${doc ? [...assetIdsInDoc(doc)].sort().join(',') : ''}`,
+  )
 
   // The editor column is a tab strip: the canvas is tab zero and never closes,
   // and every opened file is a tab beside it, VS Code style.
@@ -264,7 +270,14 @@ function Editor({ projectId }: { projectId: string | null }) {
               </button>
             </div>
             <div className="panel-body">
-              <Assets state={assets} activeId={activeTab} onOpen={openFile} offline={offline} />
+              <Assets
+                state={assets}
+                activeId={activeTab}
+                onOpen={openFile}
+                offline={offline}
+                projectId={projectId}
+                onUploaded={() => setAssetReload((n) => n + 1)}
+              />
             </div>
           </aside>
         ) : (

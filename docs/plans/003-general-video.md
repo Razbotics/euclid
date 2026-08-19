@@ -1,9 +1,10 @@
 # 003 — General video: assets, clips, reels (status: in progress — Phase 5)
 
 **Where this stands (2026-08-19).** §1 assets, §2 node types and §4 the render
-pipeline are done. §3 has an audio half and no video half. §5 ingest has not
-started and is gated on the rights decision below, which is a product choice
-rather than an implementation one.
+pipeline are done. §3 has an audio half and no video half. The rights question
+is **decided — option 1, users bring their own media** — so §5 ingest is
+unblocked and has its front door: upload. Its analysis half (transcode, proxy,
+probe, STT, shot detection) has not started.
 
 Sequenced after animation depth (plans/006) as of 2026-08-16: the argument
 that put general video first was that verification, not visual vocabulary, was
@@ -537,6 +538,37 @@ default. Realistic options:
 Pick one before writing the ingest fetcher. It also affects positioning: (1)
 is a creator tool, (3) is a repurposing tool, and they attract different
 customers.
+
+### Decided 2026-08-19: **option 1 — users bring their own media**
+
+The only option with no ToS exposure and no copyright question, the smallest
+thing to build, and it forecloses nothing: official APIs (2) or an attestation
+flow (3) can be added later without undoing any of it.
+
+The consequence worth stating plainly: **there is no fetcher, and upload is the
+ingest entry point.** Everything downstream of "get the bytes" — transcode,
+proxies, probe, STT, shot detection, segments — is unchanged by this choice.
+Only the front door is.
+
+So `POST /api/projects/:id/assets` is no longer internal-key only. It now has
+two callers with different rights:
+
+- **Server-side producers** (TTS, fal, the render worker) present the internal
+  key and are trusted about `kind`, as before.
+- **The owning user** may upload their own file. What they send is checked
+  rather than believed: an allowlist of types (`UPLOADABLE_MIMES`), a size
+  ceiling (`LIMITS.maxUploadBytes`, 500MB), and **`kind` derived from the
+  file's own type** rather than from the query string — those two disagreeing
+  is how an image ends up filed as audio and invisible to `add_image`.
+
+Not an MCP tool, deliberately. `mcp-tools.md` already establishes that bytes
+stay on REST, because base64 through an LLM context is a non-starter. The agent
+sees uploads through `list_assets` like any other file.
+
+The editor's explorer is the human half: drag files onto it and they upload,
+filed by their own name. A refusal names the file and the reason, and stops
+rather than continuing — uploading three of five and reporting "failed" leaves
+the user guessing which two.
 
 ## Sequencing
 

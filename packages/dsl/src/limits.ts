@@ -47,6 +47,16 @@ export const LIMITS = {
    */
   maxImportedTriangles: 2000,
   /**
+   * Largest file a user may upload, per file.
+   *
+   * Uploads are the *only* way media enters a project (plans/003 picked
+   * "users bring their own", so there is no fetcher), which makes this the one
+   * place a project's storage can run away. R2 has no practical per-object
+   * limit; this is a product ceiling, and 500MB is comfortably more than the
+   * source clips this edits and comfortably less than a feature film.
+   */
+  maxUploadBytes: 500 * 1024 * 1024,
+  /**
    * Camera distance from the focus plane. The floor keeps the perspective
    * divide away from the scene itself — a camera 10px from a diagram turns it
    * inside out — and the ceiling is orthographic for all practical purposes.
