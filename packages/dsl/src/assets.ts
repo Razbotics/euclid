@@ -24,6 +24,9 @@ export interface AssetRecord {
   height?: number | null
   fps?: number | null
   probedAt?: number | null
+  /** Seconds at which the picture cuts. Null until the file has been watched. */
+  shots?: number[] | null
+  shotsAt?: number | null
 }
 
 /** One line of measured facts about a file, for a listing. */

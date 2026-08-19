@@ -21,6 +21,8 @@ export interface AssetRow {
   height: number | null
   fps: number | null
   probed_at: number | null
+  shots: string | null
+  shots_at: number | null
 }
 
 export const ASSET_KINDS = ['audio', 'video', 'image', 'model']
@@ -132,7 +134,7 @@ export async function listProjectAssets(
   await requireProjectAccess(env, projectId, userId)
   const rows = await env.DB.prepare(
     `SELECT id, kind, mime, bytes, duration_sec, path, r2_key, created_at,
-            width, height, fps, probed_at
+            width, height, fps, probed_at, shots, shots_at
      FROM assets WHERE project_id = ? ORDER BY created_at`,
   )
     .bind(projectId)
@@ -158,6 +160,8 @@ export async function listProjectAssets(
     height: r.height,
     fps: r.fps,
     probedAt: r.probed_at,
+    shots: r.shots ? (JSON.parse(r.shots) as number[]) : null,
+    shotsAt: r.shots_at,
     usedBy: used.has(r.id) || renderKeys.has(r.r2_key),
   })) as (AssetRecord & { usedBy: boolean })[]
 }

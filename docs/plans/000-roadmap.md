@@ -351,9 +351,15 @@ capability as a document contact sheet.
       dimensions and frame rate, and `list_assets` reports them. Probing runs
       in the render worker because it is the only process with ffprobe — a
       Cloudflare Worker has no subprocesses — so it happens on the idle side of
-      the same poll that claims renders. The rest of the analysis half
-      (transcode → proxy → STT → shot detection → candidate segments)
-      has not started. "Generate segments" *is* that pipeline: the agent selects
+      the same poll that claims renders. **Shot detection landed the same day**:
+      `get_shots` reports where a video cuts and the segments those cuts bound,
+      which is what makes a source clip selectable rather than guessable.
+      Verified against a video whose cuts were *chosen* — three 2s clips
+      concatenated — so 2.00s and 4.00s is a match rather than a plausible
+      answer. What is left of the analysis half: **transcode + proxy**
+      (editing on real footage rather than test clips) and **STT**, which still
+      carries an unanswered question — same adapter as TTS, a separate
+      provider, or a fal roster entry now that provider exists? "Generate segments" *is* that pipeline: the agent selects
       from what analysis surfaces rather than inventing cuts
 - [x] Decide the rights/ToS model — **decided 2026-08-19: users bring their own
       media.** No ToS exposure, no copyright question, smallest build, and it

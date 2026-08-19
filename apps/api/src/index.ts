@@ -591,6 +591,35 @@ app.patch('/api/assets/:assetId/probe', async (c) => {
   return c.json({ ok: true })
 })
 
+/**
+ * The shot-detection queue: probed videos nobody has watched yet.
+ *
+ * Separate from the probe queue because the costs are nothing alike — probing
+ * reads a header, detecting shots decodes the whole file — so a long upload
+ * must not hold up the measurement of everything behind it.
+ */
+app.get('/api/assets/shots/next', async (c) => {
+  if (!isInternal(c)) return c.json({ error: 'forbidden' }, 403)
+  const row = await c.env.DB.prepare(
+    `SELECT id, duration_sec FROM assets
+     WHERE kind = 'video' AND probed_at IS NOT NULL AND shots_at IS NULL
+     ORDER BY created_at LIMIT 1`,
+  ).first<{ id: string; duration_sec: number | null }>()
+  return c.json({ asset: row ?? null })
+})
+
+app.patch('/api/assets/:assetId/shots', async (c) => {
+  if (!isInternal(c)) return c.json({ error: 'forbidden' }, 403)
+  const body = (await c.req.json().catch(() => null)) as { shots?: unknown } | null
+  const shots = Array.isArray(body?.shots)
+    ? body.shots.filter((n): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0)
+    : []
+  await c.env.DB.prepare('UPDATE assets SET shots = ?, shots_at = ? WHERE id = ?')
+    .bind(JSON.stringify(shots), Date.now(), c.req.param('assetId'))
+    .run()
+  return c.json({ ok: true, shots: shots.length })
+})
+
 app.get('/api/assets/:assetId', async (c) => {
   const asset = await loadAsset(c.env, c.req.param('assetId'))
   if (!asset) return c.json({ error: 'asset_not_found' }, 404)

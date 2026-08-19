@@ -502,8 +502,29 @@ since someone is waiting on those, and probing fills the gaps. An upload is
 therefore briefly unmeasured, which is why the listing says "not measured yet"
 rather than showing a blank.
 
-Two decisions worth keeping. `probed_at` is a column of its own rather than
-inferring from a null duration: an image legitimately has no duration, and
+**Shot detection landed 2026-08-19.** `get_shots` reports where the picture
+cuts and the segments those cuts bound. That is the piece that makes "generate
+segments" mean something: `add_video` takes a source range, and cutting on a
+boundary is the difference between a clip that reads as a shot and one that
+starts halfway through a movement.
+
+- It is a **separate step from probing**, with its own column and its own
+  queue, because the costs are nothing alike — probing reads a header in
+  milliseconds, this decodes every frame. A ten-minute upload must not hold up
+  the measurement of everything queued behind it, so cheap work runs first.
+- The threshold (`scene > 0.3`) is tuned so a **camera move is not a cut**. A
+  slow pan across a scene stays one segment; only a hard change of picture
+  fires.
+- "Not watched yet" and "no cuts found" are **different answers**, and
+  `get_shots` says which it means. Conflating them would have an agent treat a
+  pending analysis as a continuous take.
+- Verified against cuts that were *chosen* rather than found: three visually
+  distinct two-second clips concatenated, so the truth is exactly 2.0s and
+  4.0s. A detector tested on footage whose cuts nobody knows can only be
+  eyeballed.
+
+Two decisions worth keeping about the probe. `probed_at` is a column of its own
+rather than inferring from a null duration: an image legitimately has no duration, and
 without the timestamp it would be re-probed forever. And a file ffprobe cannot
 read is marked probed anyway — being unreadable is a fact about the file, not a
 reason to retry it on every poll.

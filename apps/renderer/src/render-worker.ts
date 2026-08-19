@@ -313,6 +313,77 @@ async function probeOne(): Promise<boolean> {
   return true
 }
 
+/**
+ * Find where the picture cuts in one video, if any is waiting.
+ *
+ * ffmpeg's `scenechange` score is a normalised measure of how different a frame
+ * is from the one before it; a hard cut spikes it toward 1 while a pan or a
+ * fade does not. 0.3 is the usual working threshold — low enough to catch a cut
+ * between similar shots, high enough not to fire on a camera move.
+ *
+ * This is what makes "segments" mean anything: an agent choosing a clip needs
+ * somewhere sensible to cut, and the alternative is guessing at round numbers.
+ *
+ * Deliberately a separate step from probing. Probing reads a header and takes
+ * milliseconds; this decodes every frame, so a ten-minute upload must not hold
+ * up the measurement of everything queued behind it.
+ */
+async function detectShotsOne(): Promise<boolean> {
+  const res = await fetch(`${API_URL}/api/assets/shots/next`, { headers })
+  if (!res.ok) return false
+  const { asset } = (await res.json()) as {
+    asset: { id: string; duration_sec: number | null } | null
+  }
+  if (!asset) return false
+
+  const tmp = join(tmpdir(), `euclid-shots-${asset.id}`)
+  let shots: number[] = []
+  try {
+    const bytes = await fetch(`${API_URL}/api/assets/${asset.id}`, { headers })
+    if (!bytes.ok) throw new Error(`fetch ${bytes.status}`)
+    await writeFile(tmp, Buffer.from(await bytes.arrayBuffer()))
+
+    // `showinfo` prints one line per frame that survived the select, each
+    // carrying its pts_time — the timestamps are the whole output, so the
+    // encoded frames go to /dev/null.
+    const log = await new Promise<string>((resolve, reject) => {
+      const ff = spawn('ffmpeg', [
+        '-v', 'info',
+        '-i', tmp,
+        '-filter:v', "select='gt(scene,0.3)',showinfo",
+        '-f', 'null', '-',
+      ])
+      let stderr = ''
+      ff.stderr.on('data', (d) => (stderr += d))
+      ff.on('close', (code) => (code === 0 ? resolve(stderr) : reject(new Error(`ffmpeg ${code}`))))
+      ff.on('error', reject)
+    })
+
+    shots = [...log.matchAll(/pts_time:([0-9.]+)/g)]
+      .map((m) => Number(m[1]))
+      .filter((t) => Number.isFinite(t))
+      // A cut in the first fraction of a second is the opening frame, not a
+      // cut — every video "changes" from nothing at its start.
+      .filter((t) => t > 0.25)
+      .sort((a, b) => a - b)
+  } catch (e) {
+    console.error(`  shots ${asset.id.slice(0, 8)} failed: ${(e as Error).message}`)
+  } finally {
+    await unlink(tmp).catch(() => {})
+  }
+
+  await fetch(`${API_URL}/api/assets/${asset.id}/shots`, {
+    method: 'PATCH',
+    headers: { ...headers, 'content-type': 'application/json' },
+    body: JSON.stringify({ shots }),
+  })
+  console.log(
+    `  shots ${asset.id.slice(0, 8)}: ${shots.length} cut(s)` +
+      (shots.length ? ` at ${shots.map((t) => t.toFixed(2)).join(', ')}s` : ''),
+  )
+  return true
+}
+
 console.log(`render worker polling ${API_URL} every ${POLL_MS}ms`)
 let done = 0
 while (running) {
@@ -329,10 +400,18 @@ while (running) {
   if (!next.jobId || !next.projectId) {
     // Idle time is when uploaded files get measured. Renders come first —
     // someone is waiting on those — and probing only fills the gaps.
-    const did = await probeOne().catch((e) => {
+    // Cheap work first: measuring everything waiting beats watching one long
+    // video while three uploads sit unmeasured.
+    let did = await probeOne().catch((e) => {
       console.error(`probe error: ${(e as Error).message}`)
       return false
     })
+    if (!did) {
+      did = await detectShotsOne().catch((e) => {
+        console.error(`shots error: ${(e as Error).message}`)
+        return false
+      })
+    }
     if (!did) await new Promise((r) => setTimeout(r, POLL_MS))
     continue
   }

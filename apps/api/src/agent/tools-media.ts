@@ -185,6 +185,67 @@ export const mediaTools = [
   }),
 
   capability({
+    name: 'get_shots',
+    summary: 'Where a video cuts — the boundaries a clip should start and end on.',
+    doc: [
+      'Free. Lists the seconds at which the picture cuts, detected from the file itself, plus the segment each pair of cuts bounds.',
+      '',
+      'This is what makes a source clip selectable rather than guessable: `add_video` takes `sourceInSec`/`sourceOutSec`, and cutting on a shot boundary is the difference between a clip that reads as a shot and one that starts halfway through a movement.',
+      '',
+      'Detection happens in the background after upload, and takes longer than measuring the file does — it decodes every frame. Until it has run this says so rather than reporting no cuts, because "not looked at yet" and "one continuous take" are very different answers.',
+      '',
+      'A camera move or a fade is deliberately **not** a cut. The threshold is tuned to fire on a hard change of picture, so a slow pan across a scene stays one segment.',
+    ].join('\n'),
+    args: z.object({
+      projectId: PROJECT_ID,
+      assetId: z.string().min(1).describe('a video asset — see list_assets'),
+    }),
+    async handler(ctx, { projectId, assetId }) {
+      await ctx.requireProject(projectId)
+      const assets = await listProjectAssets(ctx.env, projectId, ctx.userId)
+      const asset = assets.find((a) => a.id === assetId)
+      if (!asset) throw new CapabilityError(`asset ${assetId} is not in this project`, 404)
+      if (asset.kind !== 'video') {
+        throw new CapabilityError(`asset ${assetId} is ${asset.kind}, not a video — only video has shots`)
+      }
+      if (!asset.shotsAt) {
+        return said(
+          `${assetId} has not been watched yet — shot detection runs in the background after ` +
+            `upload and decodes the whole file, so it lags the file appearing. Ask again shortly. ` +
+            `(This is not the same as "no cuts found".)`,
+          { shots: null, pending: true },
+        )
+      }
+      const shots = asset.shots ?? []
+      const end = asset.durationSec ?? 0
+      // The cuts are the boundaries; the segments between them are what a
+      // caller actually wants to choose from.
+      const bounds = [0, ...shots, ...(end > 0 ? [end] : [])]
+      const segments = bounds
+        .slice(0, -1)
+        .map((from, i) => ({ from, to: bounds[i + 1]!, index: i }))
+        .filter((seg) => seg.to > seg.from + 0.05)
+      if (shots.length === 0) {
+        return said(
+          `no cuts in ${assetId} — one continuous take of ${end.toFixed(2)}s`,
+          { shots: [], segments, pending: false },
+        )
+      }
+      return said(
+        `${shots.length} cut(s) in ${assetId}, ${segments.length} segment(s):\n` +
+          segments
+            .map(
+              (seg) =>
+                `  ${seg.index}  ${seg.from.toFixed(2)}s → ${seg.to.toFixed(2)}s  ` +
+                `(${(seg.to - seg.from).toFixed(2)}s)`,
+            )
+            .join('\n'),
+        { shots, segments, pending: false },
+      )
+    },
+  }),
+
+  capability({
     name: 'get_captions',
     summary: 'SRT/VTT subtitles for the whole project.',
     doc: 'Free — derived from the document, so always current. Cues are word-accurate where TTS timings exist and estimated from text length elsewhere; `format: "json"` marks which is which per cue.',

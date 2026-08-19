@@ -36,7 +36,10 @@ the copy that cannot go stale.
   `record_answer` *is* a capability: `execute(name="record_answer")`.
 - **Bytes stay on REST.** Tool args are JSON; base64 through an LLM context is
   a non-starter, so asset upload is a plain endpoint (`POST
-  /api/projects/:id/assets`, internal-key only).
+  /api/projects/:id/assets`) rather than a tool. It takes two callers now:
+  server-side producers with the internal key, and **the owning user**, since
+  plans/003 chose "users bring their own media" and upload is therefore the
+  whole ingest front door. The agent sees the result through `list_assets`.
 
 One capability returns an **image**: `preview_frames` hands back a contact
 sheet as an MCP image block beside its caption — the only way an agent can see
@@ -97,12 +100,11 @@ shape as `remove_asset`'s `force`.
   slower ones come back `pending` with a job id. **`get_generation_status` is
   what advances a job** — there is no background worker, so asking is
   collecting. Polling is idempotent and a failure refunds in full.
-- A generated file is **a file, not a frame** — with one exception. The
-  document has no image or video node, so generated stills, clips and music
-  land in the project filesystem and are visible to `list_assets` but cannot
-  appear on the stage. **3D models can**: `import_mesh` reads a `model` asset
-  and lands it as an ordinary mesh node, so the camera, animation and
-  `write_on` all work on it.
+- **Every generated kind now reaches the stage**, by its own door: a still with
+  `add_image`, a clip with `add_video`, a model with `import_mesh` (which
+  decimates it to fit the document), and music onto a lane with
+  `add_audio_clip`. Anything not placed is simply a file the project holds,
+  visible to `list_assets`.
 - An imported mesh is **simplified for storage, not for speed**. Geometry is
   kept in the document, the document lives under one Durable Object key, and DO
   values cap at 128 KiB — so `LIMITS.maxImportedTriangles` (2,000) sits well
@@ -126,6 +128,12 @@ shape as `remove_asset`'s `force`.
   it behind. `get_narration_timing` lists the words and when they are spoken.
   The written `start` remains as the fallback for a word that is not spoken, so
   an anchor can never break a render.
+- Source footage is **selectable, not guessable**: `get_shots` reports where a
+  video cuts and the segments between them, so `add_video`'s source range can
+  land on a boundary. Detection runs in the background after upload and takes
+  longer than measuring the file does, so "not watched yet" is a distinct
+  answer from "no cuts found" — conflating them would read a pending analysis
+  as a continuous take.
 - A graph's **mapping is a node**: `add_axes` owns the rectangle, the ranges
   and the ticks, and `plot_function` takes its `axesId` to borrow them, so a
   curve cannot disagree with the frame it is read against.

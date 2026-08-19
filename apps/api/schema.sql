@@ -44,12 +44,19 @@ CREATE TABLE IF NOT EXISTS assets (
   width INTEGER,
   height INTEGER,
   fps REAL,                  -- video only
-  probed_at INTEGER
+  probed_at INTEGER,
+  -- Shot boundaries, as a JSON array of seconds. Separate from the probe
+  -- above because the costs are nothing alike: probing reads a header, while
+  -- detecting shots decodes the whole video. A file can be measured long
+  -- before it has been watched.
+  shots TEXT,
+  shots_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_assets_project ON assets (project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_assets_path ON assets (project_id, path);
 -- The worker's probe queue: everything never measured, oldest first.
 CREATE INDEX IF NOT EXISTS idx_assets_unprobed ON assets (probed_at, created_at);
+CREATE INDEX IF NOT EXISTS idx_assets_unshot ON assets (shots_at, created_at);
 
 -- Generative asset requests handed to a provider (fal today).
 --
