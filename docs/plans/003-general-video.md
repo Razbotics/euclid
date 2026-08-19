@@ -186,8 +186,36 @@ Still open:
 - Bulk actions, and a "delete every file no scene references" sweep.
 
 ### 2. New node types
-- `video` — `assetId`, `sourceIn`/`sourceOut`, `playbackRate`, fit/crop.
-  Trimming is a source-range property, not a document-time property.
+- ~~`video` — `assetId`, `sourceIn`/`sourceOut`, `playbackRate`, fit/crop.
+  Trimming is a source-range property, not a document-time property.~~
+  **Done 2026-08-19**, and the source-range distinction held up: `startSec`
+  places the clip on the scene, `sourceInSec`/`playSec` choose what of the
+  source it plays, so moving a clip never re-trims it.
+
+#### Video and the purity invariant (2026-08-19)
+
+A video node is the first thing here whose pixels come from a **decoder**
+rather than from arithmetic, which is the one place `(document, time) → frame`
+could plausibly break.
+
+It is split so that the part which must be pure, is. `videoSourceTime` decides
+*which second of the source* belongs to a scene time — pure, testable without a
+browser, and part of the document. Decoding is then a **lookup of that answer**,
+cached by `assetId@millisecond`, exactly as a LaTeX texture is a lookup. It can
+be made faster, retried, or replaced with WebCodecs without changing which frame
+belongs at `t`.
+
+Whether that holds in practice was measured rather than argued: the same
+document rendered twice, in two separate browser processes with two separate
+decoders, comes out **bit-identical** (PSNR inf). `check-video.ts` leads with
+that assertion, because anything finite would mean preview and export can
+disagree.
+
+Deliberate, and stated in the tool doc rather than discovered: a clip outside
+its range draws **nothing** instead of holding its last frame, and video is much
+slower than anything else here — every frame seeks the source and copies a
+picture out of it. A 6s scene with a 3s clip renders in ~13s against ~2s for
+vector content.
 - ~~`audio` — music/SFX with gain, fades, and ducking against narration.~~
   **Done 2026-08-18, but not as a node** — see below.
 - ~~`image` — a still from a project asset.~~ **Done 2026-08-19**: `assetId`,

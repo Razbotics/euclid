@@ -307,7 +307,13 @@ function outlineNodes(nodes: import('./document').EuclidNode[], lines: string[],
                   ? `size=${n.size}`
                   : n.type === 'points3'
                     ? `${n.points.length} points`
-                    : n.type === 'image'
+                    : n.type === 'video'
+                      ? // Where it sits in the scene and what part of the
+                        // source it shows — the two numbers a clip is about.
+                        `${n.width}x${n.height} ${n.fit} @${n.startSec}s src ${n.sourceInSec}s` +
+                        `${n.playSec !== undefined ? `+${n.playSec}s` : ''}` +
+                        `${n.playbackRate !== 1 ? ` ${n.playbackRate}x` : ''} ${n.assetId.slice(0, 8)}`
+                      : n.type === 'image'
                       ? // The asset is the identity; a bare `image img_1a2b`
                         // says nothing about which picture it is.
                         `${n.width}x${n.height} ${n.fit} ${n.assetId.slice(0, 8)}`
@@ -331,4 +337,27 @@ function outlineNodes(nodes: import('./document').EuclidNode[], lines: string[],
 
 function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n - 1) + '…'
+}
+
+/**
+ * Which second of the source a video node shows at scene-local time `t`.
+ *
+ * The whole point of the video node being compatible with the purity
+ * invariant: *this* is the part that must be a pure function of (document,
+ * time), and it is. Decoding is a lookup of the answer, the way a LaTeX
+ * texture is a lookup — it can be cached, retried or made faster without any
+ * of it changing which frame belongs at `t`.
+ *
+ * Returns null before the clip starts and after it ends, which is how the
+ * renderer knows to draw nothing rather than to hold the last frame.
+ */
+export function videoSourceTime(
+  node: { startSec: number; sourceInSec: number; playSec?: number; playbackRate: number },
+  t: number,
+): number | null {
+  const elapsed = t - node.startSec
+  if (elapsed < 0) return null
+  const advanced = elapsed * node.playbackRate
+  if (node.playSec !== undefined && advanced >= node.playSec) return null
+  return node.sourceInSec + advanced
 }

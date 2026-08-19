@@ -1,7 +1,7 @@
 import { Application } from 'pixi.js'
 import { EuclidDocSchema, type EuclidDoc } from '@euclid/dsl'
 import { Assets, Texture } from 'pixi.js'
-import { EuclidStage, type ImageProvider } from '@euclid/engine/pixi'
+import { EuclidStage, type ImageProvider, type VideoProvider } from '@euclid/engine/pixi'
 import { MathJaxTexProvider } from './tex'
 
 /**
@@ -18,6 +18,66 @@ let doc: EuclidDoc | null = null
 let encoder: VideoEncoder | null = null
 /** assetId → data URL, filled by preloadAsset before the first frame. */
 const assetUrls = new Map<string, string>()
+/**
+ * One <video> per asset, seeked to the second the document asked for and
+ * snapshotted into a texture.
+ *
+ * A snapshot rather than a live video texture: a texture backed by a playing
+ * element shows whatever the element happens to be showing when the frame
+ * composites, which is a race, and export is not played back in real time
+ * anyway. Seeking and copying is slower and is the only version that can be a
+ * function of `t`.
+ *
+ * `seeked` is awaited before the copy — Chromium fires it once the frame for
+ * that time is actually presented, and copying before it lands would silently
+ * duplicate the previous frame.
+ */
+const videoEls = new Map<string, HTMLVideoElement>()
+
+async function videoFor(assetId: string): Promise<HTMLVideoElement> {
+  const existing = videoEls.get(assetId)
+  if (existing) return existing
+  const url = assetUrls.get(assetId)
+  if (!url) throw new Error(`asset ${assetId} was not preloaded`)
+  const el = document.createElement('video')
+  el.src = url
+  el.muted = true
+  el.playsInline = true
+  el.preload = 'auto'
+  await new Promise<void>((resolve, reject) => {
+    el.onloadeddata = () => resolve()
+    el.onerror = () => reject(new Error(`asset ${assetId} is not decodable video`))
+  })
+  videoEls.set(assetId, el)
+  return el
+}
+
+const snapshotCanvas = document.createElement('canvas')
+
+const preloadedVideo: VideoProvider = {
+  async getFrame(assetId: string, sourceSec: number) {
+    const el = await videoFor(assetId)
+    // Clamp rather than fail: a document may ask past the end of a clip whose
+    // real duration differs from what was recorded when it was placed.
+    const want = Math.max(0, Math.min(sourceSec, Math.max(0, el.duration - 1e-3)))
+    if (Math.abs(el.currentTime - want) > 1e-4) {
+      await new Promise<void>((resolve, reject) => {
+        el.onseeked = () => resolve()
+        el.onerror = () => reject(new Error(`seek failed on ${assetId}`))
+        el.currentTime = want
+      })
+    }
+    snapshotCanvas.width = el.videoWidth
+    snapshotCanvas.height = el.videoHeight
+    const g = snapshotCanvas.getContext('2d')!
+    g.drawImage(el, 0, 0)
+    // A fresh bitmap per frame: a texture sharing the canvas would change
+    // under the renderer the moment the next frame is drawn into it.
+    const bitmap = await createImageBitmap(snapshotCanvas)
+    return Texture.from(bitmap)
+  },
+}
+
 const preloaded: ImageProvider = {
   async getTexture(assetId: string) {
     const url = assetUrls.get(assetId)
@@ -119,7 +179,11 @@ window.__euclid = {
     })
     document.body.appendChild(app.canvas)
     app.canvas.id = 'euclid-canvas'
-    stage = new EuclidStage(app.stage, { texProvider: new MathJaxTexProvider(), imageProvider: preloaded })
+    stage = new EuclidStage(app.stage, {
+      texProvider: new MathJaxTexProvider(),
+      imageProvider: preloaded,
+      videoProvider: preloadedVideo,
+    })
     return { width: doc.canvas.width, height: doc.canvas.height, fps: doc.canvas.fps }
   },
 

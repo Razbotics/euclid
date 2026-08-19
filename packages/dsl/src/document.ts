@@ -439,6 +439,35 @@ export interface ImageNode extends NodeBase {
 }
 
 /**
+ * A clip from a project asset, played inside a scene.
+ *
+ * Timing is split deliberately. `startSec` is when the clip begins in
+ * **scene** time; `sourceInSec` is where it begins in the **source**. Trimming
+ * is a property of the source range, not of where the node sits on the
+ * timeline, so re-timing a clip never silently re-trims it — the distinction
+ * plans/003 asked for.
+ *
+ * Which source frame belongs to a given scene time is `videoSourceTime`, a
+ * pure function, so the mapping stays part of (document, time) even though the
+ * decoding cannot be.
+ */
+export interface VideoNode extends NodeBase {
+  type: 'video'
+  assetId: string
+  width: number
+  height: number
+  fit: 'contain' | 'cover' | 'fill'
+  /** Scene-local second the clip starts playing. */
+  startSec: number
+  /** Where playback begins inside the source. */
+  sourceInSec: number
+  /** Seconds of source to play. Absent = to the end of the asset. */
+  playSec?: number
+  /** 1 is normal speed; 2 plays the source twice as fast. */
+  playbackRate: number
+}
+
+/**
  * A solid surface: triangles projected, depth-sorted and flat-shaded.
  *
  * The geometry is a *spec* rather than a vertex list — see mesh.ts for why —
@@ -551,6 +580,7 @@ export type EuclidNode =
   | Points3Node
   | MeshNode
   | ImageNode
+  | VideoNode
   | ArrowNode
   | AxesNode
   | GroupNode
@@ -723,6 +753,18 @@ export const NodeSchema: z.ZodType<EuclidNode> = z.lazy(() =>
       width: z.number().positive(),
       height: z.number().positive(),
       fit: z.enum(['contain', 'cover', 'fill']),
+    }),
+    z.object({
+      ...NodeBaseShape,
+      type: z.literal('video'),
+      assetId: z.string().min(1),
+      width: z.number().positive(),
+      height: z.number().positive(),
+      fit: z.enum(['contain', 'cover', 'fill']),
+      startSec: z.number().min(0),
+      sourceInSec: z.number().min(0),
+      playSec: z.number().positive().optional(),
+      playbackRate: z.number().positive().max(8),
     }),
     z.object({
       ...NodeBaseShape,

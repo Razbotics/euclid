@@ -2,7 +2,8 @@ import { assetIdsInDoc, type EuclidDoc } from '@euclid/dsl'
 import type { Page } from 'playwright'
 
 /**
- * Push the images a document draws into the page, as data URLs.
+ * Push the media a document draws — stills and clips — into the page, as
+ * data URLs.
  *
  * The render surface has no session and no internal key, so it cannot fetch a
  * project asset itself. Both capture paths therefore have to do this — the
@@ -18,7 +19,10 @@ export function imageAssetIds(doc: EuclidDoc): string[] {
   const drawn = new Set<string>()
   const walk = (nodes: EuclidDoc['scenes'][number]['nodes']): void => {
     for (const n of nodes) {
-      if (n.type === 'image') drawn.add(n.assetId)
+      // Both kinds the *stage* draws. Video is fetched whole rather than
+      // streamed: the page seeks around inside it, and a data URL it already
+      // holds is the only version of that which needs no session.
+      if (n.type === 'image' || n.type === 'video') drawn.add(n.assetId)
       else if (n.type === 'group') walk(n.children)
     }
   }

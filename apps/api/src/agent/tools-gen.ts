@@ -86,7 +86,7 @@ export const genTools = [
       rosterFor('video'),
       WAITING,
       '',
-      '**Nothing plays this in a frame yet.** The document has no video node, and compositing decoded video through the current per-frame capture path is the reason plans/003 replaces that path with WebCodecs first. The clip is a project asset you can download; putting it on a timeline is the general-video phase.',
+      '**Then put it in a scene with `add_video`**, which plays the clip as an ordinary node. Note that video is much slower to render than anything else — every frame seeks the source and copies a picture out of it.',
     ].join('\n'),
     costsCredits: true,
     args: z.object({

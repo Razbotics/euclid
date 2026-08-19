@@ -242,12 +242,8 @@ now fixed, and the first is the one worth remembering:
   capability named in prose goes through a `ref()` that throws at module load.
   All three were verified to fail before being trusted
 
-**Video is now the only generated kind that cannot reach the stage.** A
-generated model goes in with `import_mesh`, a still with `add_image`, and music
-onto an audio lane. The worry recorded here — that doing images first would
-build a display seam the video work must rewrite — did not survive contact:
-the seam is an `imageProvider` on the stage plus one shared preload, and a
-video node needs exactly the same two things with a decoder behind them.
+**Every generated kind now reaches the stage**: a still with `add_image`, a
+clip with `add_video`, a model with `import_mesh`, and music onto an audio lane.
 
 The editor can now **look** at one, which is a different claim: the explorer
 opens any asset inline (2026-08-17, plans/003) — image, video, audio, text, and
@@ -296,8 +292,18 @@ capability as a document contact sheet.
 - [x] Assets as first-class (registry) — done in Phase 2; the editor is a
       three-column workbench (explorer | canvas | scene) whose explorer opens
       any file inline (2026-08-17); proxies/thumbnails still to do
-- [~] `video` / `audio` / `image` node types; tracks and layering within a scene
-      — **image done 2026-08-19**: `add_image` draws a project asset as an
+- [x] `video` / `audio` / `image` node types; tracks and layering within a scene
+      — **video done 2026-08-19**, which closes this item. `add_video` plays a
+      clip as an ordinary node, with **two separate times**: `startSec` on the
+      scene and `sourceInSec` in the source, so re-timing a clip never
+      re-trims it. Outside its range it draws nothing rather than freezing.
+      The purity invariant survives the first thing in this system whose pixels
+      come from a decoder: `videoSourceTime` is a pure function deciding *which*
+      frame, decoding is a cached lookup of it, and two independent renders in
+      separate browsers come out **bit-identical** (PSNR inf) — which is the
+      assertion `check-video.ts` leads with. Cost is honest rather than hidden:
+      every frame seeks the source and copies a picture out of it, and
+      `add_video` says so. **image done 2026-08-19**: `add_image` draws a project asset as an
       ordinary node (contain/cover/fill), so a generated still finally reaches
       the frame. The document holds an `assetId`, never a URL, and the stage
       takes an `imageProvider` because the two surfaces answer it differently —

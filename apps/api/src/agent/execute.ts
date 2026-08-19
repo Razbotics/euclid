@@ -28,6 +28,7 @@ const NODE_BLURBS: Record<EuclidNode['type'], { group: NodeGroup; phrase: string
   line: { group: 'basic', phrase: 'shapes' },
   path: { group: 'basic', phrase: 'paths and plotted curves' },
   image: { group: 'basic', phrase: 'image for a still from a project asset' },
+  video: { group: 'basic', phrase: 'video for a clip, trimmed by source range' },
   axes: { group: 'basic', phrase: 'axes a plot can borrow' },
   group: { group: 'basic', phrase: 'groups that move their children together' },
   matrix: {

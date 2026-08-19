@@ -7,6 +7,7 @@ import {
   formatTick,
   niceStep,
   plotMapping,
+  videoSourceTime,
   globalToScene,
   gridOf,
   gridSize,
@@ -21,6 +22,7 @@ import {
   type Axes3dNode,
   type AxesNode,
   type ImageNode,
+  type VideoNode,
   type MatrixNode,
   type MeshData,
   type MeshNode,
@@ -68,6 +70,19 @@ import {
  */
 export interface ImageProvider {
   getTexture(assetId: string): Promise<Texture>
+}
+
+/**
+ * A single frame of a video asset, at an exact second of the source.
+ *
+ * Separate from ImageProvider because the answer depends on *when*, and
+ * because the implementations differ in kind: a still is fetched once, a frame
+ * has to be sought. The stage asks the same question either way — give me
+ * pixels — and `videoSourceTime` has already decided which second to ask for,
+ * so the decision stays in the document and only the decoding is out here.
+ */
+export interface VideoProvider {
+  getFrame(assetId: string, sourceSec: number): Promise<Texture>
 }
 
 export interface TexProvider {
@@ -318,19 +333,33 @@ export class EuclidStage {
    */
   private meshCache = new Map<string, MeshData>()
   private imageCache = new Map<string, Texture | 'pending'>()
+  /** Keyed by `assetId@second`, so scrubbing back to a time reuses its frame. */
+  private videoCache = new Map<string, Texture | 'pending'>()
   private pendingTex = new Set<Promise<unknown>>()
   private currentSceneId: string | null = null
   /** The 3D half of the camera while a spatial scene is being drawn; null when flat. */
   private cam3: Camera3 | null = null
+  /**
+   * Scene-local time of the frame being drawn. Held the way `cam3` is, because
+   * a video node needs to know *when* it is and `ResolvedNode` describes a node
+   * rather than the moment.
+   */
+  private localT = 0
   private texProvider: TexProvider | null
   private imageProvider: ImageProvider | null
+  private videoProvider: VideoProvider | null
 
   constructor(
     private root: Container,
-    opts?: { texProvider?: TexProvider; imageProvider?: ImageProvider },
+    opts?: {
+      texProvider?: TexProvider
+      imageProvider?: ImageProvider
+      videoProvider?: VideoProvider
+    },
   ) {
     this.texProvider = opts?.texProvider ?? null
     this.imageProvider = opts?.imageProvider ?? null
+    this.videoProvider = opts?.videoProvider ?? null
     root.addChild(this.bg)
     root.addChild(this.layer)
     root.addChild(this.overlay)
@@ -362,6 +391,7 @@ export class EuclidStage {
     this.bg.clear()
     this.bg.rect(0, 0, doc.canvas.width, doc.canvas.height).fill(at.scene.background)
 
+    this.localT = at.localT
     const resolved = resolveScene(at.scene, at.localT, doc.canvas)
     this.applyCamera(resolved.camera, doc.canvas)
     this.cam3 = resolved.cam3
@@ -635,6 +665,7 @@ export class EuclidStage {
       case 'axes':
         content = new Graphics()
         break
+      case 'video':
       case 'image': {
         // A container around the sprite so `cover` can crop with its own mask
         // without competing for the one a `write` reveal uses.
@@ -727,6 +758,9 @@ export class EuclidStage {
       }
       case 'image':
         this.updateImage(item, res, node)
+        return
+      case 'video':
+        this.updateVideo(item, res, node)
         return
       case 'latex':
         this.updateLatex(item, res, node)
@@ -1197,26 +1231,40 @@ export class EuclidStage {
       sprite.visible = false
       return
     }
+    this.fitInto(item, holder, sprite, texture, res.props.width as number, res.props.height as number, node.fit)
+  }
+
+  /**
+   * Size a sprite into its box and crop the overflow when the fit demands it.
+   * Shared by image and video so the two can never disagree about what
+   * `cover` means.
+   */
+  private fitInto(
+    item: Item,
+    holder: Container,
+    sprite: Sprite,
+    texture: Texture,
+    w: number,
+    h: number,
+    fit: 'contain' | 'cover' | 'fill',
+  ): void {
     sprite.visible = true
     sprite.texture = texture
-
-    const w = res.props.width as number
-    const h = res.props.height as number
     const tw = texture.width || 1
     const th = texture.height || 1
 
-    if (node.fit === 'fill') {
+    if (fit === 'fill') {
       sprite.width = w
       sprite.height = h
     } else {
       // contain fits inside the box, cover fills it and spills; the spill is
       // what the crop below removes.
-      const k = node.fit === 'cover' ? Math.max(w / tw, h / th) : Math.min(w / tw, h / th)
+      const k = fit === 'cover' ? Math.max(w / tw, h / th) : Math.min(w / tw, h / th)
       sprite.width = tw * k
       sprite.height = th * k
     }
 
-    if (node.fit === 'cover') {
+    if (fit === 'cover') {
       if (!item.cropMask) {
         item.cropMask = new Graphics()
         holder.addChild(item.cropMask)
@@ -1228,6 +1276,57 @@ export class EuclidStage {
       item.cropMask.destroy()
       item.cropMask = undefined
     }
+  }
+
+  /**
+   * Draw the source frame that belongs at this scene time.
+   *
+   * `videoSourceTime` decides which second; everything here is about getting
+   * it. Outside the clip's range it draws nothing rather than holding the last
+   * frame — a clip that has ended should leave the scene, not freeze in it.
+   */
+  private updateVideo(item: Item, res: ResolvedNode, node: VideoNode): void {
+    const holder = item.content as Container
+    if (!item.imageSprite) item.imageSprite = holder.children[0] as Sprite
+    const sprite = item.imageSprite
+
+    const sourceSec = videoSourceTime(node, this.localT)
+    if (sourceSec === null) {
+      sprite.visible = false
+      return
+    }
+    const texture = this.videoFrame(node.assetId, sourceSec)
+    if (!texture) {
+      sprite.visible = false
+      return
+    }
+    this.fitInto(item, holder, sprite, texture, res.props.width as number, res.props.height as number, node.fit)
+  }
+
+  /**
+   * A decoded frame, or null while it is being fetched.
+   *
+   * Quantised to the millisecond in the cache key: asking for 1.2000001s and
+   * 1.2s must not decode twice, and a document evaluated at the same `t` must
+   * land on the same key or the frame cache would never hit.
+   */
+  private videoFrame(assetId: string, sourceSec: number): Texture | null {
+    const key = `${assetId}@${Math.round(sourceSec * 1000)}`
+    const cached = this.videoCache.get(key)
+    if (cached && cached !== 'pending') return cached
+    if (cached === 'pending' || !this.videoProvider) return null
+    this.videoCache.set(key, 'pending')
+    const p = this.videoProvider
+      .getFrame(assetId, sourceSec)
+      .then((tex) => {
+        this.videoCache.set(key, tex)
+      })
+      .catch(() => {
+        this.videoCache.delete(key)
+      })
+      .finally(() => this.pendingTex.delete(p))
+    this.pendingTex.add(p)
+    return null
   }
 
   /**

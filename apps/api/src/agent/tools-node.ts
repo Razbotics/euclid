@@ -507,6 +507,107 @@ export const nodeTools = [
   }),
 
   capability({
+    name: 'add_video',
+    summary: 'Play a video clip from a project asset inside a scene.',
+    doc: [
+      'Free. Draws a clip as an ordinary node, so the camera, opacity and animation work on it like anything else.',
+      '',
+      '**Two different times, and confusing them is the usual mistake.** `startSec` is when the clip begins in *scene* time; `sourceInSec` is where it begins inside the *source file*. Trimming is a property of the source range, so moving a clip later on the timeline never re-trims it. `playSec` is how much source to play — leave it out to run to the end of the asset.',
+      '',
+      'Outside its range the node draws **nothing** rather than holding a frame: a clip that has finished should leave the scene, not freeze in it. Check the scene is long enough — `startSec + playSec / playbackRate` is when it ends, and a scene shorter than that truncates it silently, the way it truncates any other effect.',
+      '',
+      '`width`/`height` are the box and `fit` behaves as it does for add_image: contain letterboxes, cover crops, fill stretches.',
+      '',
+      '**This is slower than everything else in the system.** Every frame seeks the source and copies a picture out of it, so a scene with a clip renders at a fraction of the speed of one without. It is correct, and it is not fast; preview_frames on a clip-heavy scene takes noticeably longer than you will expect.',
+    ].join('\n'),
+    args: z.object({
+      projectId: PROJECT_ID,
+      sceneId: SCENE_ID,
+      assetId: z.string().min(1).describe('a video asset — see list_assets'),
+      x: z.number().describe('centre x'),
+      y: z.number().describe('centre y'),
+      width: z.number().positive(),
+      height: z.number().positive(),
+      fit: z.enum(['contain', 'cover', 'fill']).default('contain'),
+      startSec: z.number().min(0).default(0).describe('scene-local second the clip begins'),
+      sourceInSec: z.number().min(0).default(0).describe('where to start inside the source'),
+      playSec: z.number().positive().optional().describe('seconds of source; default the rest'),
+      playbackRate: z.number().positive().max(8).default(1),
+      parentId: z.string().optional(),
+    }),
+    async handler(ctx, args) {
+      const { projectId, sceneId, assetId, x, y, width, height, fit } = args
+      const { startSec, sourceInSec, playSec, playbackRate, parentId } = args
+      const { doc } = await ctx.getDoc(projectId)
+      const scene = ctx.sceneOrThrow(doc, sceneId)
+
+      const asset = await loadAsset(ctx.env, assetId)
+      if (!asset) throw new CapabilityError(`asset ${assetId} not found`, 404)
+      if (asset.project_id !== projectId) {
+        throw new CapabilityError(`asset ${assetId} belongs to another project`, 403)
+      }
+      if (asset.kind !== 'video') {
+        throw new CapabilityError(
+          `asset ${assetId} is ${asset.kind}, not video. add_video plays clips; ` +
+            (asset.kind === 'image'
+              ? 'a still goes in with add_image.'
+              : asset.kind === 'model'
+                ? 'a 3D model goes in with import_mesh.'
+                : 'audio is placed on a lane with add_audio_clip.'),
+        )
+      }
+
+      const id = newId('vid')
+      await ctx.submit(projectId, [
+        op.addNode(
+          sceneId,
+          {
+            ...baseNode({ x, y }),
+            id,
+            type: 'video',
+            assetId,
+            width,
+            height,
+            fit,
+            startSec,
+            sourceInSec,
+            ...(playSec !== undefined ? { playSec } : {}),
+            playbackRate,
+          },
+          parentId,
+        ),
+      ])
+
+      // What the clip will actually play, given the asset and the scene. Said
+      // out loud because both ways of losing the end of a clip — a short scene
+      // and a short source — look identical in a render: it simply stops.
+      const available = (asset.duration_sec ?? 0) - sourceInSec
+      const wanted = playSec ?? (available > 0 ? available : 0)
+      const endsAt = startSec + wanted / playbackRate
+      const notes: string[] = []
+      if (available > 0 && wanted > available + 0.01) {
+        notes.push(
+          `the source only has ${available.toFixed(2)}s left after sourceInSec=${sourceInSec}, ` +
+            `so playback stops there`,
+        )
+      }
+      if (endsAt > scene.duration + 0.01) {
+        notes.push(
+          `it would run to ${endsAt.toFixed(2)}s but the scene ends at ${scene.duration}s — ` +
+            `lengthen the scene or lower playSec`,
+        )
+      }
+      return said(
+        `created video ${id} (${width}x${height}, ${fit}) from ${assetId}: scene ${startSec}s→` +
+          `${endsAt.toFixed(2)}s playing source ${sourceInSec}s` +
+          `${playbackRate !== 1 ? ` at ${playbackRate}x` : ''}` +
+          (notes.length ? `\nWARNING: ${notes.join('; ')}` : ''),
+        { nodeId: id, endsAt },
+      )
+    },
+  }),
+
+  capability({
     name: 'update_node',
     summary: 'Shallow-patch node properties (id/type immutable).',
     doc: [
