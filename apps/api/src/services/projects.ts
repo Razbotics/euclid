@@ -21,6 +21,7 @@ export async function createProject(
   env: Env,
   name: string,
   userId: string,
+  canvas?: { width: number; height: number; fps: 30 | 60 },
 ): Promise<{ id: string; name: string }> {
   const id = crypto.randomUUID()
   const trimmed = name.trim()
@@ -29,7 +30,7 @@ export async function createProject(
     .run()
   await projectStub(env, id).fetch('https://do/init', {
     method: 'POST',
-    body: JSON.stringify({ id, name: trimmed }),
+    body: JSON.stringify({ id, name: trimmed, canvas }),
   })
   return { id, name: trimmed }
 }

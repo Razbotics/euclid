@@ -611,8 +611,9 @@ the user guessing which two.
 - Does the editor need a real multi-track timeline UI before or after video
   nodes land? (Probably before — a reel is unusable on a scene-strip.)
 - ~~Do reels want vertical-first canvas presets (1080×1920) as a document
-  concern, or just a canvas size?~~ **Now a task, not a question** (requested
-  2026-08-19). It is just a canvas size — but a vertical video cannot be made
+  concern, or just a canvas size?~~ **Answered and done 2026-08-19: just a
+  canvas size, plus named presets.** The blocker was that a vertical video
+  could not be made at all — It is just a canvas size — but a vertical video cannot be made
   at all today, because `LIMITS.maxCanvasHeight` is 1080 and `1080x1920` fails
   the schema. The ceiling encodes 16:9 where it meant to encode a resolution
   budget. Fixing it means bounding *pixels* rather than width-and-height, plus

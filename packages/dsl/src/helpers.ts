@@ -165,12 +165,15 @@ export function collectNodeIds(nodes: EuclidNode[], into: string[] = []): string
   return into
 }
 
-export function emptyDoc(id: string, name: string): EuclidDoc {
+export function emptyDoc(id: string, name: string, canvas?: Canvas): EuclidDoc {
   return {
     schema: SCHEMA_VERSION,
     id,
     name,
-    canvas: { width: 1920, height: 1080, fps: 60 },
+    // Landscape by default, because most things still are — but the shape is
+    // chosen at creation and never changes afterwards: coordinates are canvas
+    // pixels, so reshaping a laid-out document would move every node.
+    canvas: canvas ?? { width: 1920, height: 1080, fps: 60 },
     scenes: [],
   }
 }

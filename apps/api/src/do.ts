@@ -46,9 +46,13 @@ export class ProjectDO extends DurableObject<Env> {
     }
 
     if (url.pathname === '/init' && request.method === 'POST') {
-      const body = (await request.json()) as { id: string; name: string }
+      const body = (await request.json()) as {
+        id: string
+        name: string
+        canvas?: { width: number; height: number; fps: 30 | 60 }
+      }
       if (!this.doc) {
-        this.doc = emptyDoc(body.id, body.name)
+        this.doc = emptyDoc(body.id, body.name, body.canvas)
         await this.ctx.storage.put({ doc: this.doc, version: this.version })
       }
       return json({ version: this.version })

@@ -1,5 +1,13 @@
 import { z } from 'zod'
-import { effectsPastEnd, formatOverruns, newId, op, outlineDoc } from '@euclid/dsl'
+import {
+  CANVAS_PRESETS,
+  LIMITS,
+  effectsPastEnd,
+  formatOverruns,
+  newId,
+  op,
+  outlineDoc,
+} from '@euclid/dsl'
 import { createProject, deleteProject, listProjects, projectContents } from '../services/projects'
 import { PROJECT_ID, SCENE_ID, COLOR } from './schemas'
 import { capability, said, CapabilityError } from './types'
@@ -24,13 +32,50 @@ export const projectTools = [
 
   capability({
     name: 'create_project',
-    summary: 'Create a new video project (1920x1080 @ 60fps).',
-    doc: 'Creates an empty project and its document. Free. Returns the project id — hold on to it; every other capability needs it. Add scenes with add_scene before adding any nodes.',
-    args: z.object({ name: z.string().min(1) }),
-    async handler(ctx, { name }) {
+    summary: 'Create a new video project. Pick a shape — landscape, portrait, square.',
+    doc: [
+      'Creates an empty project and its document. Free. Returns the project id — hold on to it; every other capability needs it. Add scenes with add_scene before adding any nodes.',
+      '',
+      '**The shape is a decision, and it is easier to make now than later.** Coordinates are canvas pixels, so a layout built for 1920x1080 does not survive being reshaped to 1080x1920 — every node would need moving.',
+      '',
+      Object.entries(CANVAS_PRESETS)
+        .map(([k, v]) => `- \`${k}\` — ${v.width}x${v.height}, ${v.note}`)
+        .join('\n'),
+      '',
+      'They all cost the same to render: the ceiling is a **pixel budget**, not a resolution, so any arrangement within it is equally cheap. `width`/`height` override the preset for anything unusual — both must be even, since H.264 cannot encode an odd size.',
+    ].join('\n'),
+    args: z.object({
+      name: z.string().min(1),
+      shape: z.enum(['landscape', 'portrait', 'square', 'vertical_4_5']).default('landscape'),
+      width: z.number().int().optional().describe('overrides the preset'),
+      height: z.number().int().optional().describe('overrides the preset'),
+      fps: z.union([z.literal(30), z.literal(60)]).default(60),
+    }),
+    async handler(ctx, { name, shape, width, height, fps }) {
       if (!name.trim()) throw new CapabilityError('name cannot be blank')
-      const project = await createProject(ctx.env, name, ctx.userId)
-      return said(`created project ${project.id} "${project.name}"`, project)
+      const preset = CANVAS_PRESETS[shape]
+      const canvas = { width: width ?? preset.width, height: height ?? preset.height, fps }
+      // Checked here so the refusal names the argument, rather than surfacing
+      // as a document-validation error from two layers down.
+      if (canvas.width % 2 !== 0 || canvas.height % 2 !== 0) {
+        throw new CapabilityError(
+          `${canvas.width}x${canvas.height} has an odd dimension; H.264 cannot encode one. ` +
+            `Round both to even numbers.`,
+        )
+      }
+      if (canvas.width * canvas.height > LIMITS.maxCanvasPixels) {
+        throw new CapabilityError(
+          `${canvas.width}x${canvas.height} is ${((canvas.width * canvas.height) / 1e6).toFixed(1)}M ` +
+            `pixels, over the ${(LIMITS.maxCanvasPixels / 1e6).toFixed(1)}M budget. Any shape fits ` +
+            `within it — 1920x1080, 1080x1920 and 1440x1440 all cost the same.`,
+        )
+      }
+      const project = await createProject(ctx.env, name, ctx.userId, canvas)
+      return said(
+        `created project ${project.id} "${project.name}" — ${canvas.width}x${canvas.height} @ ${fps}fps ` +
+          `(centre is ${canvas.width / 2}, ${canvas.height / 2})`,
+        { ...project, canvas },
+      )
     },
   }),
 

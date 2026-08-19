@@ -327,8 +327,17 @@ capability as a document contact sheet.
       ruler, one scroller so no two lanes disagree about where a second is,
       zoom to 8x, clips that drag between lanes, trim from either edge, snap to
       cuts, and fades drawn as the ramps they are
-- [ ] **Variable aspect ratios — a vertical or square video is impossible
-      today.** `LIMITS.maxCanvasHeight` is 1080, so `1080x1920` is rejected by
+- [x] **Variable aspect ratios — done 2026-08-19.** `create_project` takes a
+      `shape`: landscape 1920x1080, portrait 1080x1920, square 1440x1440,
+      4:5 1152x1440. The fix was to stop expressing the ceiling as a width and
+      a height — `maxCanvasWidth/Height` reads like a resolution budget and is
+      really a *shape* — and express it as **pixels plus a longest side**, under
+      which every preset costs exactly the same. Odd dimensions are refused up
+      front because H.264 cannot encode one, which is a failure that otherwise
+      arrives minutes into a render. Verified by `check-shapes.ts`: a 9:16
+      scene draws and **exports as 1080x1920**, since a pipeline that quietly
+      re-framed to 16:9 would pass every other check and still be wrong.
+      Previously recorded as: `LIMITS.maxCanvasHeight` is 1080, so `1080x1920` is rejected by
       the document schema outright: the ceiling encodes 16:9 rather than a
       resolution budget. Needs a limit expressed as *pixels* rather than as
       width-and-height, plus presets (9:16, 1:1, 4:5) and an editor that frames

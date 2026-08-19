@@ -965,9 +965,28 @@ export interface Canvas {
   fps: 30 | 60
 }
 export const CanvasSchema: z.ZodType<Canvas> = z.object({
-  width: z.number().int().min(16).max(LIMITS.maxCanvasWidth),
-  height: z.number().int().min(16).max(LIMITS.maxCanvasHeight),
+  width: z.number().int().min(16).max(LIMITS.maxCanvasDimension),
+  height: z.number().int().min(16).max(LIMITS.maxCanvasDimension),
   fps: z.union([z.literal(30), z.literal(60)]),
+}).superRefine((canvas, ctx) => {
+  // Even dimensions, because H.264 chroma subsampling requires them and
+  // libx264 refuses an odd size outright — a failure that would otherwise
+  // arrive minutes into a render rather than when the canvas was set.
+  if (canvas.width % 2 !== 0 || canvas.height % 2 !== 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `canvas must have even dimensions (got ${canvas.width}x${canvas.height}); H.264 cannot encode an odd size`,
+    })
+  }
+  if (canvas.width * canvas.height > LIMITS.maxCanvasPixels) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        `${canvas.width}x${canvas.height} is ${(canvas.width * canvas.height / 1e6).toFixed(1)}M pixels, ` +
+        `over the ${(LIMITS.maxCanvasPixels / 1e6).toFixed(1)}M budget. Any shape fits within it — ` +
+        `1920x1080, 1080x1920 and 1440x1440 all cost the same.`,
+    })
+  }
 })
 
 export interface EuclidDoc {

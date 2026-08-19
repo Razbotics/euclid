@@ -561,6 +561,29 @@ Measured end to end on a 19s test render: effects at gain 0.5 read −21.2 dB
 against a −15.2 dB source (halving amplitude is −6.02 dB), the 3→6s gap reads
 −91 dB, and the bed's 3s fade-out reads −47.4 dB.
 
+## The canvas is a pixel budget, not a resolution
+
+`LIMITS` bounds the canvas by **total pixels and a longest side**, not by a
+width and a height. The distinction is not pedantic: the old
+`maxCanvasWidth: 1920, maxCanvasHeight: 1080` reads like a resolution budget
+and is actually a *shape*, and it made `1080x1920` fail the document schema —
+so a vertical video, the native format of most of what this is pointed at,
+could not be created at all.
+
+Under a budget, 1920x1080, 1080x1920 and 1440x1440 all cost the same, which is
+the truth of it: the renderer cares how many pixels it must fill, never how
+they are arranged. `CANVAS_PRESETS` names the useful shapes so the editor and
+the agent mean the same thing by "portrait".
+
+Dimensions must be **even**, checked at creation rather than at export: H.264
+chroma subsampling requires it, libx264 refuses an odd size outright, and that
+refusal would otherwise arrive minutes into a render.
+
+The shape is chosen when a project is created and does not change afterwards.
+Coordinates are canvas pixels, so reshaping a laid-out document would move
+every node — the tool says so rather than offering a resize that quietly
+ruins a layout.
+
 ## Probing uploaded media
 
 An uploaded file arrives as bytes and nothing more. Duration, dimensions and

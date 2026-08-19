@@ -1,8 +1,21 @@
 /** Hard product ceilings for v1. Enforced by the document schema and the render endpoint. */
 export const LIMITS = {
   maxDurationSec: 600,
-  maxCanvasWidth: 1920,
-  maxCanvasHeight: 1080,
+  /**
+   * The canvas is bounded by **pixels and a longest side**, not by a width and
+   * a height.
+   *
+   * It used to be `maxCanvasWidth: 1920, maxCanvasHeight: 1080`, which reads
+   * like a resolution budget and is actually a *shape*: it makes 1080x1920
+   * fail the schema, so a vertical video — the native format of everything
+   * this is pointed at — could not be created at all.
+   *
+   * A budget of 1920x1080 pixels admits 16:9 (1920x1080), 9:16 (1080x1920) and
+   * 1:1 (1440x1440) at exactly the same cost, which is the point: the renderer
+   * cares how many pixels it must fill, never how they are arranged.
+   */
+  maxCanvasDimension: 1920,
+  maxCanvasPixels: 1920 * 1080,
   maxScenes: 100,
   maxNodesPerScene: 200,
   maxOpsPerEnvelope: 50,
@@ -89,3 +102,19 @@ export function ttsCost(text: string): number {
   if (chars === 0) return 0
   return Math.max(1, Math.ceil((chars / TTS_CHARS_PER_MINUTE) * CREDIT_COSTS.ttsPerMinute))
 }
+
+/**
+ * Canvas shapes worth naming.
+ *
+ * All of them cost the same to render — `LIMITS.maxCanvasPixels` is a pixel
+ * budget, not a resolution — so the choice is purely about where the video is
+ * going. Every one has even dimensions, which H.264 requires.
+ */
+export const CANVAS_PRESETS = {
+  landscape: { width: 1920, height: 1080, note: '16:9 — YouTube, embeds, anything widescreen' },
+  portrait: { width: 1080, height: 1920, note: '9:16 — reels, shorts, stories' },
+  square: { width: 1440, height: 1440, note: '1:1 — feed posts' },
+  vertical_4_5: { width: 1152, height: 1440, note: '4:5 — the tallest most feeds will show' },
+} as const
+
+export type CanvasPreset = keyof typeof CANVAS_PRESETS
