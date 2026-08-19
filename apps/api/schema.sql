@@ -35,10 +35,21 @@ CREATE TABLE IF NOT EXISTS assets (
   bytes INTEGER NOT NULL,
   duration_sec REAL,         -- audio/video only; NULL for images
   path TEXT,                 -- virtual path, e.g. /narration/scene-1.mp3; folders are derived
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  -- Probed from the bytes by the render worker, which is the only process with
+  -- ffprobe (a Cloudflare Worker has none). NULL means "not measured", which
+  -- is why probed_at exists separately: an image legitimately has no duration,
+  -- and without a timestamp that is indistinguishable from an unprobed file
+  -- and would be re-probed forever.
+  width INTEGER,
+  height INTEGER,
+  fps REAL,                  -- video only
+  probed_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_assets_project ON assets (project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_assets_path ON assets (project_id, path);
+-- The worker's probe queue: everything never measured, oldest first.
+CREATE INDEX IF NOT EXISTS idx_assets_unprobed ON assets (probed_at, created_at);
 
 -- Generative asset requests handed to a provider (fal today).
 --

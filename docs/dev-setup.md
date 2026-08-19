@@ -94,6 +94,15 @@ pnpm exec wrangler d1 execute euclid --local --file=./auth-schema.sql  # better 
 `pnpm --filter @euclid/api db:migrate:local` after pulling a schema change —
 an existing local DB won't pick up a new table on its own.
 
+> **The assets probe columns** were added this way on 2026-08-19:
+>
+> ```sh
+> pnpm exec wrangler d1 execute euclid --local \
+>   --command "ALTER TABLE assets ADD COLUMN width INTEGER"
+> ```
+>
+> ...and the same for `height INTEGER`, `fps REAL`, `probed_at INTEGER`.
+
 > **Gotcha:** that idempotence covers new *tables*, not new *columns*.
 > `CREATE TABLE IF NOT EXISTS` is a no-op on an existing table, so a column
 > added to `schema.sql` never reaches a database that already has the table.

@@ -488,8 +488,30 @@ elsewhere, or moving compositing to ffmpeg).
 > alternatives is needed and WebCodecs stays the plan.
 
 ### 5. Ingest + analysis subsystem (new)
-`link or upload → fetch → transcode + proxy → probe → STT transcript →
-shot/scene detection → candidate segments`.
+`upload → transcode + proxy → probe → STT transcript →
+shot/scene detection → candidate segments`
+
+**Probe landed 2026-08-19.** An uploaded file is measured — duration,
+dimensions, frame rate — and `list_assets` reports them, so the agent can see
+that a clip is 320x180 and 2.00s rather than holding an opaque id.
+
+It runs in the **render worker**, because that is the only process with
+ffprobe: the API is a Cloudflare Worker and has no subprocesses at all. So it
+sits on the idle side of the same poll that claims render jobs — renders first,
+since someone is waiting on those, and probing fills the gaps. An upload is
+therefore briefly unmeasured, which is why the listing says "not measured yet"
+rather than showing a blank.
+
+Two decisions worth keeping. `probed_at` is a column of its own rather than
+inferring from a null duration: an image legitimately has no duration, and
+without the timestamp it would be re-probed forever. And a file ffprobe cannot
+read is marked probed anyway — being unreadable is a fact about the file, not a
+reason to retry it on every poll.
+
+One thing measurement caught that reasoning would not have: ffprobe models a
+still image as a 25fps video stream and reports `avg_frame_rate: "25/1"`, so
+the first run filed every PNG in the project as 25fps. Frame rate is now
+recorded for video only..
 
 "Generate video segments" **is** this pipeline. The agent doesn't invent
 segments; it selects and arranges the ones analysis surfaced, using the
@@ -588,6 +610,13 @@ the user guessing which two.
 
 - Does the editor need a real multi-track timeline UI before or after video
   nodes land? (Probably before — a reel is unusable on a scene-strip.)
-- Do reels want vertical-first canvas presets (1080×1920) as a document
-  concern, or just a canvas size? Likely just canvas size plus templates.
+- ~~Do reels want vertical-first canvas presets (1080×1920) as a document
+  concern, or just a canvas size?~~ **Now a task, not a question** (requested
+  2026-08-19). It is just a canvas size — but a vertical video cannot be made
+  at all today, because `LIMITS.maxCanvasHeight` is 1080 and `1080x1920` fails
+  the schema. The ceiling encodes 16:9 where it meant to encode a resolution
+  budget. Fixing it means bounding *pixels* rather than width-and-height, plus
+  presets and an editor that frames a portrait canvas. Nothing downstream
+  cares: the renderer reads `canvas.width/height`, and the image and video
+  nodes already fit and crop.
 - Where does STT run — same adapter as TTS, or a separate provider?

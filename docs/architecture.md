@@ -561,6 +561,21 @@ Measured end to end on a 19s test render: effects at gain 0.5 read −21.2 dB
 against a −15.2 dB source (halving amplitude is −6.02 dB), the 3→6s gap reads
 −91 dB, and the bed's 3s fade-out reads −47.4 dB.
 
+## Probing uploaded media
+
+An uploaded file arrives as bytes and nothing more. Duration, dimensions and
+frame rate are measured with ffprobe — which the API cannot run, because a
+Cloudflare Worker has no subprocesses. So probing lives in the **render
+worker**, on the idle side of the poll that claims render jobs: renders first,
+probing in the gaps.
+
+That makes measurement asynchronous, and the surfaces say so — `list_assets`
+prints "not measured yet" rather than an empty column. `probed_at` is its own
+column rather than being inferred from a null duration, because an image
+legitimately has no duration and would otherwise be re-probed forever; a file
+ffprobe cannot read is marked probed too, since that is a fact about the file
+rather than a reason to retry.
+
 ## Generative assets (fal)
 
 `apps/api/src/fal.ts` is a second provider seam, shaped after the TTS one and

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import {
   anchorableWords,
+  describeMedia,
   clipPlaySec,
   docDuration,
   effectsPastEnd,
@@ -220,9 +221,9 @@ export const mediaTools = [
         }
         for (const file of folder.files) {
           const kb = `${Math.round(file.bytes / 1024)}KB`
-          const dur = file.durationSec ? ` ${file.durationSec.toFixed(2)}s` : ''
+          const media = describeMedia(file)
           const mark = used.get(file.id) ? ' [in use]' : ' [unused]'
-          lines.push(`${pad}${file.name}  ${kb}${dur}${mark}  ${file.id}`)
+          lines.push(`${pad}${file.name}  ${kb}${media ? `  ${media}` : ''}${mark}  ${file.id}`)
         }
       }
       walk(buildAssetTree(assets), 0)

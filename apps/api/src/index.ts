@@ -544,6 +544,53 @@ app.delete('/api/assets/:assetId', async (c) => {
  * fetches narration audio through here with the internal key. Assets are
  * immutable, so they cache forever.
  */
+/**
+ * The probe queue: files whose bytes have never been measured.
+ *
+ * Internal-only, and pointedly *not* a claim like `POST /api/jobs/claim`.
+ * Probing is idempotent and cheap — two workers measuring the same file write
+ * the same answer — so a claim would buy nothing and could strand a file as
+ * "in progress" when a worker dies mid-probe.
+ */
+app.get('/api/assets/probe/next', async (c) => {
+  if (!isInternal(c)) return c.json({ error: 'forbidden' }, 403)
+  const row = await c.env.DB.prepare(
+    `SELECT id, mime, kind FROM assets
+     WHERE probed_at IS NULL AND kind != 'model'
+     ORDER BY created_at LIMIT 1`,
+  ).first<{ id: string; mime: string; kind: string }>()
+  return c.json({ asset: row ?? null })
+})
+
+/** What the worker measured. Also marks the file probed, even when it learned nothing. */
+app.patch('/api/assets/:assetId/probe', async (c) => {
+  if (!isInternal(c)) return c.json({ error: 'forbidden' }, 403)
+  const body = (await c.req.json().catch(() => null)) as {
+    durationSec?: number | null
+    width?: number | null
+    height?: number | null
+    fps?: number | null
+  } | null
+  if (!body) return c.json({ error: 'bad_body' }, 400)
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null)
+  // probed_at is set whatever happened. A file ffprobe cannot read is measured
+  // as "nothing to learn" rather than left to be retried on every poll.
+  await c.env.DB.prepare(
+    `UPDATE assets SET duration_sec = COALESCE(?, duration_sec), width = ?, height = ?, fps = ?,
+     probed_at = ? WHERE id = ?`,
+  )
+    .bind(
+      num(body.durationSec),
+      num(body.width),
+      num(body.height),
+      num(body.fps),
+      Date.now(),
+      c.req.param('assetId'),
+    )
+    .run()
+  return c.json({ ok: true })
+})
+
 app.get('/api/assets/:assetId', async (c) => {
   const asset = await loadAsset(c.env, c.req.param('assetId'))
   if (!asset) return c.json({ error: 'asset_not_found' }, 404)

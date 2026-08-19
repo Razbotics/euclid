@@ -327,8 +327,23 @@ capability as a document contact sheet.
       ruler, one scroller so no two lanes disagree about where a second is,
       zoom to 8x, clips that drag between lanes, trim from either edge, snap to
       cuts, and fades drawn as the ramps they are
-- [~] Ingest + analysis — the **front door is done** (upload); the analysis half
-      (transcode → proxy → probe → STT → shot detection → candidate segments)
+- [ ] **Variable aspect ratios — a vertical or square video is impossible
+      today.** `LIMITS.maxCanvasHeight` is 1080, so `1080x1920` is rejected by
+      the document schema outright: the ceiling encodes 16:9 rather than a
+      resolution budget. Needs a limit expressed as *pixels* rather than as
+      width-and-height, plus presets (9:16, 1:1, 4:5) and an editor that frames
+      a portrait canvas sensibly. Everything downstream is already
+      ratio-agnostic — the renderer takes `canvas.width/height`, and
+      `add_image`/`add_video` already fit and crop — so this is a limit and a
+      UI, not a pipeline change. plans/003 lists it as an open question; it is
+      now a task
+- [~] Ingest + analysis — the **front door is done** (upload), and **probe
+      landed 2026-08-19**: an uploaded file is measured for duration,
+      dimensions and frame rate, and `list_assets` reports them. Probing runs
+      in the render worker because it is the only process with ffprobe — a
+      Cloudflare Worker has no subprocesses — so it happens on the idle side of
+      the same poll that claims renders. The rest of the analysis half
+      (transcode → proxy → STT → shot detection → candidate segments)
       has not started. "Generate segments" *is* that pipeline: the agent selects
       from what analysis surfaces rather than inventing cuts
 - [x] Decide the rights/ToS model — **decided 2026-08-19: users bring their own

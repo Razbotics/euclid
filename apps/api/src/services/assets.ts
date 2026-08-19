@@ -17,6 +17,10 @@ export interface AssetRow {
   duration_sec: number | null
   path: string | null
   created_at: number
+  width: number | null
+  height: number | null
+  fps: number | null
+  probed_at: number | null
 }
 
 export const ASSET_KINDS = ['audio', 'video', 'image', 'model']
@@ -127,7 +131,9 @@ export async function listProjectAssets(
 ): Promise<(AssetRecord & { usedBy: boolean })[]> {
   await requireProjectAccess(env, projectId, userId)
   const rows = await env.DB.prepare(
-    'SELECT id, kind, mime, bytes, duration_sec, path, r2_key, created_at FROM assets WHERE project_id = ? ORDER BY created_at',
+    `SELECT id, kind, mime, bytes, duration_sec, path, r2_key, created_at,
+            width, height, fps, probed_at
+     FROM assets WHERE project_id = ? ORDER BY created_at`,
   )
     .bind(projectId)
     .all<AssetRow>()
@@ -148,6 +154,10 @@ export async function listProjectAssets(
     // Rows predating the path column still resolve to a sensible place.
     path: r.path || defaultAssetPath(r.kind, r.mime, r.id),
     createdAt: r.created_at,
+    width: r.width,
+    height: r.height,
+    fps: r.fps,
+    probedAt: r.probed_at,
     usedBy: used.has(r.id) || renderKeys.has(r.r2_key),
   })) as (AssetRecord & { usedBy: boolean })[]
 }

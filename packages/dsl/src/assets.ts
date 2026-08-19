@@ -19,6 +19,23 @@ export interface AssetRecord {
   durationSec?: number | null
   path: string
   createdAt: number
+  /** Measured from the bytes; absent until the render worker has probed it. */
+  width?: number | null
+  height?: number | null
+  fps?: number | null
+  probedAt?: number | null
+}
+
+/** One line of measured facts about a file, for a listing. */
+export function describeMedia(a: AssetRecord): string {
+  const bits: string[] = []
+  if (a.width && a.height) bits.push(`${a.width}x${a.height}`)
+  if (a.durationSec) bits.push(`${a.durationSec.toFixed(2)}s`)
+  if (a.fps) bits.push(`${Math.round(a.fps)}fps`)
+  // "not probed yet" is worth saying: a clip with no duration cannot be placed
+  // on a lane, and the reason is timing rather than a broken file.
+  if (bits.length === 0 && a.kind !== 'model' && !a.probedAt) return 'not measured yet'
+  return bits.join(' ')
 }
 
 export interface AssetFile extends AssetRecord {

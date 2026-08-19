@@ -41,6 +41,8 @@
 import './load-env'
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:http'
+import { writeFile, unlink } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import type { EuclidDoc } from '@euclid/dsl'
@@ -225,6 +227,92 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   })
 }
 
+/**
+ * Measure one uploaded file, if any is waiting.
+ *
+ * This lives in the render worker because it is the only process with ffprobe:
+ * the API is a Cloudflare Worker, which has no subprocesses at all. So an
+ * upload lands unmeasured and is measured shortly after, which is why
+ * `list_assets` says "not measured yet" rather than showing a blank.
+ *
+ * Returns whether it did anything, so the loop can keep working through a
+ * backlog instead of sleeping between files.
+ */
+async function probeOne(): Promise<boolean> {
+  const res = await fetch(`${API_URL}/api/assets/probe/next`, { headers })
+  if (!res.ok) return false
+  const { asset } = (await res.json()) as {
+    asset: { id: string; mime: string; kind: string } | null
+  }
+  if (!asset) return false
+
+  const tmp = join(tmpdir(), `euclid-probe-${asset.id}`)
+  const measured: { durationSec?: number; width?: number; height?: number; fps?: number } = {}
+  try {
+    // Downloaded whole rather than streamed: an mp4's moov atom can sit at the
+    // end of the file, so a prefix is not enough to measure one that was not
+    // written with faststart — which an uploaded file usually was not.
+    const bytes = await fetch(`${API_URL}/api/assets/${asset.id}`, { headers })
+    if (!bytes.ok) throw new Error(`fetch ${bytes.status}`)
+    await writeFile(tmp, Buffer.from(await bytes.arrayBuffer()))
+
+    const out = await new Promise<string>((resolve, reject) => {
+      const ff = spawn('ffprobe', [
+        '-v', 'error',
+        '-show_entries', 'format=duration:stream=width,height,avg_frame_rate,codec_type',
+        '-of', 'json',
+        tmp,
+      ])
+      let stdout = ''
+      ff.stdout.on('data', (d) => (stdout += d))
+      ff.on('close', (code) => (code === 0 ? resolve(stdout) : reject(new Error(`ffprobe ${code}`))))
+      ff.on('error', reject)
+    })
+
+    const info = JSON.parse(out) as {
+      format?: { duration?: string }
+      streams?: { width?: number; height?: number; avg_frame_rate?: string; codec_type?: string }[]
+    }
+    const duration = Number(info.format?.duration)
+    if (Number.isFinite(duration) && duration > 0) measured.durationSec = duration
+
+    const video = info.streams?.find((st) => st.codec_type === 'video')
+    if (video?.width && video.height) {
+      measured.width = video.width
+      measured.height = video.height
+      // Only a video has a frame rate. ffprobe models a still as a 25fps video
+      // stream and duly reports "25/1", so believing it files every PNG in the
+      // project as 25fps — measured data that is simply untrue. The rational
+      // also needs guarding: "0/0" must not become NaN.
+      if (asset.kind === 'video') {
+        const [num, den] = (video.avg_frame_rate ?? '').split('/').map(Number)
+        if (num && den) measured.fps = num / den
+      }
+    }
+  } catch (e) {
+    // Marked probed anyway, below: a file ffprobe cannot read is a fact about
+    // the file, and retrying it on every poll forever helps nobody.
+    console.error(`  probe ${asset.id.slice(0, 8)} failed: ${(e as Error).message}`)
+  } finally {
+    await unlink(tmp).catch(() => {})
+  }
+
+  await fetch(`${API_URL}/api/assets/${asset.id}/probe`, {
+    method: 'PATCH',
+    headers: { ...headers, 'content-type': 'application/json' },
+    body: JSON.stringify(measured),
+  })
+  const said = [
+    measured.width && measured.height ? `${measured.width}x${measured.height}` : null,
+    measured.durationSec ? `${measured.durationSec.toFixed(2)}s` : null,
+    measured.fps ? `${Math.round(measured.fps)}fps` : null,
+  ]
+    .filter(Boolean)
+    .join(' ')
+  console.log(`  probed ${asset.id.slice(0, 8)} (${asset.kind}) ${said || 'nothing measurable'}`)
+  return true
+}
+
 console.log(`render worker polling ${API_URL} every ${POLL_MS}ms`)
 let done = 0
 while (running) {
@@ -239,7 +327,13 @@ while (running) {
   }
 
   if (!next.jobId || !next.projectId) {
-    await new Promise((r) => setTimeout(r, POLL_MS))
+    // Idle time is when uploaded files get measured. Renders come first —
+    // someone is waiting on those — and probing only fills the gaps.
+    const did = await probeOne().catch((e) => {
+      console.error(`probe error: ${(e as Error).message}`)
+      return false
+    })
+    if (!did) await new Promise((r) => setTimeout(r, POLL_MS))
     continue
   }
 
