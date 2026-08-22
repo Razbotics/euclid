@@ -48,6 +48,7 @@ import { dirname, join } from 'node:path'
 import { needsProxy, proxySize, type EuclidDoc } from '@euclid/dsl'
 import { PreviewCapturer } from './sheet'
 import { buildProxyArgs } from './proxy'
+import { healthVerdict, type Phase } from './health'
 
 const API_URL = process.env.API_URL ?? 'http://localhost:8787'
 const KEY = process.env.INTERNAL_API_KEY ?? 'dev-internal-key'
@@ -145,13 +146,58 @@ function serialise<T>(work: () => Promise<T>): Promise<T> {
   return next
 }
 
+/** What the drain loop is doing, so `/health` answers about the loop rather
+ * than about the socket. The verdict itself lives in `health.ts`, pure, since
+ * this module cannot be imported without starting a worker. */
+let phase: Phase = 'starting'
+let phaseSince = Date.now()
+let lastPollAt = Date.now()
+let jobsDone = 0
+
+function setPhase(next: Phase): void {
+  phase = next
+  phaseSince = Date.now()
+}
+
+let previewServer: ReturnType<typeof createServer> | undefined
+
 function servePreview(): void {
   const server = createServer((req, res) => {
     const send = (status: number, body: string) => {
       res.writeHead(status, { 'content-type': 'text/plain' })
       res.end(body)
     }
-    if (req.method === 'GET' && req.url === '/health') return send(200, 'ok')
+    /**
+     * Health is about the **drain loop**, not about this listener.
+     *
+     * It used to be `send(200, 'ok')` unconditionally, which is true of the
+     * socket and says nothing about the thing anyone cares about. A worker
+     * whose loop had exited went on answering `ok` while render jobs sat
+     * queued with the credits already spent — the failure plans/002 calls the
+     * worst one available, wearing the disguise of a healthy service. It cost
+     * two `check-*` runs a spurious two-minute timeout before anyone looked.
+     *
+     * Every caller tests `Response.ok`, so the status is the signal; the body
+     * is JSON for whoever is reading it by hand.
+     */
+    if (req.method === 'GET' && req.url === '/health') {
+      const now = Date.now()
+      // `reason` is carried through rather than re-derived: a 503 must say
+      // which failure it is, because "stopped" needs a restart while "not
+      // polling" needs a look at what the loop is stuck on.
+      const verdict = healthVerdict({ phase, lastPollAt, now, pollMs: POLL_MS })
+      res.writeHead(verdict.ok ? 200 : 503, { 'content-type': 'application/json' })
+      return res.end(
+        JSON.stringify({
+          ...verdict,
+          phase,
+          forMs: now - phaseSince,
+          sinceLastPollMs: now - lastPollAt,
+          pollMs: POLL_MS,
+          jobsDone,
+        }),
+      )
+    }
     if (req.headers['x-internal-key'] !== KEY) return send(403, 'forbidden')
     if (req.method !== 'POST' || !['/preview', '/frame'].includes(req.url ?? '')) {
       return send(404, 'not found')
@@ -215,6 +261,7 @@ function servePreview(): void {
     }
   })
   server.listen(PREVIEW_PORT, () => console.log(`serving preview on :${PREVIEW_PORT}`))
+  previewServer = server
 }
 
 if (process.env.PREVIEW_DISABLE !== '1') servePreview()
@@ -478,11 +525,17 @@ async function transcodeOne(): Promise<boolean> {
 console.log(`render worker polling ${API_URL} every ${POLL_MS}ms`)
 let done = 0
 while (running) {
+  // The heartbeat, stamped before the round trip rather than after, so a claim
+  // that hangs shows as a stale poll instead of freezing the clock.
+  lastPollAt = Date.now()
+  setPhase('idle')
   let next: Claim
   try {
     next = await claim()
   } catch (e) {
     // The API being down is a reason to wait, not to exit: this is a daemon.
+    // Health stays green through it: the loop is still turning, and an API
+    // that is down is not this process being broken.
     console.error(`claim error: ${(e as Error).message}`)
     await new Promise((r) => setTimeout(r, POLL_MS))
     continue
@@ -493,11 +546,13 @@ while (running) {
     // someone is waiting on those — and probing only fills the gaps.
     // Cheap work first: measuring everything waiting beats watching one long
     // video while three uploads sit unmeasured.
+    setPhase('probe')
     let did = await probeOne().catch((e) => {
       console.error(`probe error: ${(e as Error).message}`)
       return false
     })
     if (!did) {
+      setPhase('shots')
       did = await detectShotsOne().catch((e) => {
         console.error(`shots error: ${(e as Error).message}`)
         return false
@@ -506,16 +561,21 @@ while (running) {
     // Last, because it is the only one of the three that re-encodes. The order
     // is the cost order: read a header, decode, decode and encode.
     if (!did) {
+      setPhase('proxy')
       did = await transcodeOne().catch((e) => {
         console.error(`proxy error: ${(e as Error).message}`)
         return false
       })
     }
-    if (!did) await new Promise((r) => setTimeout(r, POLL_MS))
+    if (!did) {
+      setPhase('idle')
+      await new Promise((r) => setTimeout(r, POLL_MS))
+    }
     continue
   }
 
   const started = Date.now()
+  setPhase('render')
   console.log(`claimed ${next.jobId} (project ${next.projectId.slice(0, 8)})`)
   const code = await render(next.projectId, next.jobId)
   const status = await jobStatus(next.jobId)
@@ -528,7 +588,23 @@ while (running) {
     console.log(`  [${next.jobId.slice(0, 8)}] ${status} in ${((Date.now() - started) / 1000).toFixed(0)}s`)
   }
 
-  if (MAX_JOBS && ++done >= MAX_JOBS) break
+  jobsDone = ++done
+  if (MAX_JOBS && done >= MAX_JOBS) break
 }
+setPhase('stopped')
 await capturer.close()
+
+/**
+ * Give the port back.
+ *
+ * This is why a stopped worker was able to lie in the first place: the listener
+ * kept the event loop alive, so the process survived its own drain loop —
+ * holding :8790, answering health, draining nothing. The next worker started
+ * against it found the port taken, logged "already served by another worker —
+ * rendering only", and went on to serve no preview while the zombie served no
+ * renders. `closeAllConnections` because `close()` alone waits on keep-alive
+ * sockets, which the preview clients hold open.
+ */
+previewServer?.closeAllConnections()
+previewServer?.close()
 console.log('render worker stopped')

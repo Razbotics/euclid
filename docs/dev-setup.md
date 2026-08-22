@@ -143,7 +143,23 @@ pnpm dev:web    # :5173 — `/` lists projects; ?project=<id> opens one; ?demo=1
 # + ffmpeg.
 pnpm --filter @euclid/renderer exec tsx src/render-worker.ts
 
+# Is it actually working? `ok` here is about the drain loop, not the socket:
+curl -s localhost:8790/health
+# {"ok":true,"phase":"idle","sinceLastPollMs":812,"pollMs":3000,"jobsDone":3}
 ```
+
+> **`/health` answers about the loop, and a 503 names which failure it is.**
+> `drain loop has stopped` needs a restart; `drain loop is not polling` means
+> it is wedged and worth a look at `phase`. A busy `phase` — `render`,
+> `proxy`, `shots`, `probe` — stays healthy however long it has been going,
+> because a transcode legitimately runs for minutes without polling.
+>
+> This used to be an unconditional `ok`, and the listener kept the process
+> alive after the loop exited, so a stopped worker held `:8790` and reported
+> health while draining nothing. If you ever meet a *pre-2026-08-22* worker
+> still running, that is what it is doing — and the tell is that a fresh
+> worker logs `already served by another worker — rendering only`. Both are
+> fixed: a stopped worker now closes the listener and exits.
 
 ### Running the renderer in its container
 
@@ -271,6 +287,7 @@ every run** — re-run and re-paste after restarting.
 | `bench-capture.ts` | where export time actually goes: times `renderFrame` (Pixi/WebGL) against `canvas.screenshot()` (PNG round-trip) separately, on a vector document and a 4,096-triangle mesh. Answers plans/003's SwiftShader question — screenshot is **97-99%** of a frame in both the host and the container, so rasterisation is not the bottleneck (free; needs `dev:web`) |
 | `check-shots.ts` | shot detection against **chosen** ground truth: three 2s clips concatenated, so the cuts really are at 2.00s and 4.00s and the check is a match rather than an eyeball. Also that two cuts bound three segments, that a continuous take reports none rather than an empty answer, and that "not watched yet" says so (free; needs `dev:api`, `render-worker.ts`) |
 | `check-proxy.ts` | transcode + proxy (plans/003 §5) against **chosen** ground truth — the source is encoded with one keyframe in the whole file, so "the proxy seeks better" is the number 1 → 6 rather than an impression. Also: a 720p upload gets a 960x540 proxy and a 320x240 one is deliberately left alone, a proxy that has not been made yet falls back to the original (so an upload is watchable immediately), and the clip still captures. The load-bearing assertion runs `preloadImages` — the real function behind both the export and `preview_frames` — against a page stub and requires it to have pushed the **original, byte-for-byte**; it was confirmed to fail, naming the proxy, when the variant was added to that fetch (free; needs `dev:api`, `dev:web`, `render-worker.ts`) |
+| `smoke-health.ts` | the render worker's health verdict — whether the **drain loop** is alive, not whether the socket answers. Covers the states no live worker holds still in: a loop stopped while the process outlives it, and four busy phases that must stay healthy after 30 minutes without a poll, since bounding those would fail health on the worker doing the most work (free, no network) |
 | `smoke-proxy.ts` | the pure half of the same: which files want a proxy, and the two settings that go wrong silently — an odd dimension (H.264 refuses it minutes into the job) and a keyframe interval ffmpeg is free to ignore. Six aspect ratios, portrait included, stay even and undistorted (free, no network) |
 | `check-shapes.ts` | canvas shapes: all four presets create at their stated size, over-budget and odd-dimension refusals teach, and a 9:16 scene **draws and exports as 1080x1920** — the export assertion being the one that matters, since a pipeline quietly re-framing to 16:9 would pass every other check (free; needs `dev:api`, `dev:web`, `render-worker.ts`) |
 | `check-narration-sync.ts` | narration-anchored animation: word matching ignores case and punctuation, an anchored highlight lands on its word, and — the point — **rewriting the script moves the effect with it** (the word went 1.26s → 6.14s and the marker followed: 0.41% lit at the old time vs 4.87% at the new). Also the refusal when neither `start` nor `atWord` is given (**~3 credits**; needs `dev:api` with `ELEVENLABS_API_KEY`, `dev:web`, `render-worker.ts`) |

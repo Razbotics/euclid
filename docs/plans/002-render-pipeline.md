@@ -755,6 +755,34 @@ An error costs a retry; an inference costs an approach.
   internal-key path works for first-party testing.
 
 ## Notes / gotchas
+- ~~**A stopped render worker went on reporting itself healthy, and kept the
+  port.**~~ **fixed 2026-08-22.** `/health` answered a flat `ok` from the HTTP
+  listener, which is a fact about the socket and says nothing about the drain
+  loop. Worse, that listener is what kept the process alive: on `SIGTERM` the
+  loop set `running = false` and exited, and the process *survived it* —
+  holding `:8790`, answering `ok`, draining nothing. The next worker started
+  against it found the port taken, logged its best-effort
+  "already served by another worker — rendering only", and proceeded to serve
+  no preview while the zombie served no renders. So the queue stopped being
+  drained with every outward sign of health, which is this plan's worst
+  failure (§"the user has paid and the system looks busy") wearing a disguise.
+  It cost two `check-*` runs a spurious two-minute timeout before anyone
+  looked at the process rather than the endpoint.
+
+  Two fixes, and the second is the root cause. `/health` now reports the
+  **loop**: a JSON body with `phase`, `sinceLastPollMs` and `jobsDone`, and a
+  **503** when the loop has stopped or has gone quiet while idle. And the
+  listener is closed when the loop ends, so a stopped worker exits and gives
+  the port back — verified by SIGTERM: released in 1s, process gone,
+  connection refused rather than a cheerful lie.
+
+  The judgement worth keeping: **staleness applies to `idle` alone.** A render
+  or a transcode legitimately goes minutes without polling, so bounding those
+  would fail health on precisely the worker doing the most work — an alarm
+  everyone would learn to ignore. `healthVerdict()` is pure and in its own
+  module (`health.ts`) because `render-worker.ts` starts a daemon on import and
+  cannot be asked anything by a test; `smoke-health.ts` covers the states no
+  live worker holds still in.
 - ~~**Exported MP4s were unplayable-in-place on the web.**~~ **fixed.** Three
   separate defects on the delivery path, all found from one "the video has no
   sound" report — and the audio was fine (`volumedetect`: mean −19.6 dB, max
