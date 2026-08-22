@@ -476,20 +476,29 @@ one. That is what makes an `assetId` embedded in a document safe — a
 `narration.audio.assetId` can never silently start pointing at different
 bytes — and it lets reads cache indefinitely.
 
-Creation (`POST /api/projects/:id/assets`) has two callers. Server-side
-producers (TTS, fal, the render worker) present the internal key and are
-trusted about `kind`. **The owning user may also upload**, which since the
-rights decision in plans/003 — users bring their own media, so there is no
-fetcher — is how footage enters a project at all. A user's upload is checked
-rather than believed: a type allowlist, a size ceiling, and `kind` taken from
-the file's own type rather than the query string, because those disagreeing is
-how an image gets filed as audio and becomes invisible to `add_image`. The
-bytes stream straight into R2 so a large clip never has to fit in worker
+Creation (`POST /api/projects/:id/assets`) answers two questions that are
+easy to conflate, and did get conflated once — see *Auth, credits, tenancy*.
+
+*May this caller write into this project?* That is tenancy, and it is the
+ordinary `requireProjectAccess` gate every other route uses. The internal key
+buys nothing here.
+
+*How much of what the caller says is believed?* That is what the internal key
+buys. Server-side producers (TTS, fal, the render worker) are trusted about
+`kind` and are not held to the upload limits. **The owning user may also
+upload**, which since the rights decision in plans/003 — users bring their own
+media, so there is no fetcher — is how footage enters a project at all, and a
+user's upload is checked rather than believed: a type allowlist, a size
+ceiling, and `kind` taken from the file's own type rather than the query
+string, because those disagreeing is how an image gets filed as audio and
+becomes invisible to `add_image`.
+
+The bytes stream straight into R2 so a large clip never has to fit in worker
 memory, and the D1 row is written only once they land — a document must never
-hold an id that resolves to nothing. Reads (`GET /api/assets/:assetId`) are
-allowed for the owning user or an internal caller; the render worker uses the
-latter to fetch narration audio, and tenancy is enforced by joining through
-`projects`, not by trusting the caller.
+hold an id that resolves to nothing. Reads (`GET /api/assets/:assetId`) go
+through the same tenancy rule as writes; the render worker fetches narration
+audio as `internal`, and ownership is resolved by joining through `projects`,
+since assets have no owner column of their own.
 
 A read may also ask for a **variant**: `?variant=proxy` serves a video's
 scrubbing copy (see *Proxies*), and anything else serves the original. That one
@@ -1004,7 +1013,29 @@ internal hostname and would otherwise produce unusable links.
 ## Auth, credits, tenancy
 
 Better Auth (D1) owns identity; the same instance will back the MCP worker's
-OAuth so claude.ai can connect. Credits meter renders + TTS only — agent
+OAuth so claude.ai can connect.
+
+**One tenancy rule, one predicate.** `mayAccess(ownerId, userId)` in
+`apps/api/src/shared.ts` is it: the row's owner, looked up in D1, must equal
+the *claimed* user id — with the literal identity `internal` as the only
+exception. Every gate (`requireProjectAccess`, `requireAsset`, `forwardToDO`,
+the job routes) is a call to that one function, deliberately, because the
+alternative is what actually happened: the asset upload route restated the
+rule slightly differently and ended up gating on the internal key alone, so
+any keyed caller could write into any project.
+
+The distinction the upload route had lost is worth stating plainly: **the
+internal key authenticates a worker, not a user.** A worker acting on
+someone's behalf forwards that person's id — the MCP worker does — and is held
+to exactly their rights; a worker acting on nobody's behalf sends no
+`x-user-id`, the middleware names it `internal`, and only that identity passes
+a mismatch. So a leaked key cannot be pointed at an arbitrary project by
+claiming to own it. Note that the in-worker producers never take the HTTP
+route at all — TTS and fal call `storeAsset()` directly, after their own
+`requireProjectAccess` — which is why holding the route to the rule costs them
+nothing.
+
+Credits meter renders + TTS only — agent
 iteration must stay free (users burn their own Claude tokens over MCP), so
 MCP tools return compact text (outlines, ids) rather than anything expensive.
 Projects are single-user in v1; the DO/event-log design already supports

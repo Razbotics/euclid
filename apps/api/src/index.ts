@@ -12,7 +12,7 @@ import {
 } from '@euclid/dsl'
 import { makeAuth } from './auth'
 import { adjustCredits, billing, handleStripeWebhook } from './billing'
-import { AccessError, docOf, projectStub, requireProjectAccess, slugify } from './shared'
+import { AccessError, docOf, mayAccess, projectStub, requireProjectAccess, slugify } from './shared'
 import { createProject, deleteProject, listProjects, projectContents } from './services/projects'
 import {
   ASSET_KINDS,
@@ -22,6 +22,7 @@ import {
   listProjectAssets,
   loadAsset,
   moveAsset,
+  requireAsset,
   storeAsset,
 } from './services/assets'
 import { NarrationError, generateSceneNarration } from './services/narration'
@@ -126,8 +127,7 @@ async function forwardToDO(
     .bind(projectId)
     .first<{ user_id: string }>()
   if (!row) return Response.json({ error: 'project_not_found' }, { status: 404 })
-  const userId = c.get('userId')
-  if (row.user_id !== userId && userId !== 'internal') {
+  if (!mayAccess(row.user_id, c.get('userId'))) {
     return Response.json({ error: 'forbidden' }, { status: 403 })
   }
   const url = new URL(c.req.raw.url)
@@ -288,7 +288,19 @@ async function serveR2Range(
   return new Response(object.body, { headers: { ...base, 'content-length': String(total) } })
 }
 
-/** Service-to-service calls only (render worker), not just any authenticated user. */
+/**
+ * Service-to-service calls only (render worker), not just any authenticated
+ * user.
+ *
+ * Not a tenancy check and never a substitute for one — see `mayAccess`. The
+ * routes gated on this alone (job claim/output, and the probe, shot and
+ * transcode queues) are the ones that take **no user-scoped target from the
+ * caller**: their subject comes from a job id, or from a queue that
+ * deliberately spans every user and hands the worker the very id it writes
+ * back to, so there is no claimed identity to hold them to. The moment a route accepts a
+ * project or asset the caller names, it needs `requireProjectAccess` or
+ * `requireAsset` as well — which is exactly what the upload route was missing.
+ */
 function isInternal(c: { req: { header: (k: string) => string | undefined }; env: Env }): boolean {
   const key = c.req.header('x-internal-key')
   return !!key && key === c.env.INTERNAL_API_KEY
@@ -303,8 +315,7 @@ async function loadJob(env: Env, jobId: string): Promise<RenderJobRow & { user_i
 app.get('/api/jobs/:jobId', async (c) => {
   const job = await loadJob(c.env, c.req.param('jobId'))
   if (!job) return c.json({ error: 'job_not_found' }, 404)
-  const userId = c.get('userId')
-  if (job.user_id !== userId && userId !== 'internal') return c.json({ error: 'forbidden' }, 403)
+  if (!mayAccess(job.user_id, c.get('userId'))) return c.json({ error: 'forbidden' }, 403)
   return c.json({ job: { ...job, downloadUrl: downloadUrlFor(publicOrigin(c), job) } })
 })
 
@@ -396,8 +407,7 @@ app.put('/api/jobs/:jobId/output', async (c) => {
 app.get('/api/jobs/:jobId/download', async (c) => {
   const job = await loadJob(c.env, c.req.param('jobId'))
   if (!job) return c.json({ error: 'job_not_found' }, 404)
-  const userId = c.get('userId')
-  if (job.user_id !== userId && userId !== 'internal') return c.json({ error: 'forbidden' }, 403)
+  if (!mayAccess(job.user_id, c.get('userId'))) return c.json({ error: 'forbidden' }, 403)
   if (!job.output_key) return c.json({ error: 'not_ready', status: job.status }, 409)
 
   // `inline` so pasting the URL in a browser *plays* it; ?download=1 still
@@ -414,32 +424,34 @@ app.get('/api/jobs/:jobId/download', async (c) => {
 // ---------- assets ----------
 
 /**
- * Assets are created by server-side producers (TTS today, ingest later), never
- * uploaded by the browser, so this is internal-key only. The server mints the
- * id — hence POST rather than the render output's PUT, where the job id
- * already determines the key.
+ * How a file enters a project. The server mints the id — hence POST rather
+ * than the render output's PUT, where the job id already determines the key.
  *
  * Body is the raw file, streamed straight to R2 so a large clip never has to
  * fit in the worker's memory; `mime` comes from content-type, the rest from
  * the query string.
+ *
+ * Two separate questions, which this route used to conflate into one flag:
+ *
+ * - *May this caller write into this project?* Tenancy, and it is the same
+ *   `requireProjectAccess` every other route uses. The internal key buys
+ *   nothing here — a keyed caller claiming to be some user gets that user's
+ *   rights and no more.
+ * - *How much of what the caller says is believed?* That is what the internal
+ *   key buys. Server-side producers (TTS, fal, the render worker) are trusted
+ *   about `kind` and are not held to the upload limits. A user uploading their
+ *   own file — the whole ingest story since plans/003 chose "users bring their
+ *   own media" — is checked rather than believed.
  */
 app.post('/api/projects/:id/assets', async (c) => {
   const projectId = c.req.param('id')
-  const project = await c.env.DB.prepare('SELECT user_id FROM projects WHERE id = ?')
-    .bind(projectId)
-    .first<{ user_id: string }>()
-  if (!project) return c.json({ error: 'project_not_found' }, 404)
-
-  // Two callers with different rights. Server-side producers (TTS, fal, the
-  // render worker) present the internal key and are trusted about `kind`.
-  // **A user uploading their own file** is the other, and is the whole ingest
-  // story since plans/003 chose "users bring their own media" — so this is no
-  // longer internal-only, and what a user sends is checked rather than
-  // believed.
-  const internal = isInternal(c)
-  if (!internal && project.user_id !== c.get('userId')) {
-    return c.json({ error: 'forbidden' }, 403)
+  try {
+    await requireProjectAccess(c.env, projectId, c.get('userId'))
+  } catch (e) {
+    if (e instanceof AccessError) return c.json({ error: e.message }, e.status as 403)
+    throw e
   }
+  const internal = isInternal(c)
 
   const mime = c.req.header('content-type') ?? 'application/octet-stream'
   if (!internal) {
@@ -543,11 +555,6 @@ app.delete('/api/assets/:assetId', async (c) => {
   }
 })
 
-/**
- * Readable by the owning user or by an internal caller — the render worker
- * fetches narration audio through here with the internal key. Assets are
- * immutable, so they cache forever.
- */
 /**
  * The probe queue: files whose bytes have never been measured.
  *
@@ -695,12 +702,20 @@ app.put('/api/assets/:assetId/proxy', async (c) => {
   return c.json({ ok: true, proxy: { bytes: object.size } })
 })
 
+/**
+ * Serving the bytes back. Gated by `requireAsset`, which is the same tenancy
+ * rule the upload route above enforces — the owning user, or an internal
+ * caller acting as nobody (how the render worker fetches narration audio).
+ * Assets are immutable, so they cache forever.
+ */
 app.get('/api/assets/:assetId', async (c) => {
-  const asset = await loadAsset(c.env, c.req.param('assetId'))
-  if (!asset) return c.json({ error: 'asset_not_found' }, 404)
-
-  const userId = c.get('userId')
-  if (asset.owner !== userId && userId !== 'internal') return c.json({ error: 'forbidden' }, 403)
+  let asset
+  try {
+    asset = await requireAsset(c.env, c.req.param('assetId'), c.get('userId'))
+  } catch (e) {
+    if (e instanceof AccessError) return c.json({ error: e.message }, e.status as 403)
+    throw e
+  }
 
   /**
    * **The resolver, and the whole of it.** `?variant=proxy` asks for the
