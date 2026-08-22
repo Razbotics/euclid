@@ -76,13 +76,35 @@ assert.equal(intruder.status, 403, `non-owner must get 403, got ${intruder.statu
 const missing = await fetch(`${API_URL}/api/assets/does-not-exist`, { headers: as('internal') })
 assert.equal(missing.status, 404, 'unknown asset → 404')
 
-// 5. Creation is internal-only: no key at all must not be able to write.
-const anon = await fetch(`${API_URL}/api/projects/${projectId}/assets?kind=audio`, {
+// 5. The two upload doors, and what each actually promises.
+//
+// This used to assert that a keyless request was refused, on the grounds that
+// creation was internal-only. That stopped being true when plans/003 chose
+// "users bring their own media" and opened the route to the owning user, and
+// the assertion had since been failing against correct behaviour.
+//
+// The non-owner 403 is deliberately **not** asserted here, because neither
+// caller this check can construct is a non-owner: `as()` presents the internal
+// key, which the route trusts about identity by design, and a keyless caller
+// under DEV_ALLOW_ANON *is* the owner. That case needs a real session, which is
+// Phase 6's auth work. What is reachable — and is the whole ingest front door —
+// is the type allowlist on the user's side.
+const unknownProject = await fetch(`${API_URL}/api/projects/no-such-project/assets?kind=audio`, {
   method: 'POST',
-  headers: { 'content-type': 'audio/mpeg' },
+  headers: { ...as(OWNER), 'content-type': 'audio/mpeg' },
   body: payload,
 })
-assert.equal(anon.status, 403, `sessionless upload must be refused, got ${anon.status}`)
+assert.equal(unknownProject.status, 404, 'uploading to a project that does not exist → 404')
+
+const badType = await fetch(`${API_URL}/api/projects/${projectId}/assets`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/x-msdownload' },
+  body: payload,
+})
+assert.equal(badType.status, 415, `a user's upload is checked against the allowlist, got ${badType.status}`)
+const refusal = (await badType.json()) as { detail?: string; allowed?: string[] }
+assert.match(refusal.detail ?? '', /x-msdownload/, 'and the refusal names the type that was sent')
+assert.ok(refusal.allowed?.includes('video/mp4'), 'and lists what would have worked')
 
 // 6. Bad kind is rejected before anything is stored.
 const badKind = await fetch(`${API_URL}/api/projects/${projectId}/assets?kind=spreadsheet`, {
