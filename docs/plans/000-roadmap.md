@@ -505,6 +505,13 @@ plus a docs row — and a tool edit no longer needs a client restart.
       reliability; the escape hatch stays unused. Two catalog *validation*
       bugs found — see plans/008.
 
+## Parallel track: the Claude Code shell → plans/012-claude-code-shell.md
+Done 2026-08-22. The editor chrome rebuilt in Claude Code's shape: sidebar
+rail with a hover project flyout (the listing page is gone; bare `/`
+auto-opens the newest project), canvas + timeline owning the centre, and
+Files / Scene / Review as a closed-by-default right-hand stack toggled from
+the header's ⋯ menu. Document surfaces unchanged.
+
 ## Parallel track: agent asks the human → plans/005-agent-questions.md
 - [x] `ask_user` / `get_answer` / `record_answer`; questions ride the project
       DO and appear live in the editor, answerable there or relayed from chat

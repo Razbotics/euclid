@@ -10,50 +10,98 @@ import { FileViewer, fileGlyph } from './FileViewer'
 import { CameraFrame } from './Camera'
 import { CaptionOverlay } from './Narration'
 import { AudioMixer } from './AudioMixer'
-import { ProjectList } from './ProjectList'
 import { Review, ReviewModeToggle } from './Review'
+import { Sidebar, useProjects, type ProjectsState } from './Sidebar'
 
 /**
  * Routing, such as it is: `?project=<id>` opens the editor on that project,
- * `?demo=1` opens the offline demo, and bare `/` lists the projects. The
- * split into two components is structural, not stylistic — hooks can't be
- * called conditionally, so the editor's state can't live behind an early
- * return.
+ * `?demo=1` opens the offline demo, and bare `/` auto-opens the newest
+ * project — there is no listing page any more; the sidebar's flyout is the
+ * list. The split into two components is structural, not stylistic — hooks
+ * can't be called conditionally, so the editor's state can't live behind an
+ * early return.
  */
 export function App() {
   const params = new URLSearchParams(window.location.search)
   const projectId = params.get('project')
-  if (!projectId && !params.has('demo')) return <ProjectList />
-  return <Editor projectId={projectId} />
+  const demo = params.has('demo')
+  const projects = useProjects()
+
+  // Landing on bare `/` means "my latest work", the way an editor reopens
+  // what you had open. `replace` rather than push, so Back does not bounce
+  // through the redirect.
+  useEffect(() => {
+    if (projectId || demo) return
+    const newest = projects.status === 'ready' ? projects.projects[0] : undefined
+    if (newest) window.location.replace(`?project=${newest.id}`)
+  }, [projectId, demo, projects])
+
+  if (!projectId && !demo) return <Landing projects={projects} />
+  return <Editor projectId={projectId} projects={projects} />
 }
 
-/** Which panels are open, and how wide. Remembered, because a layout you
- *  re-set every reload is not a layout. */
+/** Bare `/` with nothing to open yet: the shell, and a hint in the middle. */
+function Landing({ projects }: { projects: ProjectsState }) {
+  return (
+    <div className="app">
+      <div className="shell">
+        <Sidebar projects={projects} currentId={null} offline={false} />
+        <div className="landing">
+          {projects.status === 'loading' && <p>loading projects…</p>}
+          {projects.status === 'error' && (
+            <p>
+              {projects.message} — start it with <code>pnpm dev:api</code>, or{' '}
+              <a href="?demo=1">open the offline demo</a>.
+            </p>
+          )}
+          {projects.status === 'ready' && (
+            <p>
+              No projects yet. An agent creates them over MCP with <code>create_project</code>,
+              or <a href="?demo=1">open the offline demo</a>.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The right side is a stack of optional panels, Claude Code style: closed by
+ * default, each toggled from the header's ⋯ menu, stacking vertically in the
+ * order opened. Which are open — and how wide the stack is — is remembered.
+ */
+type PanelId = 'files' | 'scene' | 'review'
+const PANEL_TITLES: Record<PanelId, string> = {
+  files: 'Files',
+  scene: 'Scene',
+  review: 'Review',
+}
+
 interface Panels {
-  left: boolean
-  right: boolean
-  leftWidth: number
+  open: PanelId[]
   rightWidth: number
 }
-const PANELS_KEY = 'euclid.panels'
-const DEFAULT_PANELS: Panels = { left: true, right: true, leftWidth: 260, rightWidth: 320 }
+const PANELS_KEY = 'euclid.panels.v2'
+const DEFAULT_PANELS: Panels = { open: [], rightWidth: 340 }
 
-/** A panel narrower than this is a rail with extra steps; the canvas needs at
- *  least this much to still be the thing you are working on. */
-const MIN_PANEL = 170
+/** The stack narrower than this is unusable; the canvas needs at least this
+ *  much to still be the thing you are working on. The sidebar rail is fixed. */
+const MIN_STACK = 220
 const MIN_EDITOR = 360
+const RAIL_WIDTH = 46
 
 function loadPanels(): Panels {
   try {
     const raw = window.localStorage.getItem(PANELS_KEY)
     if (raw) {
       const p = JSON.parse(raw) as Partial<Panels>
+      const valid = (x: unknown): x is PanelId =>
+        x === 'files' || x === 'scene' || x === 'review'
       return {
-        left: p.left !== false,
-        right: p.right !== false,
+        open: Array.isArray(p.open) ? p.open.filter(valid) : [],
         // A stored width from a wider window is clamped on the first layout
         // pass, not trusted — see the resize effect.
-        leftWidth: Number(p.leftWidth) || DEFAULT_PANELS.leftWidth,
         rightWidth: Number(p.rightWidth) || DEFAULT_PANELS.rightWidth,
       }
     }
@@ -71,24 +119,21 @@ function savePanels(p: Panels) {
   }
 }
 
-/**
- * A drag can never squeeze the editor out of existence: the panel being sized
- * is bounded by what the *other* panel and a usable canvas already claim, so
- * the three columns always add up to something you can work in.
- */
+/** A drag can never squeeze the editor out of existence: the stack is bounded
+ *  by what the rail and a usable canvas already claim. */
 function clampPanels(p: Panels): Panels {
-  const room = (occupiedBy: number) =>
-    Math.max(MIN_PANEL, window.innerWidth - occupiedBy - MIN_EDITOR)
-  const rightNow = p.right ? p.rightWidth : 0
-  const leftWidth = Math.max(MIN_PANEL, Math.min(p.leftWidth, room(rightNow)))
-  const leftNow = p.left ? leftWidth : 0
-  const rightWidth = Math.max(MIN_PANEL, Math.min(p.rightWidth, room(leftNow)))
-  return leftWidth === p.leftWidth && rightWidth === p.rightWidth
-    ? p
-    : { ...p, leftWidth, rightWidth }
+  const max = Math.max(MIN_STACK, window.innerWidth - RAIL_WIDTH - MIN_EDITOR)
+  const rightWidth = Math.max(MIN_STACK, Math.min(p.rightWidth, max))
+  return rightWidth === p.rightWidth ? p : { ...p, rightWidth }
 }
 
-function Editor({ projectId }: { projectId: string | null }) {
+function Editor({
+  projectId,
+  projects,
+}: {
+  projectId: string | null
+  projects: ProjectsState
+}) {
   const { doc, offline, error, submit, decisions, answerDecision, plans, reviewBump } =
     useProject(projectId)
 
@@ -100,6 +145,7 @@ function Editor({ projectId }: { projectId: string | null }) {
   const [solo, setSolo] = useState<string | null>(null)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [panels, setPanels] = useState<Panels>(loadPanels)
+  const [optionsOpen, setOptionsOpen] = useState(false)
   /** True mid-drag, so the whole app can stop selecting text under the cursor. */
   const [resizing, setResizing] = useState(false)
 
@@ -134,29 +180,42 @@ function Editor({ projectId }: { projectId: string | null }) {
     if (activeTab !== 'canvas' && !openIds.includes(activeTab)) setActiveTab('canvas')
   }, [openIds, activeTab])
 
-  const togglePanel = (side: 'left' | 'right') =>
+  const togglePanel = (id: PanelId) =>
     setPanels((p) => {
-      // Reopening never restores a width that no longer fits — the window may
-      // have shrunk while the panel was a rail.
-      const next = clampPanels({ ...p, [side]: !p[side] })
+      const next = clampPanels({
+        ...p,
+        open: p.open.includes(id) ? p.open.filter((x) => x !== id) : [...p.open, id],
+      })
       savePanels(next)
       return next
     })
 
-  /** Live during a drag; the preference is written once, when you let go. */
-  const resize = (side: 'left' | 'right', width: number) =>
-    setPanels((p) => clampPanels({ ...p, [side === 'left' ? 'leftWidth' : 'rightWidth']: width }))
+  // An open review means an agent is stalled, and a stalled agent outranks a
+  // closed-by-default stack — a *new* question opens the Review panel itself.
+  // Keyed on the count so dismissing the panel sticks until the next question.
+  const openDecisionCount = decisions.filter((d) => d.status === 'open').length
+  useEffect(() => {
+    if (openDecisionCount === 0) return
+    setPanels((p) => {
+      if (p.open.includes('review')) return p
+      const next = { ...p, open: [...p.open, 'review' as PanelId] }
+      savePanels(next)
+      return next
+    })
+  }, [openDecisionCount])
 
-  /** Double-clicking the handle puts the panel back to its shipped width. */
-  const resetWidth = (side: 'left' | 'right') => {
-    const key = side === 'left' ? 'leftWidth' : 'rightWidth'
-    const next = clampPanels({ ...panels, [key]: DEFAULT_PANELS[key] })
+  /** Live during a drag; the preference is written once, when you let go. */
+  const resize = (width: number) => setPanels((p) => clampPanels({ ...p, rightWidth: width }))
+
+  /** Double-clicking the handle puts the stack back to its shipped width. */
+  const resetWidth = () => {
+    const next = clampPanels({ ...panels, rightWidth: DEFAULT_PANELS.rightWidth })
     setPanels(next)
     savePanels(next)
   }
 
-  // A window narrow enough would otherwise leave the two fixed-width panels
-  // holding the whole viewport and the canvas at zero.
+  // A window narrow enough would otherwise leave the fixed-width stack holding
+  // the whole viewport and the canvas at zero.
   useEffect(() => {
     const onResize = () => setPanels((p) => clampPanels(p))
     window.addEventListener('resize', onResize)
@@ -164,12 +223,13 @@ function Editor({ projectId }: { projectId: string | null }) {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  // VS Code's own bindings: ⌘B for the primary sidebar, ⌘⌥B for the secondary.
+  // VS Code's muscle memory, remapped to the stack: ⌘B toggles Files,
+  // ⌘⌥B toggles Scene.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() !== 'b' || !(e.metaKey || e.ctrlKey)) return
       e.preventDefault()
-      togglePanel(e.altKey ? 'right' : 'left')
+      togglePanel(e.altKey ? 'scene' : 'files')
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -229,182 +289,208 @@ function Editor({ projectId }: { projectId: string | null }) {
 
   const at = globalToScene(doc, time)
   const activeFile = openFiles.find((f) => f.id === activeTab) ?? null
+  const stackOpen = panels.open.length > 0
+
+  const panelBody = (id: PanelId) => {
+    switch (id) {
+      case 'files':
+        return (
+          <Assets
+            state={assets}
+            activeId={activeTab}
+            onOpen={openFile}
+            offline={offline}
+            projectId={projectId}
+            onUploaded={() => setAssetReload((n) => n + 1)}
+          />
+        )
+      case 'scene':
+        return (
+          <Inspector
+            doc={doc}
+            currentScene={at?.scene ?? null}
+            selectedNodeId={selectedNodeId}
+            onSelect={setSelectedNodeId}
+            submit={submit}
+          />
+        )
+      case 'review':
+        return (
+          <Review
+            decisions={decisions}
+            plans={plans}
+            files={assets.files}
+            onAnswer={answerDecision}
+            onSeek={(t) => {
+              setPlaying(false)
+              setTime(t)
+            }}
+          />
+        )
+    }
+  }
 
   return (
     <div className={`app${resizing ? ' resizing' : ''}`}>
-      <header>
-        <a className="back" href="?" title="all projects">
-          ← <h1>Euclid</h1>
-        </a>
-        <span className="project-name">{doc.name}</span>
-        {offline && <span className="badge offline">offline demo — not a real project</span>}
-        {error && <span className="badge error">{error}</span>}
-        <span className="grow" />
-        {projectId && !offline && <ReviewModeToggle projectId={projectId} />}
-        <button
-          className={`icon-btn${panels.left ? ' on' : ''}`}
-          onClick={() => togglePanel('left')}
-          title="files (⌘B)"
-        >
-          ▤ files
-        </button>
-        <button
-          className={`icon-btn${panels.right ? ' on' : ''}`}
-          onClick={() => togglePanel('right')}
-          title="scene inspector (⌘⌥B)"
-        >
-          scene ▥
-        </button>
-      </header>
+      <div className="shell">
+        <Sidebar projects={projects} currentId={projectId} offline={offline} />
 
-      <main className="workbench">
-        {panels.left ? (
-          <aside className="panel panel-left" style={{ width: panels.leftWidth }}>
-            <div className="panel-head">
-              <span>explorer</span>
-              <span className="count">{assets.files?.length ?? ''}</span>
-              <span className="grow" />
-              <button className="icon-btn" onClick={() => void assets.reload()} title="refresh">
-                ⟳
+        <div className="workspace">
+          <header>
+            <span className="doc-glyph">◈</span>
+            <span className="doc-title">{doc.name}</span>
+            {offline && <span className="badge offline">offline demo — not a real project</span>}
+            {error && <span className="badge error">{error}</span>}
+            <span className="grow" />
+            {projectId && !offline && <ReviewModeToggle projectId={projectId} />}
+            <div className="options">
+              <button
+                className={`icon-btn options-btn${optionsOpen ? ' on' : ''}`}
+                onClick={() => setOptionsOpen((o) => !o)}
+                title="panels"
+              >
+                ⋯
+                {/* A waiting agent question must be visible even with every
+                    panel closed — the dot is the stalled agent knocking. */}
+                {openDecisionCount > 0 && !panels.open.includes('review') && (
+                  <span className="options-dot" />
+                )}
               </button>
-              <button className="icon-btn" onClick={() => togglePanel('left')} title="collapse">
-                ⟨
-              </button>
+              {optionsOpen && (
+                <>
+                  <div className="menu-backdrop" onClick={() => setOptionsOpen(false)} />
+                  <div className="options-menu">
+                    {(Object.keys(PANEL_TITLES) as PanelId[]).map((id) => (
+                      <button key={id} onClick={() => togglePanel(id)}>
+                        <span className="options-check">
+                          {panels.open.includes(id) ? '✓' : ''}
+                        </span>
+                        {PANEL_TITLES[id]}
+                        {id === 'review' && openDecisionCount > 0 && (
+                          <span className="decision-badge">{openDecisionCount}</span>
+                        )}
+                        <span className="grow" />
+                        {id === 'files' && <span className="options-key">⌘B</span>}
+                        {id === 'scene' && <span className="options-key">⌘⌥B</span>}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
-            <div className="panel-body">
-              <Assets
-                state={assets}
-                activeId={activeTab}
-                onOpen={openFile}
-                offline={offline}
-                projectId={projectId}
-                onUploaded={() => setAssetReload((n) => n + 1)}
-              />
-            </div>
-          </aside>
-        ) : (
-          <Rail side="left" label="explorer" onClick={() => togglePanel('left')} />
-        )}
-        {panels.left && (
-          <Splitter
-            side="left"
-            width={panels.leftWidth}
-            onResize={(w) => resize('left', w)}
-            onReset={() => resetWidth('left')}
-            onCommit={() => savePanels(panels)}
-            onDragging={setResizing}
-          />
-        )}
+          </header>
 
-        <section className="editor">
-          <div className="tabstrip" ref={stripRef}>
-            <button
-              className={`tab tab-canvas${activeTab === 'canvas' ? ' active' : ''}`}
-              onClick={() => setActiveTab('canvas')}
-            >
-              <span className="tab-glyph">◉</span> canvas
-            </button>
-            {openFiles.map((f) => (
-              <span key={f.id} className={`tab${activeTab === f.id ? ' active' : ''}`}>
-                <button className="tab-open" onClick={() => setActiveTab(f.id)} title={f.path}>
-                  <span className="tab-glyph">{fileGlyph(f)}</span> {assetBasename(f.path)}
+          <main className="workbench">
+            <section className="editor">
+              <div className="tabstrip" ref={stripRef}>
+                <button
+                  className={`tab tab-canvas${activeTab === 'canvas' ? ' active' : ''}`}
+                  onClick={() => setActiveTab('canvas')}
+                >
+                  <span className="tab-glyph">◉</span> canvas
                 </button>
-                <button className="tab-close" onClick={() => closeTab(f.id)} title="close">
-                  ✕
-                </button>
-              </span>
-            ))}
-          </div>
+                {openFiles.map((f) => (
+                  <span key={f.id} className={`tab${activeTab === f.id ? ' active' : ''}`}>
+                    <button className="tab-open" onClick={() => setActiveTab(f.id)} title={f.path}>
+                      <span className="tab-glyph">{fileGlyph(f)}</span> {assetBasename(f.path)}
+                    </button>
+                    <button className="tab-close" onClick={() => closeTab(f.id)} title="close">
+                      ✕
+                    </button>
+                  </span>
+                ))}
+              </div>
 
-          <div className="editor-body">
-            {/* The canvas is hidden, never unmounted: Pixi's app and its ticker
-                are expensive to rebuild, and tearing one down to read a text
-                file would restart the preview every time you glance at one. */}
-            <div className="stage" style={{ display: activeTab === 'canvas' ? 'flex' : 'none' }}>
-              <Preview doc={doc} time={time} />
-              {/* Only appears for a scene that has a camera — otherwise the
-                  frame is the canvas and there is nothing to say. */}
-              <CameraFrame doc={doc} time={time} />
-              {captions && <CaptionOverlay doc={doc} time={time} playing={playing} />}
-            </div>
-            {activeFile && <FileViewer key={activeFile.id} file={activeFile} />}
-          </div>
-        </section>
+              <div className="editor-body">
+                {/* The canvas is hidden, never unmounted: Pixi's app and its
+                    ticker are expensive to rebuild, and tearing one down to
+                    read a text file would restart the preview every time you
+                    glance at one. */}
+                <div
+                  className="stage"
+                  style={{ display: activeTab === 'canvas' ? 'flex' : 'none' }}
+                >
+                  <Preview doc={doc} time={time} />
+                  {/* Only appears for a scene that has a camera — otherwise
+                      the frame is the canvas and there is nothing to say. */}
+                  <CameraFrame doc={doc} time={time} />
+                  {captions && <CaptionOverlay doc={doc} time={time} playing={playing} />}
+                </div>
+                {activeFile && <FileViewer key={activeFile.id} file={activeFile} />}
+              </div>
 
-        {panels.right && (
-          <Splitter
-            side="right"
-            width={panels.rightWidth}
-            onResize={(w) => resize('right', w)}
-            onReset={() => resetWidth('right')}
-            onCommit={() => savePanels(panels)}
-            onDragging={setResizing}
-          />
-        )}
-        {panels.right ? (
-          <aside className="panel panel-right" style={{ width: panels.rightWidth }}>
-            <div className="panel-head">
-              <span>scene</span>
-              <span className="grow" />
-              <button className="icon-btn" onClick={() => togglePanel('right')} title="collapse">
-                ⟩
-              </button>
-            </div>
-            <div className="panel-body">
-              {/* The queue sits above the inspector: an open review means an
-                  agent is stalled, and a stalled agent outranks a property
-                  sheet. */}
-              <Review
-                decisions={decisions}
-                plans={plans}
-                files={assets.files}
-                onAnswer={answerDecision}
+              <AudioMixer doc={doc} time={time} playing={playing} muted={muted} solo={solo} />
+              <Timeline
+                doc={doc}
+                time={time}
+                playing={playing}
+                muted={muted}
+                captions={captions}
+                solo={solo}
+                onSolo={setSolo}
+                submit={submit}
+                onToggleMute={() => setMuted((m) => !m)}
+                onToggleCaptions={() => setCaptions((c) => !c)}
                 onSeek={(t) => {
                   setPlaying(false)
                   setTime(t)
                 }}
+                onTogglePlay={() => {
+                  if (!playing && time >= docDuration(doc)) setTime(0)
+                  setPlaying((p) => !p)
+                }}
               />
-              <Inspector
-                doc={doc}
-                currentScene={at?.scene ?? null}
-                selectedNodeId={selectedNodeId}
-                onSelect={setSelectedNodeId}
-                submit={submit}
-              />
-            </div>
-          </aside>
-        ) : (
-          <Rail side="right" label="scene" onClick={() => togglePanel('right')} />
-        )}
-      </main>
+            </section>
 
-      <AudioMixer doc={doc} time={time} playing={playing} muted={muted} solo={solo} />
-      <Timeline
-        doc={doc}
-        time={time}
-        playing={playing}
-        muted={muted}
-        captions={captions}
-        solo={solo}
-        onSolo={setSolo}
-        submit={submit}
-        onToggleMute={() => setMuted((m) => !m)}
-        onToggleCaptions={() => setCaptions((c) => !c)}
-        onSeek={(t) => {
-          setPlaying(false)
-          setTime(t)
-        }}
-        onTogglePlay={() => {
-          if (!playing && time >= docDuration(doc)) setTime(0)
-          setPlaying((p) => !p)
-        }}
-      />
+            {stackOpen && (
+              <Splitter
+                width={panels.rightWidth}
+                onResize={resize}
+                onReset={resetWidth}
+                onCommit={() => savePanels(panels)}
+                onDragging={setResizing}
+              />
+            )}
+            {stackOpen && (
+              <aside className="stack" style={{ width: panels.rightWidth }}>
+                {panels.open.map((id) => (
+                  <section key={id} className="stack-panel">
+                    <div className="stack-head">
+                      <span>{PANEL_TITLES[id]}</span>
+                      {id === 'files' && (
+                        <span className="count">{assets.files?.length ?? ''}</span>
+                      )}
+                      {id === 'review' && openDecisionCount > 0 && (
+                        <span className="decision-badge">{openDecisionCount}</span>
+                      )}
+                      <span className="grow" />
+                      {id === 'files' && (
+                        <button
+                          className="icon-btn"
+                          onClick={() => void assets.reload()}
+                          title="refresh"
+                        >
+                          ⟳
+                        </button>
+                      )}
+                      <button className="icon-btn" onClick={() => togglePanel(id)} title="close">
+                        ✕
+                      </button>
+                    </div>
+                    <div className="stack-body">{panelBody(id)}</div>
+                  </section>
+                ))}
+              </aside>
+            )}
+          </main>
+        </div>
+      </div>
     </div>
   )
 }
 
 /**
- * The drag handle between a panel and the editor.
+ * The drag handle between the editor and the panel stack.
  *
  * Pointer capture rather than window listeners: the pointer keeps reporting to
  * this element once the drag starts, so a fast drag that outruns the cursor —
@@ -416,14 +502,12 @@ function Editor({ projectId }: { projectId: string | null }) {
  * the cursor.
  */
 function Splitter({
-  side,
   width,
   onResize,
   onReset,
   onCommit,
   onDragging,
 }: {
-  side: 'left' | 'right'
   width: number
   onResize: (width: number) => void
   onReset: () => void
@@ -434,7 +518,7 @@ function Splitter({
 
   return (
     <div
-      className={`splitter splitter-${side}`}
+      className="splitter"
       role="separator"
       aria-orientation="vertical"
       title="drag to resize · double-click to reset"
@@ -446,8 +530,7 @@ function Splitter({
       onPointerMove={(e) => {
         const start = from.current
         if (!start) return
-        const dx = e.clientX - start.x
-        onResize(start.width + (side === 'left' ? dx : -dx))
+        onResize(start.width - (e.clientX - start.x))
       }}
       onPointerUp={(e) => {
         e.currentTarget.releasePointerCapture(e.pointerId)
@@ -462,22 +545,5 @@ function Splitter({
       }}
       onDoubleClick={onReset}
     />
-  )
-}
-
-/** What a collapsed panel leaves behind: a strip you can click to get it back. */
-function Rail({
-  side,
-  label,
-  onClick,
-}: {
-  side: 'left' | 'right'
-  label: string
-  onClick: () => void
-}) {
-  return (
-    <button className={`rail rail-${side}`} onClick={onClick} title={`show ${label}`}>
-      {label}
-    </button>
   )
 }

@@ -883,39 +883,50 @@ report is what makes a bulk cleanup checkable before it runs.
 
 ## Editor entry points
 
-`/` lists every project, newest first; `?project=<id>` opens the editor on
-one; `?demo=1` opens a bundled offline document. The list matters more than
-it looks: an agent creates projects over MCP and the id only ever appears in
-a tool response, so without it the work is invisible unless someone copies a
-UUID by hand. Bare `/` used to show the demo, which is indistinguishable
-from "connected but not syncing" — the demo now says so on its badge.
+`?project=<id>` opens the editor on a project; `?demo=1` opens a bundled
+offline document; bare `/` auto-opens the **newest** project, the way an
+editor reopens what you had open (via `location.replace`, so Back does not
+bounce through the redirect). There is no listing page — the sidebar's hover
+flyout is the project list, reachable from anywhere. The list still matters
+more than it looks: an agent creates projects over MCP and the id only ever
+appears in a tool response, so without it the work is invisible unless
+someone copies a UUID by hand. Bare `/` used to show the demo, which is
+indistinguishable from "connected but not syncing" — the demo says so on its
+badge, and a bare `/` with no projects shows a landing note instead.
 
-## Editor layout: explorer | editor | scene
+## Editor layout: the Claude Code shell (plans/012)
 
-Three columns, arranged the way a code editor is, because the editor has two
-unrelated kinds of sidebar content and stacking them in one column made both
-worse:
+The shell is arranged the way Claude Code's desktop app is: a thin sidebar
+rail for switching *contexts*, a centre that owns the work, and workspace
+detail as optional right-hand panels that stack as they open.
 
-- **Left — the explorer.** The project's files (`Assets.tsx`), a virtual
-  folder tree over `buildAssetTree`.
-- **Centre — the editor**, and the only column that grows. A tab strip whose
-  first tab is the canvas and whose other tabs are open files.
-- **Right — the scene.** The review queue (see *The review queue* under
-  review mode), then the inspector: nodes at the playhead, numeric fields,
-  the narration panel. Everything that answers the *agent* or edits the
-  *document* lives here, so the question "am I looking at a file or at the
-  video?" has a side of the screen as its answer.
+- **Left — the sidebar rail** (`Sidebar.tsx`), 46px, always present. Hover
+  expands a flyout **overlay** — never a column, so glancing at the project
+  list cannot reflow the canvas — listing every project newest first, plus
+  the offline demo. The account button anchors the bottom of rail and flyout
+  alike and opens the (future) settings menu; it exists before settings do so
+  the spot where they will live is already discoverable.
+- **Centre — canvas and timeline**, the only column that grows. A tab strip
+  whose first tab is the canvas and whose other tabs are open files; the
+  timeline sits at the bottom of this column — it is the transport for the
+  document, and the panels beside it are not part of that transport.
+- **Right — the panel stack**, closed by default. The header's ⋯ menu
+  toggles three panels — **Files** (the asset explorer), **Scene** (the
+  inspector and narration panel), **Review** (the queue) — which stack
+  vertically in the order opened, each with its own header and close button.
+  ⌘B / ⌘⌥B toggle Files / Scene. Which panels are open and the stack's
+  width are remembered in `localStorage`.
 
-Both side panels collapse to a clickable rail (⌘B / ⌘⌥B, VS Code's own
-bindings) and drag to resize from the seam beside them; double-clicking a
-handle restores its default width. Open/closed and both widths are remembered
-in `localStorage`. The timeline stays full width beneath all three — it is the
-transport for the document, not for whatever tab is showing.
+A *new* agent question opens the Review panel by itself — an open review
+means an agent is stalled, and a stalled agent outranks a closed-by-default
+stack — but dismissing the panel sticks until the next question arrives
+(the effect is keyed on the open-decision count, not on render). With every
+panel closed, a waiting question still shows as a dot on the ⋯ button.
 
-Resizing is clamped rather than free: a panel is bounded by what the *other*
-panel and a 360px minimum canvas already claim, and the same clamp re-runs on
-window resize, so no drag and no narrow window can leave the middle column at
-zero. A drag uses pointer capture and recomputes width from where the drag
+Resizing is clamped rather than free: the stack is bounded by what the rail
+and a 360px minimum canvas already claim, and the same clamp re-runs on
+window resize, so no drag and no narrow window can leave the centre at zero.
+A drag uses pointer capture and recomputes width from where the drag
 *started* — accumulating per-move deltas would let the handle drift away from
 the cursor every time the clamp bit, and without capture a fast drag would die
 the moment it crossed the `<canvas>` or a PDF `<iframe>`.
@@ -1033,10 +1044,10 @@ assets whose provenance differs.
 
 ### The review queue (editor)
 
-`Review.tsx` is the human's side of the loop — the right-panel section that
-earned back the space the questions panel gave up on 2026-08-15, sitting
-*above* the inspector because an open review means an agent is stalled, and
-a stalled agent outranks a property sheet. It renders every open decision by
+`Review.tsx` is the human's side of the loop — since plans/012 its own panel
+in the right-hand stack, one that *opens itself* when a new question arrives,
+because an open review means an agent is stalled, and a stalled agent
+outranks a closed-by-default stack. It renders every open decision by
 what its `refs` say it is: a plan approval as its scene/asset/cost outline,
 an asset review with the file itself inline (image on the checkerboard,
 audio player, video via its proxy, GLB structure readout — the same

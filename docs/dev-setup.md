@@ -177,9 +177,11 @@ an existing local DB won't pick up a new table on its own.
 ```sh
 pnpm dev:api    # :8787 — API + Durable Objects + D1; also starts the public tunnel
 pnpm dev:mcp    # :8788 — MCP worker (service-binds to api; start api first)
-pnpm dev:web    # :5173 — `/` lists projects; ?project=<id> opens one; ?demo=1 = offline demo
-                #        editor: explorer | canvas | scene; ⌘B / ⌘⌥B collapse the
-                #        sides, drag the seams to resize (double-click to reset)
+pnpm dev:web    # :5173 — `/` auto-opens the newest project; ?project=<id> opens one;
+                #        ?demo=1 = offline demo. Shell: sidebar rail (hover = project
+                #        list) | canvas + timeline | right panel stack (closed by
+                #        default; ⋯ menu or ⌘B / ⌘⌥B toggle Files / Scene; drag the
+                #        seam to resize, double-click to reset)
 
 # The editor's and render worker's ports are negotiable, not fixed
 # (2026-08-22). launch.json runs `web` and `render-worker` with autoPort on,
@@ -358,7 +360,7 @@ every run** — re-run and re-paste after restarting.
 | `check-delete.ts` | project deletion: confirm guard, side-effect-free dry run, tenancy, and that the cascade clears D1 rows, R2 bytes **and** the Durable Object's document (free; needs `dev:api`) |
 | `check-assets.ts` | asset upload → download is byte-identical; tenancy enforced on **both** ends (a keyed caller claiming another user's id can neither write nor read); the explorer routes the editor binds to — list, move (incl. traversal refusal), delete (needs `dev:api`, with `DEV_ALLOW_ANON=1` for the user-upload 415 case) |
 | `check-narration.ts [--refund]` | TTS generation end-to-end: pricing, debit, op reaches the doc, overflow warning (**spends credits**; `--refund` needs a broken key, costs nothing) |
-| `check-app.ts` | project list renders and opens a project; demo editor loads; zero console/page errors |
+| `check-app.ts` | shell entry points: demo loads with the panel stack closed, ⋯ menu stacks panels, sidebar flyout lists and opens projects, bare `/` auto-opens the newest; zero console/page errors |
 | `check-narration-ui.ts` | editor narration preview: audio loads cross-origin, exact captions render, overrun panel fixes the scene (**spends credits**; needs `dev:api` + `dev:web`) |
 | `check-live.ts <projectId>` | external op appears in the open editor via WebSocket |
 | `render.ts --project <id>` | full MP4 export with narration audio (needs ffmpeg) |
