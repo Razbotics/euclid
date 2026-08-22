@@ -918,52 +918,75 @@ report is what makes a bulk cleanup checkable before it runs.
 
 ## Editor entry points
 
-`/` lists every project, newest first; `?project=<id>` opens the editor on
-one; `?demo=1` opens a bundled offline document. The list matters more than
-it looks: an agent creates projects over MCP and the id only ever appears in
-a tool response, so without it the work is invisible unless someone copies a
-UUID by hand. Bare `/` used to show the demo, which is indistinguishable
-from "connected but not syncing" — the demo now says so on its badge.
+`?project=<id>` opens the editor on a project; `?demo=1` opens a bundled
+offline document; bare `/` auto-opens the **newest** project, the way an
+editor reopens what you had open (via `location.replace`, so Back does not
+bounce through the redirect). There is no listing page — the sidebar's hover
+flyout is the project list, reachable from anywhere. The list still matters
+more than it looks: an agent creates projects over MCP and the id only ever
+appears in a tool response, so without it the work is invisible unless
+someone copies a UUID by hand. Bare `/` used to show the demo, which is
+indistinguishable from "connected but not syncing" — the demo says so on its
+badge, and a bare `/` with no projects shows a landing note instead.
 
-## Editor layout: explorer | editor | scene
+## Editor layout: the Claude Code shell (plans/012)
 
-Three columns, arranged the way a code editor is, because the editor has two
-unrelated kinds of sidebar content and stacking them in one column made both
-worse:
+The shell is arranged the way Claude Code's desktop app is: a sidebar for
+switching *contexts*, a centre that owns the work, and workspace detail as
+optional right-hand panels that stack as they open.
 
-- **Left — the explorer.** The project's files (`Assets.tsx`), a virtual
-  folder tree over `buildAssetTree`.
-- **Centre — the editor**, and the only column that grows. A tab strip whose
-  first tab is the canvas and whose other tabs are open files.
-- **Right — the scene.** The review queue (see *The review queue* under
-  review mode), then the inspector: nodes at the playhead, numeric fields,
-  the narration panel. Everything that answers the *agent* or edits the
-  *document* lives here, so the question "am I looking at a file or at the
-  video?" has a side of the screen as its answer.
+- **Left — the sidebar** (`Sidebar.tsx`), the project list plus the account
+  button. It has two modes, switched by the top-left toggle and remembered:
+  **docked** (the default) — a real 252px column with no hover behaviour at
+  all — and **hover**, where the column is gone entirely, only the toggle
+  button remains at the far left of the header, and hovering *the button*
+  slides the sidebar out as an overlay (never a column, so peeking at the
+  list cannot reflow the canvas). The account button opens the (future)
+  settings menu; it exists before settings do so the spot where they will
+  live is already discoverable.
+- **Centre — canvas and timeline, nothing else.** No tab strip: files open
+  inside the Files panel, so the preview is never covered and Pixi's app
+  never needs hiding or rebuilding. The timeline sits at the bottom of this
+  column — it is the transport for the document, and the panels beside it
+  are not part of that transport.
+- **Right — the panel stack**, closed by default. The header's ⋯ menu (each
+  entry with its glyph, ✓ when open) toggles three panels — **Files** (the
+  asset explorer), **Scene** (the inspector and narration panel), **Review**
+  (the queue) — which stack vertically in the order opened. Each panel is
+  its own card — rounded, bordered, a gap between them — with its own
+  header: glyph, title, and expand/close controls. The gap between two cards
+  *is* the resize handle: dragging it trades height between exactly that
+  pair (the others keep their share), stored as flex weights whose sum the
+  drag preserves. Expand maximizes that panel and folds the others to their
+  headers (a viewing choice, like solo — deliberately not persisted);
+  ⌘B / ⌘⌥B toggle Files / Scene. Which panels are open, the stack's width
+  and the cards' height weights are remembered in `localStorage`.
 
-Both side panels collapse to a clickable rail (⌘B / ⌘⌥B, VS Code's own
-bindings) and drag to resize from the seam beside them; double-clicking a
-handle restores its default width. Open/closed and both widths are remembered
-in `localStorage`. The timeline stays full width beneath all three — it is the
-transport for the document, not for whatever tab is showing.
+Selecting a file in the Files panel opens it as **its own card directly
+under Files** — titled with the file's name, carrying the same expand/close
+controls as any card — one file at a time, deselecting (or ✕) closes it, and
+a file deleted from the tree takes its card with it. **Library rows open the
+same way**: the user owns those bytes as much as the project's own, the
+assets API already serves them under the one tenancy rule, and the row is
+just dressed with `usedBy: false` on its way to the viewer. The file list
+lives in `useAssets`, not in the explorer: the viewer needs the same records
+(mime, size, path) to know what to draw, and a delete has to close the card
+it invalidates. One fetch, one truth.
 
-Resizing is clamped rather than free: a panel is bounded by what the *other*
-panel and a 360px minimum canvas already claim, and the same clamp re-runs on
-window resize, so no drag and no narrow window can leave the middle column at
-zero. A drag uses pointer capture and recomputes width from where the drag
+A *new* agent question opens the Review panel by itself — an open review
+means an agent is stalled, and a stalled agent outranks a closed-by-default
+stack — but dismissing the panel sticks until the next question arrives
+(the effect is keyed on the open-decision count, not on render). With every
+panel closed, a waiting question still shows as a dot on the ⋯ button.
+
+Resizing is clamped rather than free: the stack is bounded by what the
+docked sidebar and a 360px minimum canvas already claim (hover mode just
+leaves slack, the safe direction), and the same clamp re-runs on window
+resize, so no drag and no narrow window can leave the centre at zero.
+A drag uses pointer capture and recomputes width from where the drag
 *started* — accumulating per-move deltas would let the handle drift away from
 the cursor every time the clamp bit, and without capture a fast drag would die
 the moment it crossed the `<canvas>` or a PDF `<iframe>`.
-
-Two decisions inside that are load-bearing:
-
-- **The canvas is hidden, never unmounted.** Pixi's `Application` and its
-  ticker are expensive to rebuild, and unmounting to read a text file would
-  restart the preview every time you glanced at one. Opening a file toggles
-  `display`, so playback and narration audio carry on behind it.
-- **The file list lives in `useAssets`, not in the explorer.** The tab strip
-  needs the same records (mime, size, path) to know which viewer to draw, and
-  a delete has to close the tab it invalidates. One fetch, one truth.
 
 ### Viewing a file
 
@@ -1068,10 +1091,10 @@ assets whose provenance differs.
 
 ### The review queue (editor)
 
-`Review.tsx` is the human's side of the loop — the right-panel section that
-earned back the space the questions panel gave up on 2026-08-15, sitting
-*above* the inspector because an open review means an agent is stalled, and
-a stalled agent outranks a property sheet. It renders every open decision by
+`Review.tsx` is the human's side of the loop — since plans/012 its own panel
+in the right-hand stack, one that *opens itself* when a new question arrives,
+because an open review means an agent is stalled, and a stalled agent
+outranks a closed-by-default stack. It renders every open decision by
 what its `refs` say it is: a plan approval as its scene/asset/cost outline,
 an asset review with the file itself inline (image on the checkerboard,
 audio player, video via its proxy, GLB structure readout — the same

@@ -61,7 +61,7 @@ export function fileGlyph(file: { mime: string; path: string }): string {
   }
 }
 
-export function FileViewer({ file }: { file: ProjectFile }) {
+export function FileViewer({ file, onClose }: { file: ProjectFile; onClose?: () => void }) {
   const url = assetUrl(file.id)
   const kind = viewerKind(file.mime, file.path)
   // Watching is scrubbing, so the player gets the proxy — but `open` and `save`
@@ -85,12 +85,14 @@ export function FileViewer({ file }: { file: ProjectFile }) {
           {file.usedBy ? ' · in use' : ''}
         </span>
         <span className="grow" />
-        <a href={url} target="_blank" rel="noreferrer" title="open in a browser tab">
-          ↗ open
-        </a>
         <a href={url} download={assetBasename(file.path)} title="download">
           ↓ save
         </a>
+        {onClose && (
+          <button className="icon-btn" onClick={onClose} title="close viewer">
+            ✕
+          </button>
+        )}
       </div>
       <div className={`file-view-body${kind === 'text' || kind === 'model' ? ' scroll' : ''}`}>
         {kind === 'image' && <ImageView url={url} onDims={setDims} />}

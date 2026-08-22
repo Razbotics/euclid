@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { buildAssetTree, type AssetFolder, type AssetFile } from '@euclid/dsl'
-import { assetUrl, formatBytes, uploadFile, type AssetsState, type ProjectFile } from './useAssets'
+import { formatBytes, uploadFile, type AssetsState, type ProjectFile } from './useAssets'
 import { fileGlyph, viewerKind } from './FileViewer'
 import { AUDIO_DND_TYPE } from './Timeline'
 
@@ -126,23 +126,34 @@ export function Assets({
             library
             <span className="library-count">{linkable.length}</span>
           </div>
-          {!collapsed.has('~library') &&
-            linkable.map((f) => (
-              <div key={f.id} className="asset-file library-file" title={`${f.path} — from another project`}>
-                <span className="asset-glyph">{fileGlyph(f)}</span>
-                <span className="asset-name">{f.path.slice(f.path.lastIndexOf('/') + 1)}</span>
-                <span className="asset-meta">{formatBytes(f.bytes)}</span>
-                <span className="asset-actions">
-                  <button
-                    onClick={() => void state.linkIn(f.id)}
-                    disabled={state.busy === f.id}
-                    title="link into this project (shared, not copied)"
-                  >
-                    ⊕
-                  </button>
-                </span>
-              </div>
-            ))}
+          {!collapsed.has('~library') && (
+            // Same indent as any folder's children, so the two lists read as
+            // one tree; same click-to-view, because the user owns these bytes
+            // as much as the project's own.
+            <div className="tree" style={{ paddingLeft: 10 }}>
+              {linkable.map((f) => (
+                <div
+                  key={f.id}
+                  className={`asset-file library-file${activeId === f.id ? ' active' : ''}`}
+                  title={`${f.path} — from another project`}
+                  onClick={() => onOpen({ ...f, usedBy: false })}
+                >
+                  <span className="asset-glyph">{fileGlyph(f)}</span>
+                  <span className="asset-name">{f.path.slice(f.path.lastIndexOf('/') + 1)}</span>
+                  <span className="asset-meta">{formatBytes(f.bytes)}</span>
+                  <span className="asset-actions" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={() => void state.linkIn(f.id)}
+                      disabled={state.busy === f.id}
+                      title="link into this project (shared, not copied)"
+                    >
+                      ⊕
+                    </button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -223,9 +234,6 @@ function FileRow({ file, state, activeId, onOpen }: { file: AssetFile } & TreePr
         {file.durationSec ? ` · ${file.durationSec.toFixed(1)}s` : ''}
       </span>
       <span className="asset-actions" onClick={(e) => e.stopPropagation()}>
-        <a href={assetUrl(file.id)} target="_blank" rel="noreferrer" title="open in a browser tab">
-          ↗
-        </a>
         <button onClick={() => state.rename(row)} disabled={busy} title="rename or move">
           ✎
         </button>
