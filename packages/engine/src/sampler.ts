@@ -105,6 +105,30 @@ export function camera3(cam: ResolvedCamera): Camera3 {
   return { focus: cam.position, yaw: cam.yaw, pitch: cam.pitch, distance: cam.distance }
 }
 
+/**
+ * Scene point → the pixel it lands on, applying the same framing the stage
+ * applies to the whole node layer: `centre + R(−roll)·zoom·(p − position)`.
+ *
+ * The stage expresses this as a pivot/scale/rotation on a Pixi container, which
+ * is the same transform and cannot be called from anywhere else. This is the
+ * arithmetic on its own, for anyone who needs the answer rather than the
+ * picture — `sample_at` reports it, because "where is it on screen" is not
+ * something a caller can work out from node coordinates once a camera exists.
+ */
+export function screenPoint(p: Vec2, camera: ResolvedCamera | null, canvas: Canvas): Vec2 {
+  if (!camera) return { x: p.x, y: p.y }
+  const dx = p.x - camera.position.x
+  const dy = p.y - camera.position.y
+  // Negated, for the reason the stage negates it: rolling the camera one way
+  // turns the scene the other.
+  const c = Math.cos(-camera.rotation)
+  const s = Math.sin(-camera.rotation)
+  return {
+    x: canvas.width / 2 + camera.zoom * (dx * c - dy * s),
+    y: canvas.height / 2 + camera.zoom * (dx * s + dy * c),
+  }
+}
+
 export interface ResolvedScene {
   nodes: ResolvedNode[]
   /** null = no camera on this scene; the frame is the canvas, untransformed. */

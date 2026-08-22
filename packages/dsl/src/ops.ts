@@ -51,6 +51,25 @@ export const OpSchema = z.discriminatedUnion('kind', [
     parentId: z.string().optional(),
     index: z.number().int().min(0).optional(),
   }),
+  /**
+   * Move a node to another slot — the op behind draw order, since draw order
+   * **is** document order among siblings.
+   *
+   * Names the node by id and never carries its contents, which is what makes it
+   * safe under the DO's rebase-on-409 retry: a remove+add pair would re-insert
+   * the copy the writer read, silently reverting whatever landed in between.
+   *
+   * `parentId` reads exactly as it does on `node.add` — omitted means the scene
+   * root — and `index` is the destination slot in the target list *after* the
+   * node has been lifted out of its old one, so index 0 is always backmost.
+   */
+  z.object({
+    kind: z.literal('node.move'),
+    sceneId: z.string(),
+    nodeId: z.string(),
+    parentId: z.string().optional(),
+    index: z.number().int().min(0),
+  }),
   z.object({ kind: z.literal('node.remove'), sceneId: z.string(), nodeId: z.string() }),
   z.object({ kind: z.literal('node.update'), sceneId: z.string(), nodeId: z.string(), patch: NodePatchSchema }),
 
@@ -161,6 +180,13 @@ export const op = {
     patch,
   }),
   removeNode: (sceneId: string, nodeId: string): Op => ({ kind: 'node.remove', sceneId, nodeId }),
+  moveNode: (sceneId: string, nodeId: string, index: number, parentId?: string): Op => ({
+    kind: 'node.move',
+    sceneId,
+    nodeId,
+    index,
+    parentId,
+  }),
   setTrack: (sceneId: string, nodeId: string, track: Track): Op => ({ kind: 'track.set', sceneId, nodeId, track }),
   setNarration: (sceneId: string, narration: Narration): Op => ({ kind: 'narration.set', sceneId, narration }),
   setCamera: (sceneId: string, camera: Camera): Op => ({ kind: 'scene.setCamera', sceneId, camera }),

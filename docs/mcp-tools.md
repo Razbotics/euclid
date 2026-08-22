@@ -122,6 +122,25 @@ shape as `remove_asset`'s `force`.
 - A node can step **out of the world**: `pin_to_frame` makes it ignore the
   camera entirely, for captions and titles that should not swing about when
   the scene orbits.
+- **Draw order is document order, and `reorder_node` edits it** (plans/011
+  gap 1). Ops only appended, so putting a backdrop behind what already exists
+  meant deleting and rebuilding the scene — which also destroyed every
+  transition bound to the removed ids. It takes one of `to: "back"/"front"`,
+  `before`, `after` or `index`; `before`/`after` name a sibling and therefore
+  decide the parent too, so "behind that thing" re-parents when it has to.
+  Re-parenting is reported, because a child's coordinates are read relative to
+  its group and the node really has moved on screen. In an orbited scene the
+  stage sorts by **depth** and uses this order only to break ties, and the
+  result says so; moving a spatial node into a group switches its projection
+  off entirely, and warns.
+- **Resolved state is readable without pixels**: `sample_at(sceneId, t)` runs
+  the same `resolveScene` the renderer draws from and reports where every node
+  *ends up* — world position with group transforms composed in, followers
+  already on their paths, `screen=` once the camera has framed it, plus
+  depth/perspective, write and highlight progress, and `INVISIBLE`/`OFF-FRAME`
+  with the reason. It answers the questions that are numbers rather than
+  pictures; `preview_frames` stays the answer for anything about extent, since
+  this reports anchors and text is sized by the renderer.
 - The third dimension is opt-in and inert until asked for: nodes take an
   optional `z` and `add_vector3`/`add_axes3d`/`add_points3`/`add_mesh` are
   spatial by

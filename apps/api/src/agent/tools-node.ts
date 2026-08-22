@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import {
   axisTicks,
+  findNode,
   newId,
   niceStep,
   op,
@@ -41,6 +42,22 @@ export const baseNode = (position: Vec2) => ({
   tracks: [] as Track[],
   transitions: [] as Transition[],
 })
+
+/**
+ * Is this node one the sampler projects — a 3D type, or anything given a depth?
+ *
+ * The same test `resolveScene` makes, kept here because `reorder_node` is the
+ * only capability that can put one of these somewhere it stops being projected.
+ */
+function isSpatial(node: EuclidNode): boolean {
+  return (
+    node.type === 'mesh' ||
+    node.type === 'vector3' ||
+    node.type === 'axes3d' ||
+    node.type === 'points3' ||
+    node.z !== undefined
+  )
+}
 
 export const nodeTools = [
   capability({
@@ -679,6 +696,154 @@ export const nodeTools = [
           `will look different. get_scene will show your value; the render will not use it. ` +
           `Animate ${shadowed.join('/')} instead, or clear the track first.`,
         { nodeId, patch, shadowed },
+      )
+    },
+  }),
+
+  capability({
+    name: 'reorder_node',
+    summary: 'Change what a node draws in front of or behind — without rebuilding the scene.',
+    doc: [
+      '**Draw order is document order.** Nodes created later draw on top of nodes created earlier, and until this existed the only way to put something *underneath* what was already there was to delete the scene and rebuild it in the new order — which also destroyed every `flow_along` and `highlight` bound to the removed ids. A real run did that twice and it was the single largest source of wasted calls in it.',
+      '',
+      'Give exactly one placement:',
+      '',
+      '- `to: "back"` — behind all its siblings. This is the backdrop case: a starfield added last still goes behind everything.',
+      '- `to: "front"` — in front of all its siblings.',
+      '- `before: <nodeId>` — directly **behind** that node (it draws first, so the other covers it).',
+      '- `after: <nodeId>` — directly **in front of** that node.',
+      '- `index: <n>` — an explicit slot, 0 = backmost. Positions are counted after the node is lifted out, so an index past the end means frontmost.',
+      '',
+      '`before`/`after` also **re-parent**: the node moves into whichever group the named sibling lives in, because "behind that thing" is only meaningful among its own siblings. `to`/`index` keep the node where it is unless you pass `parentId`.',
+      '',
+      '**Re-parenting moves the node on screen.** A child\'s coordinates are relative to its group, so a node at (960, 540) moved into a group centred at (400, 300) lands at (1360, 840). The result says where it ended up; patch `position` afterwards if you wanted it to stay put.',
+      '',
+      '**A scene with an orbiting camera sorts by depth instead**, using document order only to break ties between nodes at the same depth — so in a 3D scene, move the node in `z` rather than reordering it.',
+      '',
+      'Nothing attached to the node is touched: tracks, transitions, highlights and anything following it all survive, which is the whole point of moving rather than rebuilding.',
+    ].join('\n'),
+    args: z.object({
+      projectId: PROJECT_ID,
+      sceneId: SCENE_ID,
+      nodeId: NODE_ID,
+      to: z.enum(['back', 'front']).optional().describe('behind or in front of all siblings'),
+      before: NODE_ID.optional().describe('a sibling to sit directly behind'),
+      after: NODE_ID.optional().describe('a sibling to sit directly in front of'),
+      index: z.number().int().min(0).optional().describe('explicit slot; 0 = backmost'),
+      parentId: z
+        .string()
+        .optional()
+        .describe('with to/index: a group to move into. "root" moves out to the scene root'),
+    }),
+    async handler(ctx, { projectId, sceneId, nodeId, to, before, after, index, parentId }) {
+      const given = [
+        to !== undefined && 'to',
+        before !== undefined && 'before',
+        after !== undefined && 'after',
+        index !== undefined && 'index',
+      ].filter(Boolean) as string[]
+      if (given.length !== 1) {
+        throw new CapabilityError(
+          given.length === 0
+            ? 'say where to put it: to ("back"/"front"), before, after, or index'
+            : `give exactly one placement, not ${given.join(' and ')} — they can disagree`,
+        )
+      }
+
+      const { doc } = await ctx.getDoc(projectId)
+      const scene = ctx.sceneOrThrow(doc, sceneId)
+      const hit = findNode(scene.nodes, nodeId)
+      if (!hit) {
+        // nodeOrThrow's message names what the scene does have, which is the
+        // remedy here too.
+        ctx.nodeOrThrow(doc, sceneId, nodeId)
+        throw new CapabilityError(`node ${nodeId} not found in scene ${sceneId}`, 404)
+      }
+
+      // Where it is going: a named sibling decides its own parent, because
+      // "behind that" only means anything among one list.
+      let targetParent = parentId === 'root' ? undefined : (parentId ?? hit.parentId)
+      let slot: number
+      const anchorId = before ?? after
+      if (anchorId !== undefined) {
+        if (anchorId === nodeId) {
+          throw new CapabilityError(
+            `${nodeId} cannot be placed relative to itself — name the other node`,
+          )
+        }
+        const anchor = findNode(scene.nodes, anchorId)
+        if (!anchor) {
+          throw new CapabilityError(
+            `node ${anchorId} not found in scene ${sceneId}, so there is nothing to sit ` +
+              `${before !== undefined ? 'behind' : 'in front of'}`,
+            404,
+          )
+        }
+        if (parentId !== undefined) {
+          throw new CapabilityError(
+            `before/after already decide the parent (${anchorId} is ` +
+              `${anchor.parentId ? `in ${anchor.parentId}` : 'at the scene root'}); drop parentId`,
+          )
+        }
+        targetParent = anchor.parentId
+        // Both indices are counted in the list as it will be, so an anchor
+        // that sits after the node in its own list slides down by one when the
+        // node is lifted out.
+        const shift = anchor.siblings === hit.siblings && anchor.index > hit.index ? 1 : 0
+        slot = anchor.index - shift + (after !== undefined ? 1 : 0)
+      } else {
+        const target =
+          targetParent === undefined
+            ? scene.nodes
+            : (() => {
+                const p = findNode(scene.nodes, targetParent!)
+                if (!p) throw new CapabilityError(`group ${targetParent} not found in scene ${sceneId}`, 404)
+                if (p.node.type !== 'group') {
+                  throw new CapabilityError(
+                    `${targetParent} is a ${p.node.type}, not a group — only groups hold children. ` +
+                      `add_group makes one.`,
+                  )
+                }
+                return p.node.children
+              })()
+        // The node vacates its slot first, so the list it lands in is one
+        // shorter when it started there.
+        const size = target.length - (target === hit.siblings ? 1 : 0)
+        slot = to === 'back' ? 0 : to === 'front' ? size : Math.min(index!, size)
+      }
+
+      const before2d = hit.node.position
+      await ctx.submit(projectId, [op.moveNode(sceneId, nodeId, slot, targetParent)])
+
+      const { doc: after2 } = await ctx.getDoc(projectId)
+      const moved = findNode(ctx.sceneOrThrow(after2, sceneId).nodes, nodeId)!
+      const order = moved.siblings.map((n) => (n.id === nodeId ? `[${n.id}]` : n.id))
+      const reparented = (hit.parentId ?? null) !== (moved.parentId ?? null)
+      const where = moved.parentId ? `inside ${moved.parentId}` : 'at the scene root'
+      return said(
+        `moved ${nodeId} to slot ${moved.index} of ${moved.siblings.length} ${where} — ` +
+          `draw order back to front: ${order.join(' → ')}` +
+          (reparented
+            ? `\nNOTE: this re-parented the node, and its position (${before2d.x}, ${before2d.y}) ` +
+              `is now read relative to ${moved.parentId ?? 'the scene root'}, so it has moved on ` +
+              `screen. Patch position with update_node if it should stay where it looked.`
+            : '') +
+          // Neither capability is wrong on its own: the creators simply do not
+          // offer `parentId` to a spatial node, so nothing before this could
+          // put one in a group. Moving one in silently switches its projection
+          // off — the node keeps its z, keeps drawing, and stops being 3D.
+          (isSpatial(moved.node) && moved.parentId
+            ? `\nWARNING: ${nodeId} is a spatial node, and the sampler only projects spatial ` +
+              `nodes at the SCENE ROOT — a group applies its own 2D transform, which would be ` +
+              `the camera applied twice. Inside ${moved.parentId} it keeps its z and keeps ` +
+              `drawing, but flat: the orbit no longer moves it. Move it back with ` +
+              `parentId: "root", or use to/index without parentId to reorder it where it is.`
+            : '') +
+          (scene.camera && (scene.camera.yaw !== 0 || scene.camera.pitch !== 0)
+            ? `\nNOTE: this scene's camera is orbited (yaw/pitch non-zero), so the stage sorts by ` +
+              `depth and uses this order only to break ties. Animate z to change what covers what.`
+            : ''),
+        { nodeId, index: moved.index, parentId: moved.parentId ?? null, order: moved.siblings.map((n) => n.id) },
       )
     },
   }),

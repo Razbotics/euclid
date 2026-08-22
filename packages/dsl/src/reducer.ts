@@ -8,6 +8,7 @@ export class OpError extends Error {
       | 'scene_not_found'
       | 'node_not_found'
       | 'parent_not_group'
+      | 'invalid_move'
       | 'duplicate_id'
       | 'invalid_patch'
       | 'invalid_result'
@@ -119,6 +120,39 @@ function applyOp(doc: EuclidDoc, op: Op): void {
       }
       const i = op.index ?? target.length
       target.splice(Math.min(i, target.length), 0, op.node)
+      return
+    }
+    case 'node.move': {
+      const scene = requireScene(doc, op.sceneId)
+      const hit = findNode(scene.nodes, op.nodeId)
+      if (!hit) throw new OpError('node_not_found', `node ${op.nodeId} not found`)
+      let target = scene.nodes
+      if (op.parentId) {
+        if (op.parentId === op.nodeId) {
+          throw new OpError('invalid_move', `${op.nodeId} cannot be moved into itself`)
+        }
+        const parent = findNode(scene.nodes, op.parentId)
+        if (!parent) throw new OpError('node_not_found', `parent ${op.parentId} not found`)
+        if (parent.node.type !== 'group') {
+          throw new OpError('parent_not_group', `parent ${op.parentId} is a ${parent.node.type}, not a group`)
+        }
+        // A group moved inside its own descendant would detach that whole
+        // subtree from the scene — the document would still validate, because
+        // the cycle is unreachable from `scene.nodes`, and the nodes would
+        // simply stop existing.
+        if (hit.node.type === 'group' && findNode(hit.node.children, op.parentId)) {
+          throw new OpError(
+            'invalid_move',
+            `${op.parentId} is inside ${op.nodeId}, so moving ${op.nodeId} into it would ` +
+              `detach both from the scene`,
+          )
+        }
+        target = parent.node.children
+      }
+      // Lift out first, so `index` names a slot in the list as it will be —
+      // which makes index 0 backmost whether or not the node started here.
+      const [node] = hit.siblings.splice(hit.index, 1)
+      target.splice(Math.min(op.index, target.length), 0, node!)
       return
     }
     case 'node.remove': {

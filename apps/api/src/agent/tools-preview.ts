@@ -1,7 +1,15 @@
 import { z } from 'zod'
-import { formatMoments, keyMoments, type EuclidDoc, type KeyMoment } from '@euclid/dsl'
-import { PROJECT_ID } from './schemas'
-import { capability, CapabilityError, type CapabilityResult } from './types'
+import {
+  DEFAULT_CAMERA_DISTANCE,
+  formatMoments,
+  keyMoments,
+  type EuclidDoc,
+  type KeyMoment,
+  type Vec2,
+} from '@euclid/dsl'
+import { resolveScene, screenPoint, type ResolvedNode } from '@euclid/engine'
+import { NODE_ID, PROJECT_ID, SCENE_ID } from './schemas'
+import { capability, said, CapabilityError, type CapabilityResult } from './types'
 import type { Env } from '../env'
 
 /** Default for local dev; production points this at the render backend. */
@@ -56,7 +64,220 @@ async function capture(
   return { base64: btoa(binary), bytes: buf.length, ink }
 }
 
+/** One number, short enough to read in a line of a hundred of them. */
+function r(n: number): string {
+  return (Math.round(n * 100) / 100).toString()
+}
+
+function xy(p: Vec2): string {
+  return `(${r(p.x)}, ${r(p.y)})`
+}
+
+/**
+ * One resolved node as a line.
+ *
+ * Everything here is *post*-resolution: the world position has every ancestor
+ * group's transform composed in, a follower is already on its path, and the
+ * screen point has the camera applied. Which is the point — each of those is a
+ * step a caller would otherwise redo by hand, and run 8 got exactly that
+ * arithmetic wrong.
+ */
+function sampleLine(
+  n: ResolvedNode,
+  camera: Parameters<typeof screenPoint>[1],
+  canvas: EuclidDoc['canvas'],
+  indent: string,
+  /**
+   * Whether the sampler would have projected this node at all. Only unpinned
+   * root nodes in a spatial scene are, so a null projection means "behind the
+   * camera" for those and "never projected" for everyone else — and reporting
+   * the wrong one of those sends a caller hunting a depth bug in a 2D node.
+   */
+  projectable: boolean,
+): { line: string; visible: boolean } {
+  const src = n.source
+  // Projection replaces the anchor's scene position in a spatial scene, so it
+  // is what the camera transform must be fed.
+  const scenePos = n.projection ? { x: n.projection.x, y: n.projection.y } : n.world
+  const screen = screenPoint(scenePos, camera, canvas)
+  const opacity = (n.props.opacity as number) ?? 1
+
+  const bits: string[] = [`${xy(n.world)}`]
+  if (screen.x !== n.world.x || screen.y !== n.world.y) bits.push(`screen=${xy(screen)}`)
+  if (n.projection) {
+    bits.push(`depth=${r(n.projection.depth)}`, `persp=${r(n.projection.scale)}x`)
+  } else if (!projectable && (src.z !== undefined || src.type === 'mesh' || src.type.endsWith('3'))) {
+    // A spatial node the sampler never projects — inside a group, or pinned.
+    // Saying so beats leaving a gap where the depth numbers would be, and it
+    // names the cause, which is the fix.
+    bits.push(src.fixed ? 'pinned (not projected)' : 'in a group (not projected)')
+  }
+  if (opacity !== 1) bits.push(`opacity=${r(opacity)}`)
+  if (n.worldScale !== 1) bits.push(`scale=${r(n.worldScale)}`)
+  if (n.worldRotation !== 0) bits.push(`rot=${r(n.worldRotation)}rad`)
+  if (n.writeProgress !== null) bits.push(`write=${Math.round(n.writeProgress * 100)}%`)
+  if (n.highlight) {
+    bits.push(`highlight=${n.highlight.style} ${Math.round(n.highlight.strength * 100)}%`)
+  }
+  if (n.texMorph) {
+    bits.push(`morph=${Math.round(n.texMorph.progress * 100)}% → "${n.texMorph.toTex}"`)
+  }
+  if (n.cellMorph) bits.push(`cellMorph=${Math.round(n.cellMorph.progress * 100)}%`)
+  if (n.arrow) bits.push(`from=${xy(n.arrow.from)} to=${xy(n.arrow.to)}`)
+
+  // "Nothing is drawn" has three unrelated causes and they look identical in a
+  // frame — this is the read that tells them apart.
+  const hidden =
+    opacity <= 0.001
+      ? 'INVISIBLE (opacity 0)'
+      : n.writeProgress === 0
+        ? 'INVISIBLE (write has not started)'
+        : projectable && n.projection === null
+          ? 'INVISIBLE (at or behind the camera — lower its z, or move the camera back)'
+          : ''
+  // Only for things that draw. A group's anchor is a pivot, not a picture: a
+  // group at (0, 0) holding children spread across the canvas is entirely
+  // visible, and flagging it would send a caller hunting a layout bug that is
+  // not there.
+  const off =
+    !hidden &&
+    src.type !== 'group' &&
+    (screen.x < 0 || screen.y < 0 || screen.x > canvas.width || screen.y > canvas.height)
+      ? 'OFF-FRAME'
+      : ''
+  if (hidden) bits.push(hidden)
+  if (off) bits.push(off)
+
+  return {
+    line: `${indent}${src.type} ${src.id} ${bits.join(' ')}`,
+    visible: !hidden && !off,
+  }
+}
+
+/** Is any requested node under this one? Keeps a filtered listing's groups. */
+function subtreeHas(n: ResolvedNode, want: Set<string>): boolean {
+  return n.children.some((c) => want.has(c.source.id) || subtreeHas(c, want))
+}
+
 export const previewTools = [
+  capability({
+    name: 'sample_at',
+    summary: 'Where everything actually is at one moment — resolved positions, no pixels. Free.',
+    doc: [
+      '**The answer preview_frames makes you eyeball.** Rendering is a pure function of (document, time), and this runs that function without drawing: it reports where every node *ends up* at scene-local second `t`, after tracks, group transforms, path-following and the camera have all had their say.',
+      '',
+      'Use it when the question is a number rather than a picture — when does this reach that, do these two overlap yet, is that node on screen at all. A real run computed a crossing time by arithmetic over its own keyframes, got it wrong, and only caught it from a contact sheet; this answers it exactly and costs nothing.',
+      '',
+      'Each line is one node, deepest-first by group, reporting the ones that differ from the boring answer:',
+      '',
+      '- the **scene position** — the composed world position, with every ancestor group folded in, and with a `flow_along` follower already moved onto its path',
+      '- `screen=` — where that lands in canvas pixels once the camera has framed it. Absent when there is no camera, because then they are the same number',
+      '- `depth=`/`persp=` in an orbited scene, `write=`, `highlight=`, `morph=`, and an arrow\'s resolved endpoints',
+      '- `INVISIBLE` with the reason (opacity 0, write not started, behind the camera) and `OFF-FRAME` when the anchor falls outside the canvas',
+      '',
+      '**It reports anchors, not extents.** A path\'s anchor is its origin, not its curve; text and LaTeX are sized by the renderer, not the document. So this answers "where is this node" exactly and "do these two overlap" only roughly — for extents, look with preview_frames.',
+      '',
+      '`t` is SCENE-LOCAL seconds, like every other time in this surface. The reply states the global time as well, which is what preview_frames takes.',
+    ].join('\n'),
+    args: z.object({
+      projectId: PROJECT_ID,
+      sceneId: SCENE_ID,
+      t: z.number().min(0).describe('scene-local seconds'),
+      nodeIds: z
+        .array(NODE_ID)
+        .max(200)
+        .optional()
+        .describe('only these nodes (and their groups); default every node'),
+    }),
+    async handler(ctx, { projectId, sceneId, t, nodeIds }) {
+      const { doc } = await ctx.getDoc(projectId)
+      const scene = ctx.sceneOrThrow(doc, sceneId)
+      const sceneStart = doc.scenes.slice(0, doc.scenes.findIndex((s) => s.id === sceneId)).reduce(
+        (s, sc) => s + sc.duration,
+        0,
+      )
+
+      const resolved = resolveScene(scene, t, doc.canvas)
+      const want = nodeIds?.length ? new Set(nodeIds) : null
+      const lines: string[] = []
+      let shown = 0
+      let visible = 0
+      const data: unknown[] = []
+
+      const walk = (nodes: ResolvedNode[], indent: string, root: boolean): void => {
+        for (const n of nodes) {
+          // A group is kept when a requested node is somewhere under it, so the
+          // hierarchy that explains a child's world position stays readable.
+          const kept = !want || want.has(n.source.id) || subtreeHas(n, want)
+          // Matches resolveScene: only unpinned root nodes are projected.
+          const projectable = resolved.spatial && root && !n.source.fixed
+          if (kept) {
+            const { line, visible: v } = sampleLine(n, resolved.camera, doc.canvas, indent, projectable)
+            lines.push(line)
+            shown++
+            if (v) visible++
+            data.push({
+              id: n.source.id,
+              type: n.source.type,
+              world: n.world,
+              screen: screenPoint(
+                n.projection ? { x: n.projection.x, y: n.projection.y } : n.world,
+                resolved.camera,
+                doc.canvas,
+              ),
+              opacity: n.props.opacity ?? 1,
+              scale: n.worldScale,
+              rotation: n.worldRotation,
+              writeProgress: n.writeProgress,
+              projection: n.projection,
+              highlight: n.highlight,
+              visible: v,
+            })
+          }
+          if (n.source.type === 'group') walk(n.children, indent + '  ', false)
+        }
+      }
+      walk(resolved.nodes, '  ', true)
+
+      if (want && shown === 0) {
+        throw new CapabilityError(
+          `none of ${[...want].join(', ')} are in scene ${sceneId}. get_scene lists what is.`,
+          404,
+        )
+      }
+
+      const cam = resolved.camera
+      const camLine = cam
+        ? `  camera @${xy(cam.position)} zoom=${r(cam.zoom)}` +
+          (cam.rotation !== 0 ? ` roll=${r(cam.rotation)}rad` : '') +
+          (resolved.spatial ? ` yaw=${r(cam.yaw)} pitch=${r(cam.pitch)} dist=${r(cam.distance)}` : '')
+        : // A scene holding a depth still projects — head-on, through a default
+          // camera the sampler invents. Reporting "no camera" flat would leave
+          // the depth/persp columns below looking like they came from nowhere.
+          resolved.spatial
+          ? '  no camera, but this scene has depth — projected head-on from the canvas centre, ' +
+            `dist=${DEFAULT_CAMERA_DISTANCE}. Scene coordinates are screen coordinates.`
+          : '  no camera — scene coordinates are screen coordinates'
+      const past =
+        t > scene.duration + 1e-6
+          ? `\nNOTE: t=${r(t)}s is past this scene's ${r(scene.duration)}s end, so this moment is ` +
+            `never rendered. Tracks hold their last keyframe there, which is why it still ` +
+            `reports numbers.`
+          : ''
+
+      return said(
+        `scene ${sceneId} "${scene.name}" at t=${r(t)}s (global ${r(sceneStart + t)}s), ` +
+          `${shown} node(s), ${visible} drawn:\n` +
+          camLine +
+          `\n${lines.join('\n')}` +
+          `\nPositions are anchors, resolved after tracks, groups, follows and the camera. ` +
+          `They cannot tell you a node's size — use preview_frames for that.` +
+          past,
+        { sceneId, t, globalT: sceneStart + t, spatial: resolved.spatial, camera: cam, nodes: data },
+      )
+    },
+  }),
+
   capability({
     name: 'preview_frames',
     summary: 'See the video: one labeled contact sheet of the moments that matter. Free.',

@@ -475,17 +475,26 @@ agent holding a terminal too.
 - [ ] Deploy: workers, D1, R2, Containers; production secrets
 
 ## Parallel track: agent surface gaps → plans/011-agent-surface-gaps.md
-Proposed 2026-08-22, from driving the surface through milestone run 8 —
-gaps ranked by calls actually wasted, not plausibility. Top of the list:
-draw-order control (rebuild-to-reorder cost more than everything else
-combined), a free `sample_at` read over resolved state, a naming-convention
-pass, and undo over the event log that already exists to provide it.
-- [ ] Draw-order: `reorder_node` or an insert-position on creators
-- [ ] `sample_at` — resolved positions at time t, without pixels
+Proposed and started 2026-08-22, from driving the surface through milestone
+run 8 — gaps ranked by calls actually wasted, not plausibility. The top two
+are done: draw-order control (rebuild-to-reorder cost more than every argument
+mistake in the run combined) and a free `sample_at` read over resolved state.
+Still open: a naming-convention pass, and undo over the event log that already
+exists to provide it.
+- [x] Draw-order: `reorder_node` + a `node.move` op (2026-08-22). Moves the
+      id rather than the node, because rebase-on-409 makes a remove+add pair
+      re-insert a stale copy. Proved in pixels: a disc reads 24.33% lit →
+      0.00% under a lid → 24.33% once the lid is reordered behind it
+- [x] `sample_at` — resolved positions at time t, without pixels
+      (2026-08-22). Checked against the *renderer*, not itself: framing the
+      camera on its answer reads 8.78% against a computed 8.73%
 - [ ] Catalog naming-convention pass
 - [ ] `revert_to_version` over the DO event log
 - [ ] Composition review: decisions carry a preview capture
-- [ ] Camera/path interaction warning; geometry sugar; batch executor
+- [~] Camera/path interaction warning — the spatial-node-into-a-group case
+      (created by, and closed with, draw-order) warns; the `flow_along` +
+      `orbit_camera` case is still open. Geometry sugar and the batch
+      executor are still to do
 
 ## Parallel track: agent gateway → plans/008-mcp-gateway.md
 Started 2026-08-15. Collapses the agent surface onto one implementation: a

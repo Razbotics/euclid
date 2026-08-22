@@ -439,6 +439,151 @@ const badParent = await post('/api/agent/tools/add_shape/execute', {
 assert.equal(badParent.status, 422, 'an unknown parent must be refused, not silently ignored')
 console.log('groups OK — children nest, inherit the transform, and stay addressable')
 
+// ---------- draw order is document order, and now it is editable ----------
+// Run 8 deleted and rebuilt two whole scenes to put a backdrop behind what was
+// already there, which also destroyed the transitions bound to the removed ids.
+// The assertion that matters is not that a node moved: it is that the move is
+// atomic and lossless — everything attached to the node has to survive it, or
+// this is just a slower rebuild.
+const orderScene = (await exec('add_scene', { projectId, name: 'Order', duration: 5 }))
+  .match(/scene (\S+)/)![1]!
+const backA = (await exec('add_shape', { projectId, sceneId: orderScene, shape: 'circle', x: 300, y: 300 }))
+  .match(/node (\S+)/)![1]!
+const backB = (await exec('add_shape', { projectId, sceneId: orderScene, shape: 'rect', x: 400, y: 300 }))
+  .match(/node (\S+)/)![1]!
+const drop = (await exec('add_text', { projectId, sceneId: orderScene, textContent: 'sky', x: 960, y: 540 }))
+  .match(/node (\S+)/)![1]!
+// The thing a rebuild destroys: a transition bound to this id.
+await exec('write_on', { projectId, sceneId: orderScene, nodeId: drop, start: 0, duration: 1 })
+
+const sceneOrder = async (): Promise<string[]> =>
+  (JSON.parse(await exec('get_scene', { projectId, sceneId: orderScene })) as {
+    nodes: { id: string }[]
+  }).nodes.map((n) => n.id)
+
+assert.deepStrictEqual(await sceneOrder(), [backA, backB, drop], 'creation order is draw order')
+await exec('reorder_node', { projectId, sceneId: orderScene, nodeId: drop, to: 'back' })
+assert.deepStrictEqual(await sceneOrder(), [drop, backA, backB], '"back" must put it behind everything')
+
+// The transition has to have come along. A rebuild is what loses this.
+const kept = (JSON.parse(await exec('get_scene', { projectId, sceneId: orderScene })) as {
+  nodes: { id: string; transitions: { type: string }[] }[]
+}).nodes.find((n) => n.id === drop)!
+assert.equal(kept.transitions.length, 1, 'moving a node must not drop its transitions')
+assert.equal(kept.transitions[0]!.type, 'write', 'the write-on must still be the one that was set')
+
+// before/after are relative to the *other* node, counted in the list as it will
+// be — the off-by-one that a naive splice gets wrong when the anchor sits after
+// the node in its own list.
+await exec('reorder_node', { projectId, sceneId: orderScene, nodeId: drop, after: backB })
+assert.deepStrictEqual(await sceneOrder(), [backA, backB, drop], '"after" must land directly in front')
+await exec('reorder_node', { projectId, sceneId: orderScene, nodeId: drop, before: backA })
+assert.deepStrictEqual(await sceneOrder(), [drop, backA, backB], '"before" must land directly behind')
+
+// Re-parenting, and the refusals. A group moved inside its own descendant would
+// detach both from the scene — the document still validates, because the cycle
+// is simply unreachable, so nothing downstream would have caught it.
+const outer = (await exec('add_group', { projectId, sceneId: orderScene, x: 100, y: 100 }))
+  .match(/group (\S+)/)![1]!
+const inner = (await exec('add_group', { projectId, sceneId: orderScene, x: 50, y: 50, parentId: outer }))
+  .match(/group (\S+)/)![1]!
+const cycle = await post('/api/agent/tools/reorder_node/execute', {
+  projectId, sceneId: orderScene, nodeId: outer, to: 'back', parentId: inner,
+})
+assert.equal(cycle.status, 422, 'a group must not be moved inside its own descendant')
+assert.match(cycle.body, /detach/, 'the refusal must say what it would have done')
+
+const reparented = await exec('reorder_node', {
+  projectId, sceneId: orderScene, nodeId: drop, to: 'front', parentId: outer,
+})
+assert.match(reparented, /re-parented/, 're-parenting must say the node moved on screen')
+assert.ok(!(await sceneOrder()).includes(drop), 'a re-parented node leaves the root')
+await exec('reorder_node', { projectId, sceneId: orderScene, nodeId: drop, to: 'front', parentId: 'root' })
+assert.ok((await sceneOrder()).includes(drop), '"root" must move it back out')
+
+// Placements that disagree are an error rather than a silent precedence rule —
+// the same principle as an unrecognised argument being rejected.
+for (const [args, why] of [
+  [{}, 'no placement'],
+  [{ to: 'back', index: 2 }, 'two placements'],
+  [{ before: drop }, 'relative to itself'],
+  [{ to: 'front', parentId: backA }, 'a non-group parent'],
+] as [Record<string, unknown>, string][]) {
+  const r = await post('/api/agent/tools/reorder_node/execute', {
+    projectId, sceneId: orderScene, nodeId: drop, ...args,
+  })
+  assert.equal(r.status, 400, `reorder_node must refuse ${why}, got ${r.status}: ${r.body}`)
+}
+console.log('reorder OK — back/front/before/after, re-parenting, cycle and ambiguity refused')
+
+// ---------- resolved state, readable without pixels ----------
+// The sampler is a pure function of (document, time) and the surface exposed it
+// only as the raw document or as a picture. Run 8 computed a crossing window by
+// arithmetic over its own keyframes, got it wrong, and corrected it from tiles.
+// So the assertion is a number the caller could NOT have read off the document:
+// a child of a rotated group, and the same point after a camera framed it.
+const sampleScene = (await exec('add_scene', { projectId, name: 'Sample', duration: 10 }))
+  .match(/scene (\S+)/)![1]!
+const pivot = (await exec('add_group', { projectId, sceneId: sampleScene, x: 400, y: 300 }))
+  .match(/group (\S+)/)![1]!
+const rider = (await exec('add_shape', {
+  projectId, sceneId: sampleScene, shape: 'circle', x: 200, y: 0, radius: 20, parentId: pivot,
+})).match(/node (\S+)/)![1]!
+// A quarter turn over 4s, linear, so t=4 is exactly π/2 and the answer is exact.
+await exec('animate', {
+  projectId, sceneId: sampleScene, nodeId: pivot,
+  property: 'rotation', to: Math.PI / 2, start: 0, duration: 4, easing: 'linear',
+})
+
+const sampled = async (t: number, nodeIds?: string[]): Promise<{
+  nodes: { id: string; world: { x: number; y: number }; screen: { x: number; y: number }; visible: boolean }[]
+}> =>
+  JSON.parse(
+    (await post(`/api/agent/tools/sample_at/execute?format=json`, {
+      projectId, sceneId: sampleScene, t, ...(nodeIds ? { nodeIds } : {}),
+    })).body,
+  ).data
+
+const at0 = (await sampled(0)).nodes.find((n) => n.id === rider)!
+assert.deepStrictEqual(at0.world, { x: 600, y: 300 }, "a child's world position folds in its group")
+
+// The one that cannot be read off the document at all: (200, 0) rotated a
+// quarter turn about (400, 300) is (400, 500), and the document says (200, 0).
+const at4 = (await sampled(4)).nodes.find((n) => n.id === rider)!
+assert.ok(
+  Math.abs(at4.world.x - 400) < 0.01 && Math.abs(at4.world.y - 500) < 0.01,
+  `a rotated group must move its child: expected (400, 500), got (${at4.world.x}, ${at4.world.y})`,
+)
+// With no camera, scene coordinates ARE screen coordinates.
+assert.deepStrictEqual(at4.screen, at4.world, 'without a camera the two must agree exactly')
+
+// And with one: centre + zoom * (p − position) = 960 + 2*(400−960) = −160.
+await exec('set_camera', { projectId, sceneId: sampleScene, x: 960, y: 540, zoom: 2 })
+const framed = (await sampled(4, [rider])).nodes.find((n) => n.id === rider)!
+assert.deepStrictEqual(
+  framed.screen,
+  { x: -160, y: 460 },
+  'the camera transform must be applied, and reported',
+)
+assert.equal(framed.visible, false, 'a node framed off the canvas must be reported as not drawn')
+assert.match(
+  await exec('sample_at', { projectId, sceneId: sampleScene, t: 4, nodeIds: [rider] }),
+  /OFF-FRAME/,
+  'the text must name why it is not drawn',
+)
+// Past the end still answers — tracks hold — but it must say the moment is
+// never rendered, or an agent reads timings for a frame that does not exist.
+assert.match(
+  await exec('sample_at', { projectId, sceneId: sampleScene, t: 99 }),
+  /past this scene's/,
+  'a time past the scene end must be flagged',
+)
+const noSuch = await post('/api/agent/tools/sample_at/execute', {
+  projectId, sceneId: sampleScene, t: 0, nodeIds: ['nope_1'],
+})
+assert.equal(noSuch.status, 404, 'an unknown node must fail rather than return an empty listing')
+console.log('sample_at OK — group composition, camera framing and off-frame reported without pixels')
+
 // ---------- an unfilled shape is an outline, not a hole ----------
 // Filling with the background colour was the only way to get a ring, which
 // paints an opaque disc over whatever is behind it.

@@ -143,14 +143,16 @@ export interface FoundNode {
   /** The array that directly contains the node (scene root or a group's children). */
   siblings: EuclidNode[]
   index: number
+  /** The group the node lives in, or undefined at the scene root — the spelling `node.add`/`node.move` use for the same idea. */
+  parentId?: string
 }
 
-export function findNode(nodes: EuclidNode[], id: string): FoundNode | null {
+export function findNode(nodes: EuclidNode[], id: string, parentId?: string): FoundNode | null {
   for (let i = 0; i < nodes.length; i++) {
     const n = nodes[i]!
-    if (n.id === id) return { node: n, siblings: nodes, index: i }
+    if (n.id === id) return { node: n, siblings: nodes, index: i, parentId }
     if (n.type === 'group') {
-      const hit = findNode(n.children, id)
+      const hit = findNode(n.children, id, n.id)
       if (hit) return hit
     }
   }

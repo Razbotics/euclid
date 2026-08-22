@@ -56,6 +56,15 @@ Validation is layered: Zod schema on the envelope (bad shape → 400), reducer
 invariants (missing node, duplicate id → 422), and a full-document re-parse
 after each envelope so no op sequence can persist an invalid document.
 
+An op names what it touches and carries as little of it as possible, and
+`node.move` (plans/011) is the case that shows why. Moving a node could have
+been a `node.remove` + `node.add` pair in one envelope — atomic, and no new op
+— but the `add` would have to carry the node's *contents*, read a moment
+earlier. Under rebase-on-409 that read is stale by construction: the retry
+would re-insert the copy the writer fetched and silently revert whatever landed
+in between. `node.move` carries an id and an index, so a rebase moves whatever
+that node has become.
+
 ## Equation morphing
 
 `texMorph` pairs glyphs between the two equations and moves the shared ones;

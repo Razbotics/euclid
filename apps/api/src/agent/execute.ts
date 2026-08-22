@@ -201,6 +201,14 @@ export function buildInstructions(): string {
         `flagged \`(long)\`); ${ref('get_scene')} gives exact keyframes.`,
     ),
     '',
+    ...wrap(
+      `When the question is a NUMBER rather than a picture — when does this reach that, ` +
+        `is that node on screen yet — ${ref('sample_at')} runs the same resolver the ` +
+        `renderer does and reports where every node ends up at one moment, after tracks, ` +
+        `groups, follows and the camera. Free, no pixels, and exact where working it out ` +
+        `from keyframes by hand is not.`,
+    ),
+    '',
     `catalog revision ${CATALOG_REVISION}`,
   ].join('\n')
 }
