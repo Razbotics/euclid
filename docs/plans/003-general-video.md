@@ -3,8 +3,9 @@
 **Where this stands (2026-08-19).** §1 assets, §2 node types and §4 the render
 pipeline are done. §3 has an audio half and no video half. The rights question
 is **decided — option 1, users bring their own media** — so §5 ingest is
-unblocked and has its front door: upload. Its analysis half (transcode, proxy,
-probe, STT, shot detection) has not started.
+unblocked and well started: upload, probe and shot detection are done. What
+remains of it is **transcode + proxy** and **STT**, the latter still carrying a
+provider decision.
 
 Sequenced after animation depth (plans/006) as of 2026-08-16: the argument
 that put general video first was that verification, not visual vocabulary, was
@@ -185,10 +186,17 @@ same shape (a rule that is silently inert):
 Still open:
 - Thumbnails in the tree and drag-to-timeline — both wait on the `video` and
   `image` nodes, since there is nothing to drop onto yet.
-- Upload from the editor (drag-and-drop) and an `upload_asset` MCP tool —
-  `POST /assets` is still internal-key only, so today only producers create
-  files. `generate_3d` makes this sharper: it needs a *publicly reachable*
-  image URL, so a user cannot lift their own picture into 3D yet.
+- ~~Upload from the editor (drag-and-drop)~~ **done 2026-08-19**, and `POST
+  /assets` is no longer internal-key only — see the rights decision below. An
+  `upload_asset` MCP tool is deliberately *not* coming, since bytes stay on
+  REST.
+- **A public URL for `generate_3d`.** It needs an image the *provider* can
+  fetch, and project assets are not publicly readable, so a user cannot lift
+  their own uploaded picture into 3D. A short-lived signed URL is the obvious
+  answer and does not exist yet.
+- **Thumbnails in the tree.** The nodes to drop onto exist now, and files carry
+  measured dimensions; what is missing is a poster frame per video, via the
+  same worker-side ffmpeg path probe and shot detection already use.
 - Bulk actions, and a "delete every file no scene references" sweep.
 
 ### 2. New node types
@@ -567,6 +575,54 @@ sampled. Re-generating narration re-syncs every anchored effect for free.
 Proved by rewriting a script so the anchor word moved 1.26s → 6.14s, then
 measuring: 0.41% lit at the old time, 4.87% at the new. `check-narration-sync.ts`.
 
+### What ingest still needs
+
+**Transcode + proxy.** Everything so far has been checked against clips of a
+few seconds. A real upload is minutes long at a bitrate the editor should not
+be scrubbing through, so editing wants a low-res proxy while the *export* keeps
+using the original. The machinery exists — ffmpeg in the render worker, on the
+idle side of the poll, storing a second asset — so this is another queue like
+probe and shots rather than anything new. The interesting part is the document:
+a clip must reference one asset and be *rendered* from the original while being
+*previewed* from the proxy, which is a resolver decision, not a schema one.
+
+**STT — a transcript of what the footage says.** This is the half of ingest
+that gives an agent *meaning* rather than structure. Shot detection says where
+a clip **can** be cut; a transcript says where it **should** be. Without it an
+agent picking among `segment 0 / 1 / 2` is choosing blind.
+
+Three uses, and they are not equally urgent:
+
+- **Choosing segments.** The whole "give it footage, get segments" premise. An
+  agent needs to know which part contains the line worth keeping.
+- **Captions for uploaded footage.** `documentCues` derives captions from
+  `scene.narration.text` — a script somebody wrote. Footage nobody typed a
+  script for therefore exports with **no captions at all**, which on a silent
+  autoplay feed is close to fatal.
+- **Extending `atWord` to real speech.** Narration-anchored animation runs on
+  word timings, which TTS supplies for free. Footage has speech and no timings;
+  STT would let a graphic land on a word somebody actually said on camera. The
+  mechanism already exists and is shaped exactly right.
+
+#### The provider question, sharpened (2026-08-19)
+
+The open question below asked "same adapter as TTS, or a separate provider?"
+A third option has appeared since it was written — fal is now a wired provider
+and hosts whisper — but it is less of a fit than it looks, and the reason is
+worth recording so it is not re-litigated:
+
+- The **fal roster is built around producing a file asset**. STT produces text
+  plus word timings, so it needs its own result path either way; the roster
+  entry buys almost nothing.
+- **ElevenLabs already returns word-level timings in the shape this system
+  stores** — `NarrationWord[]` is modelled on their alignment, and `anchorTime`
+  and `cuesFromWords` both consume it. A provider whose output already matches
+  the consumer is worth more than one that shares a client.
+
+So the likely answer is the TTS adapter, extended — but it is a decision to
+take deliberately, because it fixes what shape transcripts have everywhere
+downstream.
+
 ## Rights and platform ToS — decide before building the fetcher
 
 Downloading from social links generally violates platform terms and may
@@ -641,4 +697,7 @@ the user guessing which two.
   presets and an editor that frames a portrait canvas. Nothing downstream
   cares: the renderer reads `canvas.width/height`, and the image and video
   nodes already fit and crop.
-- Where does STT run — same adapter as TTS, or a separate provider?
+- ~~Where does STT run — same adapter as TTS, or a separate provider?~~
+  **Analysed 2026-08-19, not yet decided** — see "the provider question,
+  sharpened" in §5. The lean is the TTS adapter, on the grounds that its output
+  shape already matches what `anchorTime` and `cuesFromWords` consume.

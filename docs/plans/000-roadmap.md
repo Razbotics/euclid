@@ -358,8 +358,25 @@ capability as a document contact sheet.
       concatenated — so 2.00s and 4.00s is a match rather than a plausible
       answer. What is left of the analysis half: **transcode + proxy**
       (editing on real footage rather than test clips) and **STT**, which still
-      carries an unanswered question — same adapter as TTS, a separate
-      provider, or a fal roster entry now that provider exists? "Generate segments" *is* that pipeline: the agent selects
+      carries a provider question, now analysed in plans/003 §5: the lean is
+      the **TTS adapter extended**, because ElevenLabs already returns
+      word-level timings in the shape `anchorTime` and `cuesFromWords` consume,
+      whereas the fal roster is built around producing a *file* and would need
+      its own result path anyway
+- [ ] **Transcode + proxy.** Everything is checked against clips of a few
+      seconds; a real upload is minutes long at a bitrate the editor should not
+      scrub through. Another worker-side queue like probe and shots — the
+      interesting part is that a clip must *preview* from the proxy and
+      *export* from the original, which is a resolver decision rather than a
+      schema one
+- [ ] **Thumbnails and a poster frame per video**, so the explorer shows what a
+      file is rather than its name. Same worker-side ffmpeg path
+- [ ] **A short-lived signed asset URL.** `generate_3d` needs an image the
+      *provider* can fetch, and project assets are not publicly readable, so a
+      user still cannot lift their own uploaded picture into 3D
+- [ ] **Captions for uploaded footage.** `documentCues` derives them from the
+      narration script, so footage nobody typed a script for exports with none.
+      Blocked on STT "Generate segments" *is* that pipeline: the agent selects
       from what analysis surfaces rather than inventing cuts
 - [x] Decide the rights/ToS model — **decided 2026-08-19: users bring their own
       media.** No ToS exposure, no copyright question, smallest build, and it

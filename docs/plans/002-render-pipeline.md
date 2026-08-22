@@ -62,7 +62,9 @@ roadmap lists "assets as first-class" anyway — same work, no migration later.
 
 - [x] `assets` table: `id, project_id, kind, r2_key, mime, bytes,
       duration_sec, created_at`, indexed on `(project_id, created_at DESC)`
-- [x] `POST /api/projects/:id/assets` (internal-key only) — body is raw
+- [x] `POST /api/projects/:id/assets` (internal-key only **at the time**; it
+      also takes user uploads since plans/003 chose "users bring their own
+      media") — body is raw
       bytes, writes R2 under `assets/<projectId>/<assetId>`, inserts the row,
       returns `{ assetId }`
 - [x] `GET /api/assets/:assetId` — owner session **or** internal key (the
