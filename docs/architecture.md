@@ -919,18 +919,24 @@ optional right-hand panels that stack as they open.
   asset explorer), **Scene** (the inspector and narration panel), **Review**
   (the queue) — which stack vertically in the order opened. Each panel is
   its own card — rounded, bordered, a gap between them — with its own
-  header: glyph, title, and expand/close controls. Expand maximizes that
-  panel and folds the others to their headers (a viewing choice, like solo —
-  deliberately not persisted); ⌘B / ⌘⌥B toggle Files / Scene. Which panels
-  are open and the stack's width are remembered in `localStorage`.
+  header: glyph, title, and expand/close controls. The gap between two cards
+  *is* the resize handle: dragging it trades height between exactly that
+  pair (the others keep their share), stored as flex weights whose sum the
+  drag preserves. Expand maximizes that panel and folds the others to their
+  headers (a viewing choice, like solo — deliberately not persisted);
+  ⌘B / ⌘⌥B toggle Files / Scene. Which panels are open, the stack's width
+  and the cards' height weights are remembered in `localStorage`.
 
 Selecting a file in the Files panel opens it as **its own card directly
 under Files** — titled with the file's name, carrying the same expand/close
 controls as any card — one file at a time, deselecting (or ✕) closes it, and
-a file deleted from the tree takes its card with it. The file list lives in
-`useAssets`, not in the explorer: the viewer needs the same records (mime,
-size, path) to know what to draw, and a delete has to close the card it
-invalidates. One fetch, one truth.
+a file deleted from the tree takes its card with it. **Library rows open the
+same way**: the user owns those bytes as much as the project's own, the
+assets API already serves them under the one tenancy rule, and the row is
+just dressed with `usedBy: false` on its way to the viewer. The file list
+lives in `useAssets`, not in the explorer: the viewer needs the same records
+(mime, size, path) to know what to draw, and a delete has to close the card
+it invalidates. One fetch, one truth.
 
 A *new* agent question opens the Review panel by itself — an open review
 means an agent is stalled, and a stalled agent outranks a closed-by-default

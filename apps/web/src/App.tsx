@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { assetBasename, assetIdsInDoc, docDuration, globalToScene } from '@euclid/dsl'
 import { useProject } from './useProject'
 import { useAssets } from './useAssets'
@@ -160,9 +160,12 @@ function PanelIcon({ id }: { id: PanelId }) {
 interface Panels {
   open: PanelId[]
   rightWidth: number
+  /** Relative heights of the stack's cards, as flex-grow weights keyed by
+   *  card id ('viewer' included). Absent means an equal share. */
+  sizes: Record<string, number>
 }
 const PANELS_KEY = 'euclid.panels.v2'
-const DEFAULT_PANELS: Panels = { open: [], rightWidth: 340 }
+const DEFAULT_PANELS: Panels = { open: [], rightWidth: 340, sizes: {} }
 
 /** The stack narrower than this is unusable; the canvas needs at least this
  *  much to still be the thing you are working on. The clamp always budgets
@@ -179,11 +182,18 @@ function loadPanels(): Panels {
       const p = JSON.parse(raw) as Partial<Panels>
       const valid = (x: unknown): x is PanelId =>
         x === 'files' || x === 'scene' || x === 'review'
+      const sizes: Record<string, number> = {}
+      if (p.sizes && typeof p.sizes === 'object') {
+        for (const [k, v] of Object.entries(p.sizes)) {
+          if (typeof v === 'number' && v > 0 && Number.isFinite(v)) sizes[k] = v
+        }
+      }
       return {
         open: Array.isArray(p.open) ? p.open.filter(valid) : [],
         // A stored width from a wider window is clamped on the first layout
         // pass, not trusted — see the resize effect.
         rightWidth: Number(p.rightWidth) || DEFAULT_PANELS.rightWidth,
+        sizes,
       }
     }
   } catch {
@@ -232,8 +242,9 @@ function Editor({
    *  A viewing choice, like solo — deliberately not persisted. The open
    *  file's viewer is a card too, so it participates. */
   const [maximized, setMaximized] = useState<PanelId | 'viewer' | null>(null)
-  /** True mid-drag, so the whole app can stop selecting text under the cursor. */
-  const [resizing, setResizing] = useState(false)
+  /** Set mid-drag (with its axis, for the cursor), so the whole app can stop
+   *  selecting text under the pointer. */
+  const [resizing, setResizing] = useState<'x' | 'y' | null>(null)
 
   // Reload the file list when the document's asset references change — that is
   // what a new narration clip looks like from here.
@@ -247,17 +258,29 @@ function Editor({
     `${assetReload}:${reviewBump}:${doc ? [...assetIdsInDoc(doc)].sort().join(',') : ''}`,
   )
 
-  // A file opens *inside the Files panel*, in a viewer section under the tree
-  // — the centre belongs to the canvas and timeline alone. One file at a time;
-  // clicking the same file again closes it.
+  // A file opens as its own card in the right stack — the centre belongs to
+  // the canvas and timeline alone. One file at a time; clicking the same file
+  // again closes it. Library rows open too: same assets API, same viewer —
+  // the user owns the bytes, membership is just a link (plans/010).
   const [viewFileId, setViewFileId] = useState<string | null>(null)
   // A file deleted from the tree (or by an agent, over the same list) takes
   // its viewer with it — a viewer pointing at a 404 is worse than none.
   useEffect(() => {
-    if (!assets.files) return
-    if (viewFileId && !assets.files.some((f) => f.id === viewFileId)) setViewFileId(null)
-  }, [assets.files, viewFileId])
-  const viewFile = assets.files?.find((f) => f.id === viewFileId) ?? null
+    if (!assets.files || !viewFileId) return
+    const known =
+      assets.files.some((f) => f.id === viewFileId) ||
+      (assets.library ?? []).some((f) => f.id === viewFileId)
+    if (!known) setViewFileId(null)
+  }, [assets.files, assets.library, viewFileId])
+  // Memoized so the viewer card sees a stable object: a library row is
+  // dressed as a ProjectFile (`usedBy: false` — it is not in this document).
+  const viewFile = useMemo(() => {
+    if (!viewFileId) return null
+    const own = assets.files?.find((f) => f.id === viewFileId)
+    if (own) return own
+    const lib = (assets.library ?? []).find((f) => f.id === viewFileId)
+    return lib ? { ...lib, usedBy: false } : null
+  }, [viewFileId, assets.files, assets.library])
   // A maximized viewer whose card just left the stack (file closed, Files
   // panel closed) must not leave every other card folded to its header.
   useEffect(() => {
@@ -294,6 +317,10 @@ function Editor({
 
   /** Live during a drag; the preference is written once, when you let go. */
   const resize = (width: number) => setPanels((p) => clampPanels({ ...p, rightWidth: width }))
+
+  /** Reweight two adjacent cards mid-drag; committed on release like widths. */
+  const resizeStack = (updates: Record<string, number>) =>
+    setPanels((p) => ({ ...p, sizes: { ...p.sizes, ...updates } }))
 
   /** Double-clicking the handle puts the stack back to its shipped width. */
   const resetWidth = () => {
@@ -412,7 +439,7 @@ function Editor({
   )
 
   return (
-    <div className={`app${resizing ? ' resizing' : ''}`}>
+    <div className={`app${resizing ? ` resizing resizing-${resizing}` : ''}`}>
       <div className="shell">
         {sidebarMode === 'docked' && sidebar}
 
@@ -507,14 +534,28 @@ function Editor({
                 onResize={resize}
                 onReset={resetWidth}
                 onCommit={() => savePanels(panels)}
-                onDragging={setResizing}
+                onDragging={(d) => setResizing(d ? 'x' : null)}
               />
             )}
             {stackOpen && (
               <aside className="stack" style={{ width: panels.rightWidth }}>
-                {stackEntries.map((id) => {
+                {stackEntries.map((id, i) => {
                   const state =
                     maximized === null ? '' : maximized === id ? ' max' : ' min'
+                  // Weights only apply in the even layout — a maximized card
+                  // owns the column and the folded ones own nothing.
+                  const grow =
+                    maximized === null ? { flexGrow: panels.sizes[id] ?? 1 } : undefined
+                  const seam = i > 0 && maximized === null && (
+                    <StackSplitter
+                      above={stackEntries[i - 1]!}
+                      below={id}
+                      sizes={panels.sizes}
+                      onResize={resizeStack}
+                      onCommit={() => savePanels(panels)}
+                      onDragging={(d) => setResizing(d ? 'y' : null)}
+                    />
+                  )
                   const expandBtn = stackEntries.length > 1 && (
                     <button
                       className="icon-btn"
@@ -528,30 +569,35 @@ function Editor({
                   // separate section, not a footnote inside the tree.
                   if (id === 'viewer') {
                     return (
-                      <section key="viewer" className={`stack-panel${state}`}>
-                        <div className="stack-head">
-                          <span className="asset-glyph">{fileGlyph(viewFile!)}</span>
-                          <span className="stack-title">{assetBasename(viewFile!.path)}</span>
-                          <span className="grow" />
-                          {expandBtn}
-                          <button
-                            className="icon-btn"
-                            onClick={() => setViewFileId(null)}
-                            title="close"
-                          >
-                            <GlyphIcon kind="close" />
-                          </button>
-                        </div>
-                        <div className="stack-body">
-                          {/* keyed so switching files resets the fetch state */}
-                          <FileViewer key={viewFile!.id} file={viewFile!} />
-                        </div>
-                      </section>
+                      <Fragment key="viewer">
+                        {seam}
+                        <section className={`stack-panel${state}`} style={grow}>
+                          <div className="stack-head">
+                            <span className="asset-glyph">{fileGlyph(viewFile!)}</span>
+                            <span className="stack-title">{assetBasename(viewFile!.path)}</span>
+                            <span className="grow" />
+                            {expandBtn}
+                            <button
+                              className="icon-btn"
+                              onClick={() => setViewFileId(null)}
+                              title="close"
+                            >
+                              <GlyphIcon kind="close" />
+                            </button>
+                          </div>
+                          <div className="stack-body">
+                            {/* keyed so switching files resets the fetch state */}
+                            <FileViewer key={viewFile!.id} file={viewFile!} />
+                          </div>
+                        </section>
+                      </Fragment>
                     )
                   }
                   return (
-                    <section key={id} className={`stack-panel${state}`}>
-                      <div className="stack-head">
+                    <Fragment key={id}>
+                      {seam}
+                      <section className={`stack-panel${state}`} style={grow}>
+                        <div className="stack-head">
                         <PanelIcon id={id} />
                         <span className="stack-title">{PANEL_TITLES[id]}</span>
                         {id === 'files' && (
@@ -575,8 +621,9 @@ function Editor({
                           <GlyphIcon kind="close" />
                         </button>
                       </div>
-                      <div className="stack-body">{panelBody(id)}</div>
-                    </section>
+                        <div className="stack-body">{panelBody(id)}</div>
+                      </section>
+                    </Fragment>
                   )
                 })}
               </aside>
@@ -600,6 +647,79 @@ function Editor({
  * from each move, so a clamp at the limit cannot drift the handle away from
  * the cursor.
  */
+/**
+ * The seam between two adjacent cards in the stack. Dragging it trades height
+ * between exactly those two — the others keep their share, because a drag
+ * between Files and Scene reshaping Review too would feel haunted.
+ *
+ * Pixel heights are read from the DOM at drag start and converted back into
+ * flex weights on each move: the weights of the pair keep their sum, so the
+ * pair's combined share of the column is invariant under the drag.
+ */
+function StackSplitter({
+  above,
+  below,
+  sizes,
+  onResize,
+  onCommit,
+  onDragging,
+}: {
+  above: string
+  below: string
+  sizes: Record<string, number>
+  onResize: (updates: Record<string, number>) => void
+  onCommit: () => void
+  onDragging: (dragging: boolean) => void
+}) {
+  /** A card squeezed below this is a header with a sliver of noise. */
+  const MIN_CARD = 90
+  const from = useRef<{ y: number; hA: number; hB: number; wA: number; wB: number } | null>(null)
+
+  return (
+    <div
+      className="vsplitter"
+      role="separator"
+      aria-orientation="horizontal"
+      title="drag to resize"
+      onPointerDown={(e) => {
+        const a = e.currentTarget.previousElementSibling
+        const b = e.currentTarget.nextElementSibling
+        if (!a || !b) return
+        e.currentTarget.setPointerCapture(e.pointerId)
+        from.current = {
+          y: e.clientY,
+          hA: a.getBoundingClientRect().height,
+          hB: b.getBoundingClientRect().height,
+          wA: sizes[above] ?? 1,
+          wB: sizes[below] ?? 1,
+        }
+        onDragging(true)
+      }}
+      onPointerMove={(e) => {
+        const s = from.current
+        if (!s) return
+        const total = s.hA + s.hB
+        if (total <= MIN_CARD * 2) return
+        const hA = Math.min(Math.max(s.hA + (e.clientY - s.y), MIN_CARD), total - MIN_CARD)
+        const sum = s.wA + s.wB
+        const wA = (sum * hA) / total
+        onResize({ [above]: wA, [below]: sum - wA })
+      }}
+      onPointerUp={(e) => {
+        e.currentTarget.releasePointerCapture(e.pointerId)
+        from.current = null
+        onDragging(false)
+        onCommit()
+      }}
+      onPointerCancel={() => {
+        from.current = null
+        onDragging(false)
+        onCommit()
+      }}
+    />
+  )
+}
+
 function Splitter({
   width,
   onResize,

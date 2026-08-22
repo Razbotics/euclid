@@ -189,19 +189,35 @@ main.workbench { display: flex; flex: 1; min-height: 0; }
    between them, each with its own header and controls. */
 .stack {
   display: flex; flex-direction: column; min-width: 0; flex: none;
-  gap: 8px; padding: 8px;
+  padding: 8px;
   background: var(--bg); border-left: 1px solid var(--border-soft);
 }
+
+/* The gap between cards IS the resize handle: 9px of grab area drawn empty,
+   with a short accent bar on hover so it reads as draggable. */
+.vsplitter {
+  flex: none; height: 9px; cursor: row-resize;
+  position: relative; z-index: 2;
+  touch-action: none; user-select: none;
+}
+.vsplitter::after {
+  content: ''; position: absolute; left: 10px; right: 10px;
+  top: 50%; height: 2px; margin-top: -1px; border-radius: 1px;
+  background: transparent; transition: background 120ms ease;
+}
+.vsplitter:hover::after, .app.resizing-y .vsplitter:active::after { background: var(--accent); }
 .stack-panel {
   flex: 1 1 0; min-height: 0; display: flex; flex-direction: column;
   background: var(--bg-deep); border: 1px solid var(--border);
   border-radius: 10px; overflow: hidden;
 }
 /* One panel maximized: it takes the column, the others fold to their headers
-   — the header stays so the fold is reversible from where it happened. */
+   — the header stays so the fold is reversible from where it happened. The
+   seams disappear in this mode, so adjacent cards supply their own gap. */
 .stack-panel.max { flex: 1 1 auto; }
 .stack-panel.min { flex: none; }
 .stack-panel.min .stack-body { display: none; }
+.stack-panel + .stack-panel { margin-top: 8px; }
 .stack-head {
   display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 12px;
   font-size: 12px; color: var(--text-mid);
@@ -255,8 +271,11 @@ main.workbench { display: flex; flex: 1; min-height: 0; }
 }
 .splitter:hover::after, .app.resizing .splitter:active::after { background: var(--accent); }
 /* Mid-drag the pointer is captured, so the cursor must be declared for the
-   whole app — and nothing under it should highlight as if it were text. */
-.app.resizing { cursor: col-resize; user-select: none; }
+   whole app — matching the drag's axis — and nothing under it should
+   highlight as if it were text. */
+.app.resizing { user-select: none; }
+.app.resizing-x { cursor: col-resize; }
+.app.resizing-y { cursor: row-resize; }
 
 /* ---------- the editor column: canvas + timeline ---------- */
 

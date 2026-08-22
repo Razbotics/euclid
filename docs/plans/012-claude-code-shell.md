@@ -67,6 +67,20 @@ What the first build got wrong, per review of the running shell:
 - [x] `color-scheme: dark` at `:root`, so native audio/video controls and
       scrollbars stop rendering as white furniture
 
+## Phase 3: library, seams (status: done)
+
+- [x] Library rows open in the viewer card like project files — the row is
+      dressed as a `ProjectFile` (`usedBy: false`) and the id lookup spans
+      both lists; a library row aligns with folder children (same 10px
+      indent) so the two lists read as one tree
+- [x] The per-row ↗ open-in-tab action is gone from the tree (the viewer
+      card is the way to look at a file; Review keeps its `open ↗` fallback
+      for kinds the card cannot render inline)
+- [x] Vertical resizing between cards: the 9px gap between two cards is the
+      drag handle, trading height between exactly that pair as flex weights
+      whose sum the drag preserves (90px floor per card); weights persist
+      with the rest of the panel state
+
 ## Notes / gotchas
 
 - The ⋯ menu is modal — its backdrop swallows the page, including the
