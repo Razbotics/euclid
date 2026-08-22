@@ -11,6 +11,15 @@ import type { EuclidDoc } from './document'
  * database.
  */
 
+/**
+ * Where an asset stands with the human (plans/010). Provenance sets the
+ * initial value — the owner's own uploads and human-authored narration are
+ * born `approved`, generated files are born `pending` while review mode is
+ * on — and answering a review decision moves it. `rejected` rows are kept:
+ * the lineage (`revises`) is the record of what the human turned down.
+ */
+export type ReviewStatus = 'pending' | 'approved' | 'rejected'
+
 export interface AssetRecord {
   id: string
   kind: string
@@ -19,6 +28,10 @@ export interface AssetRecord {
   durationSec?: number | null
   path: string
   createdAt: number
+  reviewStatus?: ReviewStatus
+  reviewNote?: string | null
+  /** The asset this one iterates on — a chain of rows is the version history. */
+  revises?: string | null
   /** Measured from the bytes; absent until the render worker has probed it. */
   width?: number | null
   height?: number | null

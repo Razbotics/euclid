@@ -31,6 +31,20 @@ export interface DecisionContext {
 }
 
 /**
+ * What this decision is *about*, beyond its text — the hook review flows hang
+ * off (plans/010). A decision with refs is still an ordinary decision: same
+ * answer surfaces, same first-answer-wins. What changes is the consequence of
+ * answering — the DO flips the referenced plan's status, and (phase 2) writes
+ * the referenced assets' review status — and how the editor renders it.
+ */
+export interface DecisionRefs {
+  /** A plan revision this decision approves or bounces. */
+  planId?: string
+  /** Assets under review; the editor shows them inline. (Phase 2.) */
+  assetIds?: string[]
+}
+
+/**
  * Which surface produced the answer, in descending order of trust:
  *  - `chat`   — the human answered a protocol elicitation directly in their
  *               client. Nothing interpreted it.
@@ -55,6 +69,7 @@ export interface Decision {
   detail?: string
   options: DecisionOption[]
   context?: DecisionContext
+  refs?: DecisionRefs
   createdAt: number
   status: 'open' | 'answered'
   answer?: DecisionAnswer
@@ -72,6 +87,11 @@ export const DecisionContextSchema: z.ZodType<DecisionContext> = z.object({
   atSec: z.number().min(0).optional(),
 })
 
+export const DecisionRefsSchema: z.ZodType<DecisionRefs> = z.object({
+  planId: z.string().min(1).optional(),
+  assetIds: z.array(z.string().min(1)).max(20).optional(),
+})
+
 /** What a caller supplies; the server mints id/createdAt/status. */
 export const NewDecisionSchema = z.object({
   question: z.string().min(1).max(400),
@@ -80,6 +100,7 @@ export const NewDecisionSchema = z.object({
   // and the agent can't dump a menu on the human.
   options: z.array(DecisionOptionSchema).min(2).max(6),
   context: DecisionContextSchema.optional(),
+  refs: DecisionRefsSchema.optional(),
 })
 export type NewDecision = z.infer<typeof NewDecisionSchema>
 
@@ -101,6 +122,7 @@ export const DecisionSchema: z.ZodType<Decision> = z.object({
   detail: z.string().optional(),
   options: z.array(DecisionOptionSchema),
   context: DecisionContextSchema.optional(),
+  refs: DecisionRefsSchema.optional(),
   createdAt: z.number().int(),
   status: z.enum(['open', 'answered']),
   answer: z

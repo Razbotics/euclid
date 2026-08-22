@@ -137,10 +137,42 @@ export function buildInstructions(): string {
     '  piece by piece.',
     '',
     ...wrap(
-      `Usual order: ${ref('create_project')} → ${ref('add_scene')} → add_* nodes → ` +
+      `Usual order: ${ref('create_project')} → ${ref('propose_plan')} (human approves) → ` +
+        `${ref('add_scene')} → add_* nodes → ` +
         `${ref('set_narration')} → ${ref('generate_narration')} (gives real timings) → ` +
         `${ref('fit_scene_to_narration')} → ${ref('animate')}/${ref('morph_latex')}/` +
         `${ref('highlight')} against those timings → ${ref('render_video')}.`,
+    ),
+    '',
+    ...wrap(
+      `Assets belong to the USER, not the project: anything they generated or ` +
+        `uploaded in any of their projects can be placed in this one — placing links ` +
+        `it in automatically, ${ref('list_assets')} with scope "library" shows what ` +
+        `exists, and ${ref('link_asset')} stages a file without placing it. Links ` +
+        `share the file; nothing is copied.`,
+    ),
+    '',
+    'THE HUMAN IS IN THE LOOP',
+    ...wrap(
+      `Projects start in review mode: before any paid generation, propose a plan with ` +
+        `${ref('propose_plan')} — scenes, the assets you intend to generate, and a ` +
+        `server-priced credit budget — present it to the human, and STOP until they ` +
+        `answer (they approve in the editor, or tell you and you call ` +
+        `${ref('record_answer')}). While the gate is on, every generate_* call must fit ` +
+        `the approved plan's roster and remaining budget; ${ref('get_plan')} shows what ` +
+        `is left. Free work — editing the document, previews, captions — is never gated. ` +
+        `${ref('set_review_mode')} lifts the gate, but only when the human says so.`,
+    ),
+    '',
+    ...wrap(
+      `Generated files then land PENDING the human's approval: call ` +
+        `${ref('request_review')}, present it, and STOP — placing an asset ` +
+        `(${ref('add_image')}, ${ref('add_video')}, ${ref('import_mesh')}, ` +
+        `${ref('add_audio_clip')}) and ${ref('render_video')} refuse anything ` +
+        `unapproved. A rejection carries the human's note: regenerate with ` +
+        `\`revises\` pointing at the rejected file so the versions stay linked, and ` +
+        `request review again. Narration reviews the *script*, not the takes: the ` +
+        `human's own words and re-synthesis of approved text skip the queue.`,
     ),
     '',
     'COST',

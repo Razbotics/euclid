@@ -97,6 +97,10 @@ export function Assets({
 
   if (!projectId) return body
 
+  // The user's assets from OTHER projects, linkable into this one. Assets are
+  // user-owned with project links (plans/010 phase 4) — ⊕ links, never copies.
+  const linkable = (state.library ?? []).filter((f) => !f.linkedHere)
+
   return (
     <div
       className={`explorer-drop${over ? ' over' : ''}`}
@@ -115,6 +119,32 @@ export function Assets({
       {body}
       {busy && <p className="explorer-note">uploading {busy}…</p>}
       {failed && <p className="explorer-note explorer-error">{failed}</p>}
+      {linkable.length > 0 && (
+        <div className="library">
+          <div className="asset-folder" onClick={() => toggle('~library')}>
+            <span className="twisty">{collapsed.has('~library') ? '▸' : '▾'}</span>
+            library
+            <span className="library-count">{linkable.length}</span>
+          </div>
+          {!collapsed.has('~library') &&
+            linkable.map((f) => (
+              <div key={f.id} className="asset-file library-file" title={`${f.path} — from another project`}>
+                <span className="asset-glyph">{fileGlyph(f)}</span>
+                <span className="asset-name">{f.path.slice(f.path.lastIndexOf('/') + 1)}</span>
+                <span className="asset-meta">{formatBytes(f.bytes)}</span>
+                <span className="asset-actions">
+                  <button
+                    onClick={() => void state.linkIn(f.id)}
+                    disabled={state.busy === f.id}
+                    title="link into this project (shared, not copied)"
+                  >
+                    ⊕
+                  </button>
+                </span>
+              </div>
+            ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -177,6 +207,17 @@ function FileRow({ file, state, activeId, onOpen }: { file: AssetFile } & TreePr
     >
       <span className="asset-glyph">{fileGlyph(row)}</span>
       <span className="asset-name">{file.name}</span>
+      {/* Review state is a dot, not a word: approved is the quiet normal and
+          earns nothing; pending and rejected are what the queue will explain. */}
+      {row.reviewStatus === 'pending' && (
+        <span className="review-dot pending" title="pending review" />
+      )}
+      {row.reviewStatus === 'rejected' && (
+        <span
+          className="review-dot rejected"
+          title={`rejected${row.reviewNote ? `: ${row.reviewNote}` : ''}`}
+        />
+      )}
       <span className="asset-meta">
         {formatBytes(file.bytes)}
         {file.durationSec ? ` · ${file.durationSec.toFixed(1)}s` : ''}

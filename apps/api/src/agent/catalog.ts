@@ -8,12 +8,14 @@ import { genTools } from './tools-gen'
 import { gridTools } from './tools-grid'
 import { mediaTools } from './tools-media'
 import { nodeTools } from './tools-node'
+import { planTools } from './tools-plan'
 import { previewTools } from './tools-preview'
 import { projectTools } from './tools-project'
 import type { Capability } from './types'
 
 const ALL: Capability[] = [
   ...projectTools,
+  ...planTools,
   ...nodeTools,
   ...gridTools,
   ...spatialTools,

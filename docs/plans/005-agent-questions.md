@@ -27,15 +27,15 @@ ready-to-paste block — question, numbered options, "reply with a number" —
 and instructs the agent to put it in its next reply and stop. The DO copy is
 what gives it persistence and an audit trail.
 
-> **The editor's questions panel was removed on 2026-08-15.** With MCP
-> elicitation as the preferred path and chat as the fallback, a third surface
-> in the side panel earned less than the space it took — the side panel is
-> wanted for a per-project asset explorer instead (see
-> [plans/003](003-general-video.md#1-assets-become-first-class)). Questions
-> still ride the DO and are still answered from chat via `record_answer`;
-> `Decisions.tsx` and `answerDecision` remain, unmounted, so restoring the
-> panel is one JSX line. What is lost is the `atSec` seek button — the one
-> thing the editor added that chat cannot.
+> **The editor's questions panel was removed on 2026-08-15 — and restored on
+> 2026-08-22 as the review queue.** The removal reasoning held while
+> questions were the panel's only content; plans/010 changed the content:
+> plan approvals and asset reviews *need* the editor (the file must be seen),
+> and plain questions ride along in the same queue. `Review.tsx` superseded
+> the kept-unmounted `Decisions.tsx`, which is deleted; the `atSec` seek
+> button is back. Questions still ride the DO and chat still answers them
+> via `record_answer` — the two surfaces are unchanged, the editor one just
+> renders again.
 
 MCP's `elicitation` capability is now the **preferred** path: `ask_user`
 calls `server.elicitInput()` when the client advertises support, so the human

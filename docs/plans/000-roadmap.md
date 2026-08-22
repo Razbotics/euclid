@@ -410,6 +410,46 @@ capability as a document contact sheet.
       and measuring the marker follow it: 0.41% lit at the old time against
       4.87% at the new
 
+## Phase 5.5: Human-in-the-loop assets → plans/010-human-in-the-loop-assets.md
+**Done** (planned, built and closed 2026-08-22 — all five phases). Inverts the
+agent-alone default: the human approves the plan before credits are spent
+and reviews every generated asset before it reaches the document (a hard,
+per-project gate — plans/005 proved wording alone does not make the agent
+wait). Approval rides the existing decision mechanism; the editor gains a
+review queue with inline previews and iteration compare. Assets move from
+project-owned to **user-owned with project links**, so an approved asset is
+placeable in any of the user's projects.
+- [x] Phase 1: plan proposal + review-mode gate — projects are born gated,
+      `propose_plan` prices a budget server-side, approval rides a decision,
+      the gate beside the debit enforces roster + remaining budget and
+      refunds on failure. Verified by `check-review.ts` at zero net credits
+- [x] Phase 2: asset review lifecycle — generated files land `pending` by
+      provenance, `request_review` puts them in front of the human,
+      placement and a render last-net refuse anything unapproved, rejection
+      notes drive regeneration with automatic lineage, and narration
+      reviews the script rather than the takes. Verified end to end for 4
+      credits (four real narration takes)
+- [ ] Phase 2: asset review lifecycle (status, lineage via `revises`)
+- [x] Phase 3: review UI in the editor — `Review.tsx` renders the queue
+      (plan outlines, assets inline with a lineage strip, plain questions)
+      above the inspector; explorer dots mark pending/rejected; the header
+      toggle binds review mode to the gateway capabilities. Verified live in
+      the browser: approve click → badge, decision and explorer dot all
+      update off the `asset-reviewed` broadcast
+- [x] Phase 4: the library — assets are user-owned, projects hold links with
+      per-project paths; placement auto-links, `list_assets` gains a library
+      scope, and deletion follows the links (a project delete keeps files
+      linked elsewhere; deleting a file refuses while other projects link
+      it). Verified by `check-library.ts` at zero credits; `check-review.ts`
+      re-run green over the reworked layer
+- [x] Phase 5: **milestone run 8 done** — "Why the moon has phases", 19.3s
+      narrated 1080p, the first run with a real human in the loop. The
+      human's plan approval and asset reviews rode the designed paths, and
+      their preview review caught three composition errors plus a latent
+      editor defect (the canvas had never drawn an image) before the one and
+      only render was queued: 29 credits total, none wasted. Findings in
+      plans/010
+
 ## Phase 6: Real users — launch, and deliberately last
 Moved to the end 2026-08-15. Auth, billing UI and a production deploy are
 the work that only pays off once there is something worth signing up for,

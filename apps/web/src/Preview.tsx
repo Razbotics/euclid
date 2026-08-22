@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Application, Assets, Texture } from 'pixi.js'
+import { Application, Texture } from 'pixi.js'
 import { EuclidStage } from '@euclid/engine/pixi'
 import type { EuclidDoc } from '@euclid/dsl'
 import { MathJaxTexProvider } from './tex'
@@ -66,13 +66,12 @@ const sessionImageProvider = {
   async getTexture(assetId: string): Promise<Texture> {
     const res = await fetch(`${API}/api/assets/${assetId}`, { credentials: 'include' })
     if (!res.ok) throw new Error(`asset ${assetId}: ${res.status}`)
-    const url = URL.createObjectURL(await res.blob())
-    try {
-      return (await Assets.load(url)) as Texture
-    } finally {
-      // Pixi has decoded it by now; holding the object URL only leaks it.
-      URL.revokeObjectURL(url)
-    }
+    // Decode here and hand Pixi pixels, the way the video provider does.
+    // `Assets.load` picks its parser from the URL's file extension, and a
+    // blob: URL has none — it warned "we don't know how to parse it" and the
+    // canvas silently drew nothing (found by milestone run 8, the first time
+    // a real image reached the *editor* canvas rather than the export).
+    return Texture.from(await createImageBitmap(await res.blob()))
   },
 }
 

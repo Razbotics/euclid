@@ -36,7 +36,8 @@
  *
  * Env: API_URL, INTERNAL_API_KEY, RENDER_PAGE_URL (passed through to the child),
  *      POLL_MS (default 3000), MAX_JOBS (exit after N jobs; for tests),
- *      PREVIEW_PORT (default 8790), PREVIEW_DISABLE=1 to not serve at all.
+ *      PREVIEW_PORT (default 8790; PORT — the dev launcher's assignment — is
+ *      the fallback between them), PREVIEW_DISABLE=1 to not serve at all.
  */
 import './load-env'
 import { spawn } from 'node:child_process'
@@ -53,7 +54,13 @@ import { healthVerdict, type Phase } from './health'
 const API_URL = process.env.API_URL ?? 'http://localhost:8787'
 const KEY = process.env.INTERNAL_API_KEY ?? 'dev-internal-key'
 const POLL_MS = Number(process.env.POLL_MS ?? 3000)
-const PREVIEW_PORT = Number(process.env.PREVIEW_PORT ?? 8790)
+// PORT is how the dev launcher (launch.json, autoPort on) hands this worker a
+// port when 8790 is already another session's listener. PREVIEW_PORT still
+// wins so a deliberate choice beats the launcher's assignment. The API finds
+// whichever worker holds ITS configured origin (PREVIEW_ORIGIN, default
+// :8790) — a worker parked elsewhere still drains the render queue, which is
+// the listener-is-best-effort rule this file already lives by.
+const PREVIEW_PORT = Number(process.env.PREVIEW_PORT ?? process.env.PORT ?? 8790)
 const MAX_JOBS = Number(process.env.MAX_JOBS ?? 0) // 0 = run forever
 const HERE = dirname(fileURLToPath(import.meta.url))
 

@@ -5,7 +5,12 @@ CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
   name TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  -- The human-in-the-loop gate (plans/010). While 1 (the default), paid
+  -- generation must fit a human-approved plan's roster and remaining budget;
+  -- set_review_mode / the editor toggle it. The plans themselves live in the
+  -- project's Durable Object, beside the decisions that approve them.
+  review_mode INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_projects_user ON projects (user_id, created_at DESC);
 
@@ -23,11 +28,17 @@ CREATE TABLE IF NOT EXISTS credit_ledger (
 );
 CREATE INDEX IF NOT EXISTS idx_ledger_user ON credit_ledger (user_id, created_at DESC);
 
--- Binary files owned by a project: narration audio now, video/image clips in
--- the general-video phase. Rows are immutable — a new upload mints a new id,
--- so `assetId` references inside a document never go stale.
+-- Binary files owned by a USER, linked into projects (plans/010 phase 4).
+-- Rows are immutable — a new upload mints a new id, so `assetId` references
+-- inside a document never go stale, and the same asset can safely be linked
+-- into several projects. `project_id` remains as the *home* project (where
+-- the file was created) during the migration; project membership itself
+-- lives in `project_assets`.
 CREATE TABLE IF NOT EXISTS assets (
   id TEXT PRIMARY KEY,
+  -- The owner. Tenancy checks this directly; the old join through projects
+  -- remains only as a COALESCE fallback for rows created before the column.
+  user_id TEXT,
   project_id TEXT NOT NULL,
   kind TEXT NOT NULL,        -- audio | video | image
   r2_key TEXT NOT NULL,
@@ -61,10 +72,39 @@ CREATE TABLE IF NOT EXISTS assets (
   -- proxy has no consequence beyond a slower scrub.
   proxy_key TEXT,
   proxy_bytes INTEGER,
-  proxy_at INTEGER
+  proxy_at INTEGER,
+  -- Where the asset stands with the human (plans/010). Provenance sets the
+  -- initial value: owner uploads, render outputs and human-authored narration
+  -- are born 'approved'; generated files are born 'pending' while the project
+  -- is in review mode. Answering a review decision moves it; 'rejected' rows
+  -- are kept, because the lineage is the record of what was turned down.
+  review_status TEXT NOT NULL DEFAULT 'approved',
+  review_note TEXT,
+  reviewed_at INTEGER,
+  reviewed_via TEXT,           -- editor | agent | chat | auto
+  -- The asset this one iterates on; a chain of rows is the version history.
+  revises TEXT,
+  -- Narration only: hash of (voiceId, script text). Re-synthesis of text the
+  -- human already approved auto-approves by matching this — the review is of
+  -- the script, not the bytes.
+  tts_hash TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_assets_project ON assets (project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_assets_path ON assets (project_id, path);
+CREATE INDEX IF NOT EXISTS idx_assets_user ON assets (user_id, created_at DESC);
+
+-- Which projects an asset appears in, with the per-project virtual path (the
+-- same file can be /refs/logo.png here and /branding/logo.png there). An
+-- asset's last link going away is what deletes its bytes; an asset linked
+-- elsewhere survives its home project's deletion.
+CREATE TABLE IF NOT EXISTS project_assets (
+  project_id TEXT NOT NULL,
+  asset_id TEXT NOT NULL,
+  path TEXT,
+  linked_at INTEGER NOT NULL,
+  PRIMARY KEY (project_id, asset_id)
+);
+CREATE INDEX IF NOT EXISTS idx_links_asset ON project_assets (asset_id);
 -- The worker's probe queue: everything never measured, oldest first.
 CREATE INDEX IF NOT EXISTS idx_assets_unprobed ON assets (probed_at, created_at);
 CREATE INDEX IF NOT EXISTS idx_assets_unshot ON assets (shots_at, created_at);
@@ -91,6 +131,13 @@ CREATE TABLE IF NOT EXISTS generation_jobs (
   response_url TEXT NOT NULL,
   asset_id TEXT,                -- set once the bytes are stored
   error TEXT,
+  -- Which plan revision's budget this generation drew down (plans/010), so a
+  -- failure discovered minutes later during a poll refunds the budget where
+  -- it came from. NULL when the project was not in review mode.
+  plan_id TEXT,
+  -- The asset this generation iterates on; copied onto the stored asset row
+  -- when the file lands, so the review UI can show versions side by side.
+  revises TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );

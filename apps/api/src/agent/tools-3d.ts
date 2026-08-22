@@ -16,6 +16,7 @@ import {
   type Vector3Node,
 } from '@euclid/dsl'
 import { loadAsset } from '../services/assets'
+import { assertPlacementApproved, ensureLinked } from './review'
 import { COLOR, NUMBERISH, PROJECT_ID, SCENE_ID } from './schemas'
 import { baseNode } from './tools-node'
 import { capability, said, CapabilityError } from './types'
@@ -312,15 +313,20 @@ export const spatialTools = [
 
       const asset = await loadAsset(ctx.env, assetId)
       if (!asset) throw new CapabilityError(`asset ${assetId} not found`, 404)
-      if (asset.project_id !== projectId) {
-        throw new CapabilityError(`asset ${assetId} belongs to another project`, 403)
-      }
       if (asset.kind !== 'model') {
         throw new CapabilityError(
           `asset ${assetId} is ${asset.kind}, not a 3D model. import_mesh reads the GLB files ` +
             `generate_3d produces; list_assets marks which is which.`,
         )
       }
+      // The one placement that *consumes* its asset (geometry is baked into
+      // the document), so this gate is the only control an import ever passes.
+      await assertPlacementApproved(ctx, projectId, {
+        id: asset.id,
+        reviewStatus: asset.review_status,
+        reviewNote: asset.review_note,
+      })
+      await ensureLinked(ctx, projectId, assetId)
 
       const object = await ctx.env.ASSETS.get(asset.r2_key)
       if (!object) throw new CapabilityError(`the bytes for ${assetId} are missing`, 410)

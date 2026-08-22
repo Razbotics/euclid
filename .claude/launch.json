@@ -13,7 +13,7 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--filter", "@euclid/web", "dev"],
       "port": 5173,
-      "autoPort": false
+      "autoPort": true
     },
     {
       "name": "mcp",
@@ -27,7 +27,7 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--filter", "@euclid/renderer", "exec", "tsx", "src/render-worker.ts"],
       "port": 8790,
-      "autoPort": false
+      "autoPort": true
     }
   ]
 }

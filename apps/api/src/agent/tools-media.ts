@@ -16,13 +16,20 @@ import {
 } from '@euclid/dsl'
 import {
   AssetInUse,
+  AssetLinkedElsewhere,
   AssetPathTaken,
   deleteAsset,
+  linkAsset,
+  listLibraryAssets,
   listProjectAssets,
+  loadAsset,
   moveAsset,
+  unlinkAsset,
 } from '../services/assets'
 import { NarrationError, generateSceneNarration } from '../services/narration'
 import { RenderError, listRenderJobs, startRender } from '../services/render'
+import { AccessError } from '../shared'
+import { assertPlacementApproved, ensureLinked } from './review'
 import { PROJECT_ID, SCENE_ID } from './schemas'
 import { capability, said, CapabilityError } from './types'
 
@@ -81,11 +88,22 @@ export const mediaTools = [
       const r = await generateSceneNarration(ctx.env, projectId, sceneId, ctx.userId, {
         text,
         voiceId,
+        // Explicit text through this capability is the agent's writing; text
+        // from the document is attributed by the event log (plans/010).
+        ...(text ? { textAuthor: 'agent' as const } : {}),
       }).catch(asCapabilityError)
+      const review =
+        r.reviewStatus === 'pending'
+          ? `\nPENDING REVIEW — the audio is in the scene so timings work, but the render will ` +
+            `refuse until the human approves it: call request_review(assetIds: ["${r.assetId}"]).`
+          : r.reviewReason
+            ? `\nauto-approved (${r.reviewReason})`
+            : ''
       return said(
         `generated narration for ${sceneId}: ${r.durationSec.toFixed(2)}s, ${r.words} words, ` +
           `cost ${r.cost} credits (asset ${r.assetId})` +
-          (r.warning ? `\nWARNING: ${r.warning}` : ''),
+          (r.warning ? `\nWARNING: ${r.warning}` : '') +
+          review,
         r,
       )
     },
@@ -265,10 +283,37 @@ export const mediaTools = [
   capability({
     name: 'list_assets',
     summary: "The project's files as a tree, marked in-use or unused.",
-    doc: 'Free. Paths are virtual — folders are derived, so there is nothing to mkdir. Each file is marked `[in use]` or `[unused]`, which is what makes a leftover from a regenerated scene visible; those in use are the ones remove_asset refuses to delete.',
-    args: z.object({ projectId: PROJECT_ID }),
-    async handler(ctx, { projectId }) {
+    doc: [
+      'Free. Paths are virtual — folders are derived, so there is nothing to mkdir. Each file is marked `[in use]` or `[unused]`, which is what makes a leftover from a regenerated scene visible; those in use are the ones remove_asset refuses to delete.',
+      '',
+      "`scope: \"library\"` lists everything the user owns across ALL their projects instead — assets are user-owned and linked into projects, so any of these can be placed here (placement links it automatically) or linked explicitly with link_asset. Each is marked with how many projects link it and whether this one already does.",
+    ].join('\n'),
+    args: z.object({
+      projectId: PROJECT_ID,
+      scope: z.enum(['project', 'library']).default('project'),
+    }),
+    async handler(ctx, { projectId, scope }) {
       await ctx.requireProject(projectId)
+      if (scope === 'library') {
+        // The library is flat, not a tree: paths are per project, so the only
+        // honest ordering across projects is recency.
+        const lib = await listLibraryAssets(ctx.env, ctx.userId, projectId)
+        if (lib.length === 0) return said('the library is empty — no assets owned yet', { assets: [] })
+        return said(
+          `${lib.length} file(s) in your library\n` +
+            lib
+              .map(
+                (a) =>
+                  `${a.path}  ${Math.round(a.bytes / 1024)}KB  ${a.kind}` +
+                  `  [${a.links} project${a.links === 1 ? '' : 's'}${a.linkedHere ? ', incl. this one' : ''}]` +
+                  (a.reviewStatus === 'pending' ? '  [PENDING REVIEW]' : '') +
+                  (a.reviewStatus === 'rejected' ? '  [REJECTED]' : '') +
+                  `  ${a.id}`,
+              )
+              .join('\n'),
+          { assets: lib },
+        )
+      }
       const assets = await listProjectAssets(ctx.env, projectId, ctx.userId)
       if (assets.length === 0) return said('no assets in this project', { assets: [] })
 
@@ -284,7 +329,18 @@ export const mediaTools = [
           const kb = `${Math.round(file.bytes / 1024)}KB`
           const media = describeMedia(file)
           const mark = used.get(file.id) ? ' [in use]' : ' [unused]'
-          lines.push(`${pad}${file.name}  ${kb}${media ? `  ${media}` : ''}${mark}  ${file.id}`)
+          // Review state earns a place on the row only when it demands action:
+          // approved is the quiet normal, pending and rejected are loud.
+          const review =
+            file.reviewStatus === 'pending'
+              ? ' [PENDING REVIEW]'
+              : file.reviewStatus === 'rejected'
+                ? ` [REJECTED${file.reviewNote ? `: "${file.reviewNote}"` : ''}]`
+                : ''
+          const rev = file.revises ? `  rev of ${file.revises.slice(0, 8)}` : ''
+          lines.push(
+            `${pad}${file.name}  ${kb}${media ? `  ${media}` : ''}${mark}${review}${rev}  ${file.id}`,
+          )
         }
       }
       walk(buildAssetTree(assets), 0)
@@ -293,6 +349,69 @@ export const mediaTools = [
         `${assets.length} file(s)${unused ? `, ${unused} unused` : ''}\n${lines.join('\n')}`,
         { assets },
       )
+    },
+  }),
+
+  capability({
+    name: 'link_asset',
+    summary: 'Put a library asset into this project — a link, never a copy.',
+    doc: [
+      'Free. Assets are user-owned; a project holds links (plans/010). Linking makes the file appear in this project\'s explorer and list_assets, under its own per-project path. The bytes are shared — an asset is immutable, so a link can never change meaning under a document.',
+      '',
+      'Placement capabilities (add_image, add_video, import_mesh, add_audio_clip) link automatically, so this is only needed to stage a file in the project before deciding where it goes. Find candidates with list_assets scope: "library".',
+    ].join('\n'),
+    args: z.object({
+      projectId: PROJECT_ID,
+      assetId: z.string().min(1).describe('from list_assets scope: "library"'),
+      path: z.string().optional().describe("this project's path for it; defaults to its home path"),
+    }),
+    async handler(ctx, { projectId, assetId, path }) {
+      await ctx.requireProject(projectId)
+      try {
+        const out = await linkAsset(ctx.env, projectId, assetId, ctx.userId, path)
+        return said(
+          out.already
+            ? `${assetId} was already linked here as ${out.path}`
+            : `linked ${assetId} into this project as ${out.path}`,
+          out,
+        )
+      } catch (e) {
+        if (e instanceof AccessError) throw new CapabilityError(e.message, e.status)
+        throw e
+      }
+    },
+  }),
+
+  capability({
+    name: 'unlink_asset',
+    summary: 'Take a file out of this project. The file itself survives.',
+    doc: 'Free, and never touches bytes: the asset stays in the library and in every other project linking it. Refused while this project\'s document still references it — remove or repoint the node first. To delete the file outright, remove_asset.',
+    args: z.object({
+      projectId: PROJECT_ID,
+      assetId: z.string().min(1),
+    }),
+    async handler(ctx, { projectId, assetId }) {
+      await ctx.requireProject(projectId)
+      try {
+        const out = await unlinkAsset(ctx.env, projectId, assetId, ctx.userId)
+        return said(
+          `unlinked ${assetId} from this project — ` +
+            (out.remainingLinks > 0
+              ? `still in ${out.remainingLinks} other project(s) and the library`
+              : 'it now lives only in the library (remove_asset deletes it for good)'),
+          out,
+        )
+      } catch (e) {
+        if (e instanceof AssetInUse) {
+          throw new CapabilityError(
+            `${assetId} is still used by: ${e.scenes.join(', ')}. ` +
+              'Remove or repoint those first — an unlinked reference would resolve to nothing.',
+            409,
+          )
+        }
+        if (e instanceof AccessError) throw new CapabilityError(e.message, e.status)
+        throw e
+      }
     },
   }),
 
@@ -308,7 +427,9 @@ export const mediaTools = [
     async handler(ctx, { projectId, assetId, path }) {
       await ctx.requireProject(projectId)
       try {
-        const out = await moveAsset(ctx.env, assetId, path, ctx.userId)
+        // Paths are per project since the library (plans/010 phase 4): this
+        // renames THIS project's view of the file, nobody else's.
+        const out = await moveAsset(ctx.env, assetId, path, ctx.userId, projectId)
         return said(`moved ${assetId} → ${out.path}`, out)
       } catch (e) {
         if (e instanceof AssetPathTaken) {
@@ -324,8 +445,12 @@ export const mediaTools = [
 
   capability({
     name: 'remove_asset',
-    summary: 'Delete a file. Refuses if the document still references it.',
-    doc: 'Free. A scene must never point at nothing, so a referenced file is refused and the refusal names the scenes. Re-generate or repoint that scene first, or pass `force: true` to delete anyway and accept the broken reference.',
+    summary: 'Delete a file outright. Refuses if referenced, or linked elsewhere.',
+    doc: [
+      'Free, and it deletes the FILE — bytes included — not just its place in this project (that is unlink_asset).',
+      '',
+      'Two refusals, two remedies. A document still referencing it is refused with the scenes named — re-generate or repoint first, or pass `force: true` to accept the broken reference. Links from OTHER projects are refused outright with no force: those projects still show the file, so unlink_asset it there first.',
+    ].join('\n'),
     args: z.object({
       projectId: PROJECT_ID,
       assetId: z.string().min(1),
@@ -334,12 +459,20 @@ export const mediaTools = [
     async handler(ctx, { projectId, assetId, force }) {
       await ctx.requireProject(projectId)
       try {
-        const out = await deleteAsset(ctx.env, assetId, force, ctx.userId)
+        const out = await deleteAsset(ctx.env, assetId, force, ctx.userId, projectId)
         return said(
           `deleted ${assetId}${out.wasInUse ? ' (was in use — a scene now points at nothing)' : ''}`,
           out,
         )
       } catch (e) {
+        if (e instanceof AssetLinkedElsewhere) {
+          throw new CapabilityError(
+            `${assetId} is also linked in: ${e.projects.map((p) => `"${p.name}" (${p.id})`).join(', ')}. ` +
+              `Deleting would break those projects too — call unlink_asset there first, ` +
+              `or unlink_asset here if you only want it out of this project.`,
+            409,
+          )
+        }
         if (e instanceof AssetInUse) {
           throw new CapabilityError(
             `${assetId} is still used by: ${e.scenes.join(', ') || 'the document'}. ` +
@@ -471,16 +604,23 @@ export const mediaTools = [
         const known = (doc.audio ?? []).map((t) => t.id).join(', ') || 'none yet'
         throw new CapabilityError(`no audio track ${args.trackId} (have: ${known})`, 404)
       }
-      const assets = await listProjectAssets(ctx.env, args.projectId, ctx.userId)
-      const asset = assets.find((a) => a.id === args.assetId)
-      if (!asset) throw new CapabilityError(`no asset ${args.assetId} in this project`, 404)
-      const durationSec = args.durationSec ?? asset.durationSec ?? 0
+      const asset = await loadAsset(ctx.env, args.assetId)
+      if (!asset) throw new CapabilityError(`asset ${args.assetId} not found — see list_assets`, 404)
+      await assertPlacementApproved(ctx, args.projectId, {
+        id: asset.id,
+        reviewStatus: asset.review_status,
+        reviewNote: asset.review_note,
+      })
+      // Any owned asset places here; placing links it into the project.
+      await ensureLinked(ctx, args.projectId, args.assetId)
+      const durationSec = args.durationSec ?? asset.duration_sec ?? 0
       if (!durationSec) {
         throw new CapabilityError(
-          `asset ${args.assetId} (${asset.path}) has no recorded duration — pass durationSec`,
+          `asset ${args.assetId} (${asset.path ?? 'unnamed'}) has no recorded duration — pass durationSec`,
           400,
         )
       }
+      const assetPath = asset.path ?? args.assetId
       const clip = {
         id: rid('clip'),
         assetId: args.assetId,
@@ -491,7 +631,7 @@ export const mediaTools = [
         gain: args.gain,
         fadeInSec: args.fadeInSec,
         fadeOutSec: args.fadeOutSec,
-        name: args.name ?? asset.path.slice(asset.path.lastIndexOf('/') + 1),
+        name: args.name ?? assetPath.slice(assetPath.lastIndexOf('/') + 1),
       }
       await ctx.submit(args.projectId, [op.addAudioClip(track.id, clip)])
       // Say what it will actually do, not what was asked for: the difference

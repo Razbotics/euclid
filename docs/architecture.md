@@ -465,16 +465,41 @@ themselves from estimated to exact the moment TTS lands — no migration.
 
 ## Assets
 
-Binary files owned by a project — narration audio, generated images, video,
-music and 3D models, with ingested footage when the general-video phase lands.
-`kind` is one of `audio | video | image | model`. D1 holds the metadata row
-(`kind`, `mime`, `bytes`, `duration_sec`, R2 key); R2 holds the bytes under
-`assets/<projectId>/<assetId>`.
+Binary files owned by a **user**, linked into projects (plans/010 phase 4) —
+narration audio, generated images, video, music and 3D models, plus the
+user's own uploads. `kind` is one of `audio | video | image | model`. D1
+holds the metadata row (`user_id`, `kind`, `mime`, `bytes`, `duration_sec`,
+R2 key); R2 holds the bytes under `assets/<userId>/<assetId>` (older rows
+keep their `assets/<projectId>/…` keys — the key is stored per row, so no
+byte ever moved).
 
 Assets are **immutable**: a new upload mints a new id rather than replacing
 one. That is what makes an `assetId` embedded in a document safe — a
 `narration.audio.assetId` can never silently start pointing at different
-bytes — and it lets reads cache indefinitely.
+bytes — and it is also what makes **cross-project links** safe: the same
+asset can appear in several projects and never change meaning under any of
+their documents.
+
+**Membership is a link, ownership is a column.** `project_assets` records
+which projects an asset appears in, carrying the per-project virtual path
+(the same file can be `/refs/logo.png` here and `/branding/logo.png`
+there); `assets.user_id` is who may touch it, checked directly by
+`mayAccess` — which removed the join through `projects` from the hot read
+path (it survives only as a COALESCE fallback for pre-migration rows).
+`assets.project_id` remains during the migration as the *home* project.
+Placement (`add_image`, `add_video`, `import_mesh`, `add_audio_clip`) links
+automatically; `link_asset` stages a file without placing it; `list_assets`
+with `scope: "library"` is the discovery surface. Links share; nothing is
+ever copied.
+
+**Deletion follows the links.** Deleting a *project* deletes its links and
+reaps only assets whose last link that was — a file also linked elsewhere
+survives, bytes and all, and the dry-run report says how many will be kept.
+`unlink_asset` takes a file out of one project (refused while that
+project's document references it) without touching bytes; `remove_asset`
+deletes the file outright and is refused — with no force — while other
+projects link it, because deleting under them would be `delete_project`'s
+irreversibility without its ceremony.
 
 Creation (`POST /api/projects/:id/assets`) answers two questions that are
 easy to conflate, and did get conflated once — see *Auth, credits, tenancy*.
@@ -497,8 +522,10 @@ The bytes stream straight into R2 so a large clip never has to fit in worker
 memory, and the D1 row is written only once they land — a document must never
 hold an id that resolves to nothing. Reads (`GET /api/assets/:assetId`) go
 through the same tenancy rule as writes; the render worker fetches narration
-audio as `internal`, and ownership is resolved by joining through `projects`,
-since assets have no owner column of their own.
+audio as `internal`, and ownership is the asset's own `user_id` since
+plans/010 phase 4 (the join through `projects` survives only as a COALESCE
+fallback for pre-migration rows) — which is also what lets a file linked
+into another of the user's projects serve there under the same rule.
 
 A read may also ask for a **variant**: `?variant=proxy` serves a video's
 scrubbing copy (see *Proxies*), and anything else serves the original. That one
@@ -837,6 +864,13 @@ work happens first, while the rows that let us find it again still exist. The
 project row goes last because the deletion stays resumable — and ownership
 stays checkable — for as long as it is there.
 
+Since assets became user-owned links (plans/010 phase 4), "bytes" means the
+**doomed set**: assets whose last link this project holds, plus legacy rows
+that predate the link table (home here, linked nowhere) — one query covers
+both, because a legacy row swept without its R2 keys collected would orphan
+bytes nothing can ever name again. An asset also linked in another project
+survives, bytes and all; the dry-run report counts what will be kept.
+
 The Durable Object gets an explicit `/destroy`, because no SQL delete reaches
 the document or the decisions. It clears its in-memory `doc` too: emptying
 storage does not evict a live instance, so one that kept its copy would go on
@@ -866,10 +900,11 @@ worse:
   folder tree over `buildAssetTree`.
 - **Centre — the editor**, and the only column that grows. A tab strip whose
   first tab is the canvas and whose other tabs are open files.
-- **Right — the scene.** The inspector: nodes at the playhead, numeric fields,
-  the narration panel. Everything that edits the *document* lives here, so the
-  question "am I looking at a file or at the video?" has a side of the screen
-  as its answer.
+- **Right — the scene.** The review queue (see *The review queue* under
+  review mode), then the inspector: nodes at the playhead, numeric fields,
+  the narration panel. Everything that answers the *agent* or edits the
+  *document* lives here, so the question "am I looking at a file or at the
+  video?" has a side of the screen as its answer.
 
 Both side panels collapse to a clickable rail (⌘B / ⌘⌥B, VS Code's own
 bindings) and drag to resize from the seam beside them; double-clicking a
@@ -917,6 +952,115 @@ nothing here can put a downloaded model on the canvas. Triangle count is the
 number [plans/009](plans/009-generative-assets.md) records for every
 generation and the number a future importer has to decimate, so it is the one
 worth showing.
+
+## Review mode: the plan is a budget
+
+Projects start gated (`projects.review_mode`, default on): while the gate is
+on, paid generation must fit a plan the human has approved. The design is
+plans/010; what is load-bearing:
+
+- **Approval is a budget, not a snapshot.** What the human authorizes is
+  spending — an asset roster plus a server-priced credit estimate — so that
+  is what approval is scoped to. Each gated generation draws
+  `spentCredits` down inside the Durable Object, whose serialized requests
+  make check-and-spend atomic without a lock (the op-versioning trick again).
+  A call outside the roster or past the remaining budget is refused naming
+  `propose_plan`; document iteration never re-triggers approval, and nothing
+  expires by time.
+- **Plans are DO state, like decisions** — workflow, not video content, so no
+  SCHEMA_VERSION bump and nothing reaches the renderer. `plan:<id>` beside
+  `dec:<id>`, broadcast on the same WebSocket. The estimate is computed in
+  the capability layer from the fal roster and `ttsCost` over the scene
+  narration drafts; the agent cannot set it, so the number the human approves
+  is the number the system would charge.
+- **Approval rides the decision mechanism.** `propose_plan` mints a decision
+  (`refs.planId`) beside the plan; answering it — editor click or
+  `record_answer` — is what flips the plan's status, so approval has one path
+  with the provenance and first-answer-wins semantics decisions already
+  carry. `approve` approves (superseding any previously approved plan — one
+  active budget at a time); anything else, including a bare note, is
+  `changes_requested`. Proposing again supersedes whatever was still waiting.
+- **The gate lives beside the debit**, in `services/generate.ts` and
+  `services/narration.ts`, not in the executor: budget, credits and refunds
+  meet at one boundary with one refund path. The drawdown happens before the
+  provider sees the request (a refusal has no side effects), and
+  `generation_jobs.plan_id` records which plan a job drew from so a failure
+  discovered minutes later during a poll refunds the budget where it came
+  from — to a since-superseded plan, the refund is skipped, since that budget
+  no longer meters anything. `/plans/spend` is reachable only through the
+  service stub; the API forwards `/plans` read-only.
+
+### Asset review: provenance in, one path through, lineage out
+
+The plan gates *spending*; asset review gates what reaches the **document**
+and the **finished video**. Three rules carry it:
+
+- **Provenance sets the initial status.** The owner's uploads, render
+  outputs, and a human-authored narration script are born `approved` — the
+  human's own content never queues for their own approval. Generated files
+  are born `pending` while review mode is on (judged at collect time, when
+  the file exists to be judged). Narration applies the finer rule that
+  review is of the **script, not the bytes**: `tts_hash` stores a hash of
+  (voice, text) on the row, so re-synthesising already-approved text
+  auto-approves, and authorship of a document-sourced script is read from
+  the event log the DO already keeps (`/narration-author`, a bounded reverse
+  scan that skips the `system` write-back TTS itself submits). Unknown
+  authorship goes to review — defaulting it to approved would be the gate
+  approving what nobody read.
+- **One verdict path.** `request_review` mints an ordinary decision carrying
+  `refs.assetIds`; answering it — editor click or `record_answer` — is what
+  writes the rows, in the DO beside the plan consequence, and broadcasts
+  `asset-reviewed`. `approve` approves the batch; anything else, including a
+  bare note, **rejects with the note as the iteration signal**. Rejected
+  rows are kept: the lineage is the record of what the human turned down.
+- **Two fences, because narration crosses the first.** Placement
+  (`add_image`, `add_video`, `import_mesh`, `add_audio_clip`) refuses an
+  unapproved asset, naming `request_review` or — for a rejected file — the
+  `revises` argument that links the regeneration to what it replaces
+  (narration links its lineage automatically; the predecessor is knowable).
+  Narration audio, though, is *attached on generation*, deliberately: that
+  is how it is auditioned and how real timings exist to choreograph against.
+  So `render_video` is the second fence — before the debit, it walks
+  `assetIdsInDoc(doc)` and refuses while anything referenced is unapproved,
+  which also catches anything placed while the gate was toggled off.
+
+Verified end to end by `check-review.ts`: the fal paths cost nothing (every
+generation is either refused by the gate before the provider sees it, or is
+the check-fal trick — a submission fal's runner rejects — so drawdown →
+refund runs without an inference billed), and the asset lifecycle is proved
+on four real one-credit narration takes, the cheapest honest way to mint
+assets whose provenance differs.
+
+### The review queue (editor)
+
+`Review.tsx` is the human's side of the loop — the right-panel section that
+earned back the space the questions panel gave up on 2026-08-15, sitting
+*above* the inspector because an open review means an agent is stalled, and
+a stalled agent outranks a property sheet. It renders every open decision by
+what its `refs` say it is: a plan approval as its scene/asset/cost outline,
+an asset review with the file itself inline (image on the checkerboard,
+audio player, video via its proxy, GLB structure readout — the same
+renderers the file tabs use), and a plain `ask_user` question as before.
+When the asset under review revises another, the card shows a **lineage
+strip** — what was turned down, with its rejection note, beside what
+replaced it — which is the whole reason iteration review exists.
+
+Three decisions worth keeping:
+
+- **Request-changes requires a note.** The button is disabled until the note
+  says something, because a bare rejection gives the agent nothing to
+  iterate against — the note becomes the decision answer, then the asset's
+  `review_note`, then the brief the agent reads back.
+- **Review status changes arrive by broadcast, not ownership.** Status lives
+  on the asset rows, which `useProject` does not own; the DO's
+  `asset-reviewed` broadcast bumps a counter that keys the file list's
+  refetch. Same socket as ops, decisions and plans — no new transport.
+- **The header's review-mode chip binds to the capability gateway**
+  (`get_plan` / `set_review_mode` over `?format=json`), the same verbs the
+  agent calls, so there is no second REST surface to drift. The toggle asks
+  no confirmation: the click *is* the human deciding, which is the only
+  authority the gate defers to. The explorer marks pending and rejected
+  files with a dot — approved is the quiet normal and earns nothing.
 
 ## Agent questions
 

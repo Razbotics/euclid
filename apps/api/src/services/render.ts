@@ -1,6 +1,7 @@
-import { CREDIT_COSTS, docDuration } from '@euclid/dsl'
+import { CREDIT_COSTS, assetIdsInDoc, docDuration } from '@euclid/dsl'
 import { adjustCredits, getBalance } from '../billing'
 import { docOf, requireProjectAccess } from '../shared'
+import { reviewModeOf } from './plan'
 import type { Env } from '../env'
 
 export interface RenderJobRow {
@@ -50,6 +51,41 @@ export async function startRender(
   const seconds = Math.ceil(docDuration(doc))
   if (seconds === 0) {
     throw new RenderError('empty_project', 'nothing to render — add a scene first', 400)
+  }
+
+  // The last net of review mode (plans/010): nothing unapproved reaches the
+  // finished video. This catches what the placement gates cannot — narration,
+  // which is attached on generation so it can be auditioned, and anything
+  // placed while the gate was toggled off. Before the debit, so a refusal
+  // costs nothing.
+  if (await reviewModeOf(env, projectId)) {
+    const ids = [...assetIdsInDoc(doc)]
+    if (ids.length > 0) {
+      const marks = ids.map(() => '?').join(', ')
+      const rows = await env.DB.prepare(
+        `SELECT id, path, review_status, review_note FROM assets
+         WHERE id IN (${marks}) AND review_status != 'approved'`,
+      )
+        .bind(...ids)
+        .all<{ id: string; path: string | null; review_status: string; review_note: string | null }>()
+      if (rows.results.length > 0) {
+        const list = rows.results
+          .map(
+            (r) =>
+              `${r.path ?? r.id} [${r.review_status}` +
+              (r.review_note ? `: "${r.review_note}"` : '') +
+              `] (${r.id})`,
+          )
+          .join('; ')
+        throw new RenderError(
+          'unreviewed_assets',
+          `the document uses ${rows.results.length} asset(s) the human has not approved: ${list}. ` +
+            `Call request_review and wait for approval — or replace a rejected file — before rendering.`,
+          403,
+          { assets: rows.results },
+        )
+      }
+    }
   }
   const perSecond =
     doc.canvas.height > 720 ? CREDIT_COSTS.renderPerSecond1080 : CREDIT_COSTS.renderPerSecond720

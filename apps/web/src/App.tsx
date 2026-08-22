@@ -11,6 +11,7 @@ import { CameraFrame } from './Camera'
 import { CaptionOverlay } from './Narration'
 import { AudioMixer } from './AudioMixer'
 import { ProjectList } from './ProjectList'
+import { Review, ReviewModeToggle } from './Review'
 
 /**
  * Routing, such as it is: `?project=<id>` opens the editor on that project,
@@ -88,10 +89,8 @@ function clampPanels(p: Panels): Panels {
 }
 
 function Editor({ projectId }: { projectId: string | null }) {
-  // `decisions`/`answerDecision` are intentionally not consumed here: the
-  // questions panel was removed from the side panel. The loop still works —
-  // questions ride the DO and are answered in chat via record_answer.
-  const { doc, offline, error, submit } = useProject(projectId)
+  const { doc, offline, error, submit, decisions, answerDecision, plans, reviewBump } =
+    useProject(projectId)
 
   const [time, setTime] = useState(0)
   const [playing, setPlaying] = useState(false)
@@ -107,11 +106,13 @@ function Editor({ projectId }: { projectId: string | null }) {
   // Reload the file list when the document's asset references change — that is
   // what a new narration clip looks like from here.
   // Uploading does not touch the document, so the document-derived key cannot
-  // notice it — hence a counter the drop handler bumps.
+  // notice it — hence a counter the drop handler bumps. `reviewBump` is the
+  // same idea for review verdicts: status lives on the rows, and the
+  // `asset-reviewed` broadcast is what says they changed.
   const [assetReload, setAssetReload] = useState(0)
   const assets = useAssets(
     projectId,
-    `${assetReload}:${doc ? [...assetIdsInDoc(doc)].sort().join(',') : ''}`,
+    `${assetReload}:${reviewBump}:${doc ? [...assetIdsInDoc(doc)].sort().join(',') : ''}`,
   )
 
   // The editor column is a tab strip: the canvas is tab zero and never closes,
@@ -239,6 +240,7 @@ function Editor({ projectId }: { projectId: string | null }) {
         {offline && <span className="badge offline">offline demo — not a real project</span>}
         {error && <span className="badge error">{error}</span>}
         <span className="grow" />
+        {projectId && !offline && <ReviewModeToggle projectId={projectId} />}
         <button
           className={`icon-btn${panels.left ? ' on' : ''}`}
           onClick={() => togglePanel('left')}
@@ -349,6 +351,19 @@ function Editor({ projectId }: { projectId: string | null }) {
               </button>
             </div>
             <div className="panel-body">
+              {/* The queue sits above the inspector: an open review means an
+                  agent is stalled, and a stalled agent outranks a property
+                  sheet. */}
+              <Review
+                decisions={decisions}
+                plans={plans}
+                files={assets.files}
+                onAnswer={answerDecision}
+                onSeek={(t) => {
+                  setPlaying(false)
+                  setTime(t)
+                }}
+              />
               <Inspector
                 doc={doc}
                 currentScene={at?.scene ?? null}

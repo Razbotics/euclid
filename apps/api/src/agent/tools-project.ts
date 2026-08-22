@@ -9,6 +9,7 @@ import {
   outlineDoc,
 } from '@euclid/dsl'
 import { createProject, deleteProject, listProjects, projectContents } from '../services/projects'
+import { reviewModeOf } from '../services/plan'
 import { PROJECT_ID, SCENE_ID, COLOR } from './schemas'
 import { capability, said, CapabilityError } from './types'
 
@@ -132,7 +133,13 @@ export const projectTools = [
     args: z.object({ projectId: PROJECT_ID }),
     async handler(ctx, { projectId }) {
       const { doc } = await ctx.getDoc(projectId)
-      return said(outlineDoc(doc), { doc })
+      // Stated on the cheap read too, not only in orientation: an agent that
+      // joined mid-thread should meet the gate before its first refused call.
+      const gated = await reviewModeOf(ctx.env, projectId)
+      const banner = gated
+        ? 'review mode ON — paid generation needs an approved plan (get_plan / propose_plan)\n'
+        : ''
+      return said(banner + outlineDoc(doc), { doc, reviewMode: gated })
     },
   }),
 

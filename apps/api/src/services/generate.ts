@@ -12,6 +12,7 @@ import {
   type GenerationRequest,
 } from '../fal'
 import { storeAsset } from './assets'
+import { PlanGateError, chargePlanBudget, refundPlanBudget, reviewModeOf } from './plan'
 import type { Env } from '../env'
 
 export class GenerationError extends Error {
@@ -40,6 +41,10 @@ export interface GenerationJobRow {
   response_url: string
   asset_id: string | null
   error: string | null
+  /** The plan revision whose budget this drew from; NULL when ungated. */
+  plan_id: string | null
+  /** The asset this generation iterates on; copied onto the stored asset row. */
+  revises: string | null
   created_at: number
   updated_at: number
 }
@@ -57,6 +62,8 @@ export interface GenerationResult {
   error?: string
   /** Seconds waited inline before handing back a job id. */
   waitedSec?: number
+  /** Where the stored file starts with the human (plans/010). */
+  reviewStatus?: 'pending' | 'approved'
 }
 
 function providerOf(env: Env) {
@@ -104,6 +111,8 @@ export async function startGeneration(
     aspectRatio?: string
     durationSec?: number
     path?: string
+    /** The asset this generation replaces — recorded as lineage (plans/010). */
+    revises?: string
     extra?: Record<string, unknown>
   },
 ): Promise<GenerationResult> {
@@ -117,6 +126,29 @@ export async function startGeneration(
     throw new GenerationError('unknown_model', (e as Error).message, 400)
   }
 
+  if (args.revises) {
+    const prior = await env.DB.prepare(
+      'SELECT id, kind FROM assets WHERE id = ? AND project_id = ?',
+    )
+      .bind(args.revises, projectId)
+      .first<{ id: string; kind: string }>()
+    if (!prior) {
+      throw new GenerationError(
+        'revises_not_found',
+        `revises names asset ${args.revises}, which is not in this project — see list_assets`,
+        404,
+      )
+    }
+    if (prior.kind !== model.kind) {
+      throw new GenerationError(
+        'revises_kind_mismatch',
+        `revises names a ${prior.kind} asset, but ${model.name} generates ${model.kind} — ` +
+          `a revision replaces a file of its own kind`,
+        400,
+      )
+    }
+  }
+
   const cost = model.credits
   const balance = await getBalance(env, userId)
   if (balance < cost) {
@@ -124,6 +156,18 @@ export async function startGeneration(
       required: cost,
       balance,
     })
+  }
+
+  // The review-mode gate (plans/010): while it is on, this call must fit the
+  // approved plan's roster and remaining budget. Drawn down before the
+  // provider sees the request, so a refusal has no side effects; everything
+  // after this refunds the drawdown on failure, alongside the credits.
+  let planId: string | null = null
+  try {
+    planId = (await chargePlanBudget(env, projectId, model.kind, cost))?.planId ?? null
+  } catch (e) {
+    if (e instanceof PlanGateError) throw new GenerationError(e.code, e.message, e.status)
+    throw e
   }
 
   const req: GenerationRequest = {
@@ -140,6 +184,7 @@ export async function startGeneration(
   try {
     submitted = await provider.submit(model, req)
   } catch (e) {
+    if (planId) await refundPlanBudget(env, projectId, planId, cost)
     const detail = e instanceof FalError ? e.message : String(e)
     const status = e instanceof FalError && e.code === 'invalid_request' ? 400 : 502
     throw new GenerationError('submit_failed', detail, status)
@@ -149,11 +194,13 @@ export async function startGeneration(
   await adjustCredits(env, userId, -cost, `gen:${jobId} (${model.name})`)
 
   const now = Date.now()
+  // plan_id records which plan's budget this drew from, so a failure found
+  // minutes later during a poll can return the budget where it came from.
   await env.DB.prepare(
     `INSERT INTO generation_jobs
        (id, project_id, user_id, provider, model, kind, status, cost, prompt,
-        request_id, status_url, response_url, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)`,
+        request_id, status_url, response_url, plan_id, revises, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       jobId,
@@ -167,6 +214,8 @@ export async function startGeneration(
       submitted.requestId,
       submitted.statusUrl,
       submitted.responseUrl,
+      planId,
+      args.revises ?? null,
       now,
       now,
     )
@@ -234,6 +283,7 @@ export async function collectGeneration(
 
   const fail = async (detail: string): Promise<GenerationResult> => {
     await adjustCredits(env, job.user_id, job.cost, `refund:gen:${job.id} (${detail.slice(0, 60)})`)
+    if (job.plan_id) await refundPlanBudget(env, job.project_id, job.plan_id, job.cost)
     await env.DB.prepare(
       "UPDATE generation_jobs SET status = 'failed', error = ?, updated_at = ? WHERE id = ?",
     )
@@ -256,12 +306,21 @@ export async function collectGeneration(
     const bytes = await provider.fetchBytes(output.url)
     const ext = extensionFor(output.mime, model.kind)
     const name = suggestedPath ?? `/${model.kind}s/${slugify(job.prompt ?? model.name) || model.name}.${ext}`
+    // Provenance sets the initial review status (plans/010): a generated file
+    // is born pending while the project is in review mode — judged at collect
+    // time, since that is when the file exists to be judged.
+    const pending = await reviewModeOf(env, job.project_id)
     const stored = await storeAsset(env, job.project_id, {
       kind: model.kind,
       mime: output.mime,
       durationSec: output.durationSec ?? null,
       path: name,
       body: bytes,
+      review: {
+        status: pending ? 'pending' : 'approved',
+        ...(pending ? {} : { via: 'auto' as const, note: 'review mode off' }),
+        revises: job.revises,
+      },
     })
     await env.DB.prepare(
       "UPDATE generation_jobs SET status = 'done', asset_id = ?, updated_at = ? WHERE id = ?",
@@ -274,6 +333,7 @@ export async function collectGeneration(
       assetId: stored.assetId,
       path: stored.path,
       bytes: stored.bytes,
+      reviewStatus: pending ? 'pending' : 'approved',
       ...(output.durationSec ? { durationSec: output.durationSec } : {}),
     }
   } catch (e) {

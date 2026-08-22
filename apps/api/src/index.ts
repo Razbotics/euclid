@@ -17,6 +17,7 @@ import { createProject, deleteProject, listProjects, projectContents } from './s
 import {
   ASSET_KINDS,
   AssetInUse,
+  AssetLinkedElsewhere,
   AssetPathTaken,
   deleteAsset,
   listProjectAssets,
@@ -45,7 +46,15 @@ const app = new Hono<{ Bindings: Env; Variables: Vars }>()
 app.use(
   '/api/*',
   cors({
-    origin: (origin, c) => (origin === c.env.APP_ORIGIN ? origin : undefined),
+    // Production trusts exactly APP_ORIGIN. In dev the editor's port is
+    // negotiable — launch.json runs vite with autoPort so two sessions can
+    // work side by side — so under DEV_ALLOW_ANON (the flag that must never
+    // be set in production) any localhost origin is accepted too.
+    origin: (origin, c) =>
+      origin === c.env.APP_ORIGIN ||
+      (c.env.DEV_ALLOW_ANON === '1' && /^http:\/\/localhost(:\d+)?$/.test(origin))
+        ? origin
+        : undefined,
     credentials: true,
     // Without this the editor can read the bytes but not which variant it got:
     // a cross-origin response hides every header not on this list, so
@@ -145,6 +154,12 @@ app.post('/api/projects/:id/decisions/:decisionId/answer', (c) =>
   forwardToDO(c, c.req.param('id'), `/decisions/${c.req.param('decisionId')}`),
 )
 
+// Plans ride the DO like decisions (plans/010). Read-only over HTTP:
+// proposing goes through the propose_plan capability (which prices the
+// budget), and /plans/spend is never forwarded — the budget is drawn down
+// only by the services beside the debit.
+app.get('/api/projects/:id/plans', (c) => forwardToDO(c, c.req.param('id'), '/plans'))
+
 app.get('/api/projects/:id/doc', (c) => forwardToDO(c, c.req.param('id'), '/doc'))
 app.get('/api/projects/:id/events', (c) => forwardToDO(c, c.req.param('id'), '/events'))
 app.post('/api/projects/:id/ops', (c) => forwardToDO(c, c.req.param('id'), '/ops'))
@@ -189,12 +204,15 @@ app.get('/api/projects/:id/captions', async (c) => {
  */
 app.post('/api/projects/:id/scenes/:sceneId/narration/generate', async (c) => {
   try {
+    const body = (await c.req.json().catch(() => ({}))) as { text?: string; voiceId?: string }
     const result = await generateSceneNarration(
       c.env,
       c.req.param('id'),
       c.req.param('sceneId'),
       c.get('userId'),
-      (await c.req.json().catch(() => ({}))) as { text?: string; voiceId?: string },
+      // This route is the editor's: explicit text arriving here was typed by
+      // the human, whose own words never queue for their own approval.
+      { ...body, ...(body.text ? { textAuthor: 'human' as const } : {}) },
     )
     return c.json(result)
   } catch (e) {
@@ -518,12 +536,22 @@ app.get('/api/projects/:id/assets', async (c) => {
   }
 })
 
-/** Rename or move — both are just a new virtual path. */
+/** Rename or move — a new virtual path on this project's link (plans/010). */
 app.patch('/api/assets/:assetId', async (c) => {
-  const body = (await c.req.json().catch(() => null)) as { path?: unknown } | null
+  const body = (await c.req.json().catch(() => null)) as
+    | { path?: unknown; projectId?: unknown }
+    | null
   if (!body || typeof body.path !== 'string') return c.json({ error: 'path_required' }, 400)
   try {
-    return c.json(await moveAsset(c.env, c.req.param('assetId'), body.path, c.get('userId')))
+    return c.json(
+      await moveAsset(
+        c.env,
+        c.req.param('assetId'),
+        body.path,
+        c.get('userId'),
+        typeof body.projectId === 'string' ? body.projectId : undefined,
+      ),
+    )
   } catch (e) {
     if (e instanceof AccessError) return c.json({ error: e.message }, e.status as 403)
     if (e instanceof AssetPathTaken) {
@@ -536,10 +564,20 @@ app.patch('/api/assets/:assetId', async (c) => {
 app.delete('/api/assets/:assetId', async (c) => {
   try {
     return c.json(
-      await deleteAsset(c.env, c.req.param('assetId'), !!c.req.query('force'), c.get('userId')),
+      await deleteAsset(
+        c.env,
+        c.req.param('assetId'),
+        !!c.req.query('force'),
+        c.get('userId'),
+        c.req.query('projectId'),
+      ),
     )
   } catch (e) {
     if (e instanceof AccessError) return c.json({ error: e.message }, e.status as 403)
+    if (e instanceof AssetLinkedElsewhere) {
+      // No force here: those projects still show the file. Unlink is the remedy.
+      return c.json({ error: 'linked_elsewhere', projects: e.projects }, 409)
+    }
     if (e instanceof AssetInUse) {
       return c.json(
         {

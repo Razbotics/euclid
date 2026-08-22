@@ -13,6 +13,7 @@ import {
 } from '@euclid/dsl'
 import { COLOR, NODE_ID, NUMBERISH, PROJECT_ID, SCENE_ID } from './schemas'
 import { loadAsset } from '../services/assets'
+import { assertPlacementApproved, ensureLinked } from './review'
 import { capability, said, CapabilityError } from './types'
 
 /**
@@ -481,9 +482,6 @@ export const nodeTools = [
       await ctx.requireProject(projectId)
       const asset = await loadAsset(ctx.env, assetId)
       if (!asset) throw new CapabilityError(`asset ${assetId} not found`, 404)
-      if (asset.project_id !== projectId) {
-        throw new CapabilityError(`asset ${assetId} belongs to another project`, 403)
-      }
       if (asset.kind !== 'image') {
         throw new CapabilityError(
           `asset ${assetId} is ${asset.kind}, not an image. add_image draws stills; ` +
@@ -494,6 +492,14 @@ export const nodeTools = [
                 : 'video cannot be drawn yet.'),
         )
       }
+      await assertPlacementApproved(ctx, projectId, {
+        id: asset.id,
+        reviewStatus: asset.review_status,
+        reviewNote: asset.review_note,
+      })
+      // Any asset the user owns places here; placing is what links it in
+      // (plans/010 phase 4) — and the ownership check lives in the link.
+      const { freshlyLinked } = await ensureLinked(ctx, projectId, assetId)
       const id = newId('img')
       await ctx.submit(projectId, [
         op.addNode(
@@ -502,7 +508,11 @@ export const nodeTools = [
           parentId,
         ),
       ])
-      return said(`created image ${id} (${width}x${height}, ${fit}) from ${assetId}`, { nodeId: id })
+      return said(
+        `created image ${id} (${width}x${height}, ${fit}) from ${assetId}` +
+          (freshlyLinked ? ' — linked into this project from your library' : ''),
+        { nodeId: id },
+      )
     },
   }),
 
@@ -543,9 +553,6 @@ export const nodeTools = [
 
       const asset = await loadAsset(ctx.env, assetId)
       if (!asset) throw new CapabilityError(`asset ${assetId} not found`, 404)
-      if (asset.project_id !== projectId) {
-        throw new CapabilityError(`asset ${assetId} belongs to another project`, 403)
-      }
       if (asset.kind !== 'video') {
         throw new CapabilityError(
           `asset ${assetId} is ${asset.kind}, not video. add_video plays clips; ` +
@@ -556,6 +563,12 @@ export const nodeTools = [
                 : 'audio is placed on a lane with add_audio_clip.'),
         )
       }
+      await assertPlacementApproved(ctx, projectId, {
+        id: asset.id,
+        reviewStatus: asset.review_status,
+        reviewNote: asset.review_note,
+      })
+      await ensureLinked(ctx, projectId, assetId)
 
       const id = newId('vid')
       await ctx.submit(projectId, [

@@ -67,6 +67,38 @@ shape as `remove_asset`'s `force`.
 
 - Capabilities speak **intent** (`animate`, `morph_latex`); everything compiles
   to DSL ops applied through the shared reducer beside the Durable Object.
+- **Projects are born in review mode** (plans/010): paid generation is gated
+  behind a plan the human has approved. `propose_plan` submits scenes + an
+  asset roster with a **server-priced** credit budget and returns a
+  STOP-and-wait block; approval rides the ordinary decision path (an editor
+  click, or `record_answer`), and each gated `generate_*` /
+  `generate_narration` call must match the roster and fit the remaining
+  budget — a failed generation refunds its budget alongside its credits. The
+  gate refuses with the remedy (`propose_plan`, or a revision) rather than a
+  status code; `get_plan` shows the budget, `set_review_mode` lifts the gate
+  when the human says so. Free work is never gated.
+- **Generated files land pending the human's approval.** `request_review`
+  puts them in front of the human (one verdict per batch — group only what
+  stands or falls together); placement (`add_image`, `add_video`,
+  `import_mesh`, `add_audio_clip`) refuses anything unapproved, and
+  `render_video` is the last net, refusing while the document references an
+  unapproved asset. A rejection carries the human's note: regenerate with
+  `revises` pointing at the rejected file so the versions stay linked
+  (`list_assets` prints `[PENDING REVIEW]`, `[REJECTED: "note"]` and
+  `rev of <id>`). Narration reviews the **script, not the takes** — the
+  human's own words and re-synthesis of approved text auto-approve, and its
+  audio is attached on generation so timings exist to choreograph against;
+  the render net is what holds an unapproved take out of the export.
+- **Assets belong to the user; projects hold links** (plans/010 phase 4).
+  Anything generated or uploaded in any of the user's projects can be placed
+  in any other — placing links it in automatically, `list_assets` with
+  `scope: "library"` shows everything owned (marked with how many projects
+  link each), and `link_asset` stages a file without placing it, under a
+  per-project path. Links share the immutable file; nothing is copied.
+  `unlink_asset` takes a file out of one project (refused while that
+  document references it) without touching bytes; `remove_asset` deletes
+  outright and refuses — with no force — while other projects link it.
+  Deleting a project keeps any asset linked elsewhere, and says so.
 - Results are **compact text** — outlines, ids, time ranges — so agent
   iteration stays free. Only `generate_narration`, `render_video` and the
   `generate_*` family (image/video/audio/3d) cost

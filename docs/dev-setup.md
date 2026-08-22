@@ -115,6 +115,50 @@ an existing local DB won't pick up a new table on its own.
 > Until they exist the editor still works: a missing proxy falls back to the
 > original, which is the same tolerance the feature has in production.
 
+> **The review-mode columns** (plans/010) were added the same way on
+> 2026-08-22:
+>
+> ```sh
+> pnpm exec wrangler d1 execute euclid --local \
+>   --command "ALTER TABLE projects ADD COLUMN review_mode INTEGER NOT NULL DEFAULT 1"
+> pnpm exec wrangler d1 execute euclid --local \
+>   --command "ALTER TABLE generation_jobs ADD COLUMN plan_id TEXT"
+> ```
+>
+> Note the default: **existing projects become gated too**. That is the
+> product intent (review mode is the default, not an upgrade opt-in);
+> `set_review_mode` ungates any project the human wants left alone.
+
+> **The asset review columns** (plans/010 phase 2) were added the same way
+> on 2026-08-22:
+>
+> ```sh
+> pnpm exec wrangler d1 execute euclid --local \
+>   --command "ALTER TABLE assets ADD COLUMN review_status TEXT NOT NULL DEFAULT 'approved'"
+> ```
+>
+> ...and the same for `review_note TEXT`, `reviewed_at INTEGER`,
+> `reviewed_via TEXT`, `revises TEXT`, `tts_hash TEXT`, plus
+> `ALTER TABLE generation_jobs ADD COLUMN revises TEXT`. The default
+> backfills every existing asset to `approved` — they predate the gate, and
+> turning old projects red on migration day helps nobody.
+
+> **The library migration** (plans/010 phase 4) was applied the same way on
+> 2026-08-22 — a column, a backfill, and a table:
+>
+> ```sh
+> pnpm exec wrangler d1 execute euclid --local \
+>   --command "ALTER TABLE assets ADD COLUMN user_id TEXT"
+> pnpm exec wrangler d1 execute euclid --local \
+>   --command "UPDATE assets SET user_id = (SELECT p.user_id FROM projects p WHERE p.id = assets.project_id) WHERE user_id IS NULL"
+> pnpm exec wrangler d1 execute euclid --local --file=./schema.sql   # picks up project_assets
+> pnpm exec wrangler d1 execute euclid --local \
+>   --command "INSERT OR IGNORE INTO project_assets (project_id, asset_id, path, linked_at) SELECT project_id, id, path, created_at FROM assets"
+> ```
+>
+> Until the backfills run, tenancy falls back to the old join (COALESCE) and
+> a project without link rows lists as empty — run all four.
+
 > **Gotcha:** that idempotence covers new *tables*, not new *columns*.
 > `CREATE TABLE IF NOT EXISTS` is a no-op on an existing table, so a column
 > added to `schema.sql` never reaches a database that already has the table.
@@ -136,6 +180,17 @@ pnpm dev:mcp    # :8788 — MCP worker (service-binds to api; start api first)
 pnpm dev:web    # :5173 — `/` lists projects; ?project=<id> opens one; ?demo=1 = offline demo
                 #        editor: explorer | canvas | scene; ⌘B / ⌘⌥B collapse the
                 #        sides, drag the seams to resize (double-click to reset)
+
+# The editor's and render worker's ports are negotiable, not fixed
+# (2026-08-22). launch.json runs `web` and `render-worker` with autoPort on,
+# so a second session beside one already holding 5173/8790 lands on another
+# port instead of failing; both follow the launcher's PORT env (vite.config.ts
+# and render-worker.ts) rather than colliding. CORS keeps up because the API
+# accepts any http://localhost:* origin when DEV_ALLOW_ANON=1 — in production
+# that flag is never set and exactly APP_ORIGIN is trusted, as before. A
+# render worker parked off 8790 still drains the render queue; serving
+# preview_frames stays with whichever worker holds the API's PREVIEW_ORIGIN,
+# which is the listener-is-best-effort rule the worker already lives by.
 
 # The render backend: drains the render queue AND serves preview_frames on
 # :8790. Without it, render_video jobs stay `queued` forever with the credits

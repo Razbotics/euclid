@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { applyOps, type Decision, type EuclidDoc, type Op, type OpEnvelope } from '@euclid/dsl'
+import {
+  applyOps,
+  type Decision,
+  type EuclidDoc,
+  type Op,
+  type OpEnvelope,
+  type ProjectPlan,
+} from '@euclid/dsl'
 import { demoDoc } from './demo'
 
 const API = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8787'
@@ -13,6 +20,14 @@ export interface ProjectState {
   /** Questions the agent has put to the human, oldest first. */
   decisions: Decision[]
   answerDecision: (id: string, answer: { optionId?: string; note?: string }) => void
+  /** The agent's proposed plans (plans/010), oldest revision first. */
+  plans: ProjectPlan[]
+  /**
+   * Bumped on every `asset-reviewed` broadcast. Review status lives on the
+   * asset rows, which this hook does not own — the counter is how the file
+   * list knows to refetch without a second socket.
+   */
+  reviewBump: number
 }
 
 /**
@@ -28,6 +43,8 @@ export function useProject(projectId: string | null): ProjectState {
   const versionRef = useRef(0)
   const [version, setVersion] = useState(0)
   const [decisions, setDecisions] = useState<Decision[]>([])
+  const [plans, setPlans] = useState<ProjectPlan[]>([])
+  const [reviewBump, setReviewBump] = useState(0)
   const wsRef = useRef<WebSocket | null>(null)
 
   /** Upsert by id — the same decision arrives again when it gets answered. */
@@ -38,6 +55,15 @@ export function useProject(projectId: string | null): ProjectState {
       const next = [...list]
       next[i] = d
       return next
+    })
+  }, [])
+
+  /** Same shape for plans: a plan arrives again whenever its status moves. */
+  const upsertPlan = useCallback((p: ProjectPlan) => {
+    setPlans((list) => {
+      const i = list.findIndex((x) => x.id === p.id)
+      const next = i === -1 ? [...list, p] : list.map((x, j) => (j === i ? p : x))
+      return next.sort((a, b) => a.revision - b.revision)
     })
   }, [])
 
@@ -59,12 +85,17 @@ export function useProject(projectId: string | null): ProjectState {
     refetch()
       .then(async () => {
         if (cancelled) return
-        // Questions asked before this editor connected still need answering.
-        const res = await fetch(`${API}/api/projects/${projectId}/decisions`, {
-          credentials: 'include',
-        })
-        if (res.ok && !cancelled) {
-          setDecisions(((await res.json()) as { decisions: Decision[] }).decisions)
+        // Questions asked before this editor connected still need answering,
+        // and a plan proposed before it opened is still waiting for approval.
+        const [decRes, planRes] = await Promise.all([
+          fetch(`${API}/api/projects/${projectId}/decisions`, { credentials: 'include' }),
+          fetch(`${API}/api/projects/${projectId}/plans`, { credentials: 'include' }),
+        ])
+        if (decRes.ok && !cancelled) {
+          setDecisions(((await decRes.json()) as { decisions: Decision[] }).decisions)
+        }
+        if (planRes.ok && !cancelled) {
+          setPlans(((await planRes.json()) as { plans: ProjectPlan[] }).plans)
         }
       })
       .then(() => {
@@ -77,9 +108,18 @@ export function useProject(projectId: string | null): ProjectState {
             version?: number
             envelope?: OpEnvelope
             decision?: Decision
+            plan?: ProjectPlan
           }
           if (msg.type === 'decision' && msg.decision) {
             upsertDecision(msg.decision)
+            return
+          }
+          if (msg.type === 'plan' && msg.plan) {
+            upsertPlan(msg.plan)
+            return
+          }
+          if (msg.type === 'asset-reviewed') {
+            setReviewBump((n) => n + 1)
             return
           }
           if (msg.type !== 'ops' || !msg.envelope || msg.version === undefined) return
@@ -105,7 +145,7 @@ export function useProject(projectId: string | null): ProjectState {
       cancelled = true
       ws?.close()
     }
-  }, [projectId, refetch, upsertDecision])
+  }, [projectId, refetch, upsertDecision, upsertPlan])
 
   const answerDecision = useCallback(
     (id: string, answer: { optionId?: string; note?: string }) => {
@@ -154,5 +194,5 @@ export function useProject(projectId: string | null): ProjectState {
     [offline, projectId, refetch],
   )
 
-  return { doc, version, offline, error, submit, decisions, answerDecision }
+  return { doc, version, offline, error, submit, decisions, answerDecision, plans, reviewBump }
 }

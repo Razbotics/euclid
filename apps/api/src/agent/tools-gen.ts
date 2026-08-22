@@ -31,6 +31,8 @@ const WAITING = [
   'Fast models are waited for inline and return the asset directly. Anything slower comes back `pending` with a job id — call get_generation_status to collect it. Polling is free and cannot double-charge.',
   '',
   'A generation that fails refunds its credits in full, so a failure costs time and nothing else.',
+  '',
+  'In review mode the file lands **pending the human\'s approval** — call request_review on it and wait before placing it. When iterating on a rejected file, pass `revises` with the old asset id so the versions stay linked and the human can compare them.',
 ].join('\n')
 
 const MODEL_NAMES = FAL_MODELS.map((m) => m.name) as [string, ...string[]]
@@ -42,6 +44,10 @@ const genArgs = {
     .string()
     .optional()
     .describe('where to file it, e.g. /images/hero.jpg; defaults to a name from the prompt'),
+  revises: z
+    .string()
+    .optional()
+    .describe('asset id this replaces — links the versions so the review UI can compare them'),
 }
 
 export const genTools = [
@@ -65,12 +71,13 @@ export const genTools = [
       model: z.enum(MODEL_NAMES).default('flux-schnell'),
       aspectRatio: z.enum(['1:1', '16:9', '9:16', '4:3', '3:4']).default('1:1'),
     }),
-    async handler(ctx, { projectId, prompt, model, aspectRatio, path }) {
+    async handler(ctx, { projectId, prompt, model, aspectRatio, path, revises }) {
       const r = await startGeneration(ctx.env, projectId, ctx.userId, {
         model,
         prompt,
         aspectRatio,
         ...(path ? { path } : {}),
+        ...(revises ? { revises } : {}),
       }).catch(asCapabilityError)
       return said(describe(r), r)
     },
@@ -95,13 +102,14 @@ export const genTools = [
       aspectRatio: z.enum(['16:9', '9:16', '1:1']).optional(),
       durationSec: z.number().positive().max(30).optional().describe('where the model accepts one'),
     }),
-    async handler(ctx, { projectId, prompt, model, aspectRatio, durationSec, path }) {
+    async handler(ctx, { projectId, prompt, model, aspectRatio, durationSec, path, revises }) {
       const r = await startGeneration(ctx.env, projectId, ctx.userId, {
         model,
         prompt,
         ...(aspectRatio ? { aspectRatio } : {}),
         ...(durationSec ? { durationSec } : {}),
         ...(path ? { path } : {}),
+        ...(revises ? { revises } : {}),
       }).catch(asCapabilityError)
       return said(describe(r), r)
     },
@@ -125,12 +133,13 @@ export const genTools = [
       model: z.enum(MODEL_NAMES).default('stable-audio'),
       durationSec: z.number().positive().max(120).default(30),
     }),
-    async handler(ctx, { projectId, prompt, model, durationSec, path }) {
+    async handler(ctx, { projectId, prompt, model, durationSec, path, revises }) {
       const r = await startGeneration(ctx.env, projectId, ctx.userId, {
         model,
         prompt,
         durationSec,
         ...(path ? { path } : {}),
+        ...(revises ? { revises } : {}),
       }).catch(asCapabilityError)
       return said(describe(r), r)
     },
@@ -159,13 +168,18 @@ export const genTools = [
       prompt: z.string().default('').describe('optional hint; most image-to-3D models ignore it'),
       model: z.enum(MODEL_NAMES).default('trellis'),
       path: z.string().optional().describe('e.g. /models/statue.glb'),
+      revises: z
+        .string()
+        .optional()
+        .describe('asset id this replaces — links the versions for review'),
     }),
-    async handler(ctx, { projectId, imageUrl, prompt, model, path }) {
+    async handler(ctx, { projectId, imageUrl, prompt, model, path, revises }) {
       const r = await startGeneration(ctx.env, projectId, ctx.userId, {
         model,
         prompt,
         imageUrl,
         ...(path ? { path } : {}),
+        ...(revises ? { revises } : {}),
       }).catch(asCapabilityError)
       return said(describe(r), r)
     },
@@ -219,10 +233,15 @@ function describe(r: {
   bytes?: number
   error?: string
   waitedSec?: number
+  reviewStatus?: 'pending' | 'approved'
 }): string {
   if (r.status === 'done') {
     const kb = r.bytes ? `, ${Math.round(r.bytes / 1024)}KB` : ''
-    return `generated with ${r.model}: ${r.path ?? 'stored'}${kb}, cost ${r.cost} credits (asset ${r.assetId})`
+    const review =
+      r.reviewStatus === 'pending'
+        ? ' — PENDING REVIEW: call request_review and wait before placing it'
+        : ''
+    return `generated with ${r.model}: ${r.path ?? 'stored'}${kb}, cost ${r.cost} credits (asset ${r.assetId})${review}`
   }
   if (r.status === 'failed') {
     return `${r.model} failed: ${r.error} — the ${r.cost} credits were refunded`

@@ -40,8 +40,9 @@ export function viewerKind(mime: string, path: string): ViewerKind {
   return 'binary'
 }
 
-/** One glyph per kind, so a tree scans as fast as a VS Code explorer does. */
-export function fileGlyph(file: ProjectFile): string {
+/** One glyph per kind, so a tree scans as fast as a VS Code explorer does.
+ *  Takes just what it reads, so library rows qualify too. */
+export function fileGlyph(file: { mime: string; path: string }): string {
   switch (viewerKind(file.mime, file.path)) {
     case 'image':
       return '▣'
@@ -209,7 +210,7 @@ interface GltfSummary {
  * dependency is the question that plan's own table asks about every
  * generation: how many triangles did we get, and does it carry materials?
  */
-function ModelView({ url, mime, path }: { url: string; mime: string; path: string }) {
+export function ModelView({ url, mime, path }: { url: string; mime: string; path: string }) {
   const [summary, setSummary] = useState<GltfSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
   const isJson = mime === 'model/gltf+json' || path.toLowerCase().endsWith('.gltf')

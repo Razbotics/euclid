@@ -338,6 +338,66 @@ main.workbench { display: flex; flex: 1; min-height: 0; }
 .decision-resolved { margin: 0; font-size: 12px; color: #9aa3ad; }
 .decision-via { color: #5c646d; font-size: 10px; }
 
+/* ---------- the review queue (plans/010) ---------- */
+
+/* Plan cards: the outline the human is approving, kept scannable. */
+.plan-scenes { margin: 4px 0 8px; padding-left: 18px; font-size: 12px; color: #c7ccd2; }
+.plan-scenes li { margin-bottom: 4px; line-height: 1.4; }
+.plan-beats { color: #9aa3ad; }
+.plan-draft { margin: 2px 0 0; font-size: 11px; color: #9aa3ad; font-style: italic; }
+.plan-assets { margin: 0 0 8px; padding-left: 18px; font-size: 11px; color: #c7ccd2; }
+.plan-assets li { margin-bottom: 2px; }
+.plan-credits { color: #d9b26a; }
+.plan-total { margin: 0 0 8px; font-size: 12px; color: #e6e8eb; }
+.plan-total .muted { font-size: 10px; }
+
+/* Approve is green and singular; request-changes is a note first, a button
+   second — the note is what the agent iterates against. */
+.review-verdict { display: flex; flex-direction: column; gap: 6px; }
+.review-approve {
+  background: #1d4030; color: #b8e6c8; border: 1px solid #2f6a4a;
+  border-radius: 4px; padding: 7px 9px; font-size: 12px; cursor: pointer; text-align: left;
+}
+.review-approve:hover { background: #235239; border-color: #3d8a5f; }
+.review-verdict .decision-note { margin-top: 0; }
+
+/* Asset previews inside a card: contained, never widening the column. */
+.review-asset { margin-bottom: 8px; }
+.review-thumb img { max-width: 100%; max-height: 180px; display: block; }
+.review-thumb {
+  background:
+    repeating-conic-gradient(#20262d 0% 25%, #171b20 0% 50%) 0 0 / 16px 16px;
+  border-radius: 4px; padding: 4px; display: flex; justify-content: center;
+}
+.review-media { width: 100%; max-height: 200px; }
+.review-file-meta { margin: 4px 0 0; font-size: 10px; color: #7d868f; }
+
+/* The lineage strip: what was turned down beside what replaced it. */
+.review-lineage { display: flex; gap: 8px; }
+.review-lineage figure { flex: 1; min-width: 0; margin: 0; }
+.review-lineage figcaption {
+  font-size: 10px; color: #9aa3ad; margin-bottom: 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.review-lineage figure:first-child { opacity: 0.75; }
+
+/* Explorer: review state is a dot — approved earns nothing. */
+.review-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex: none; display: inline-block;
+}
+.review-dot.pending { background: #d9b26a; }
+.review-dot.rejected { background: #c0564f; }
+
+/* Header chip: on = the gate is protecting the human's budget. */
+.review-toggle.on { color: #8fd6a8; border-color: #2f6a4a; }
+
+/* The library: assets from the user's other projects, one ⊕ from appearing
+   here. Visually quieter than the project's own files. */
+.library { margin-top: 10px; border-top: 1px solid #1d2229; padding-top: 6px; }
+.library-count { margin-left: 6px; font-size: 10px; color: #5c646d; }
+.library-file { opacity: 0.8; }
+.library-file:hover { opacity: 1; }
+
 /* ---------- project list ---------- */
 
 header .back {

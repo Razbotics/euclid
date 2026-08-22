@@ -3,6 +3,8 @@ import { adjustCredits, getBalance } from '../billing'
 import { docOf, requireProjectAccess, slugify, submitOps } from '../shared'
 import { elevenLabsProvider, TtsError } from '../tts'
 import { storeAsset } from './assets'
+import { PlanGateError, chargePlanBudget, refundPlanBudget, reviewModeOf } from './plan'
+import { hasApprovedTts, narrationAuthor, ttsHash } from './review'
 import type { Env } from '../env'
 
 export class NarrationError extends Error {
@@ -25,6 +27,10 @@ export interface NarrationResult {
   sceneDuration: number
   fits: boolean
   warning?: string
+  /** Where the take starts with the human (plans/010). */
+  reviewStatus: 'pending' | 'approved'
+  /** Why it auto-approved, when it did. */
+  reviewReason?: string
 }
 
 /**
@@ -45,7 +51,16 @@ export async function generateSceneNarration(
   projectId: string,
   sceneId: string,
   userId: string,
-  body: { text?: string; voiceId?: string } = {},
+  body: {
+    text?: string
+    voiceId?: string
+    /**
+     * Who wrote an explicitly-passed `text` — 'human' from the editor's
+     * narration panel, 'agent' from the capability. When text comes from the
+     * document instead, authorship is read from the event log.
+     */
+    textAuthor?: 'human' | 'agent'
+  } = {},
 ): Promise<NarrationResult> {
   await requireProjectAccess(env, projectId, userId)
   const doc: EuclidDoc | null = await docOf(env, projectId)
@@ -73,11 +88,52 @@ export async function generateSceneNarration(
     })
   }
 
+  // Narration review is script review (plans/010): decide where this take
+  // will start with the human before anything is spent. Approval attaches to
+  // the (voice, text) pair — re-synthesis of approved text is not a new
+  // creative decision — and the human's own words never queue for their own
+  // approval. Unknown authorship goes to review: defaulting it to approved
+  // would be the gate approving what nobody read.
+  const hash = await ttsHash(voiceId, text)
+  let review: { status: 'pending' | 'approved'; via?: 'auto'; note?: string } = {
+    status: 'pending',
+  }
+  if (!(await reviewModeOf(env, projectId))) {
+    review = { status: 'approved', via: 'auto', note: 'review mode off' }
+  } else if (await hasApprovedTts(env, projectId, hash)) {
+    review = { status: 'approved', via: 'auto', note: 're-synthesis of approved text' }
+  } else {
+    const author = body.text
+      ? body.textAuthor === 'human'
+        ? 'user'
+        : 'agent'
+      : await narrationAuthor(env, projectId, sceneId)
+    if (author === 'user') {
+      review = { status: 'approved', via: 'auto', note: 'human-authored script' }
+    }
+  }
+  // Regenerating a scene's narration naturally revises the take it replaces;
+  // the predecessor is knowable here, so lineage needs no argument.
+  const revises = scene.narration?.audio?.assetId ?? null
+
+  // The review-mode gate (plans/010): narration is a paid generation like any
+  // other, so it draws down the approved plan's budget under the same rule.
+  let planId: string | null = null
+  try {
+    planId = (await chargePlanBudget(env, projectId, 'narration', cost))?.planId ?? null
+  } catch (e) {
+    if (e instanceof PlanGateError) throw new NarrationError(e.code, e.message, e.status)
+    throw e
+  }
+
   // One id ties the debit and any refund together in the ledger, the same way
   // a job id does for renders.
   const ttsId = crypto.randomUUID()
   await adjustCredits(env, userId, -cost, `tts:${ttsId} (${sceneId})`)
-  const refund = (why: string) => adjustCredits(env, userId, cost, `refund:${ttsId} (${why})`)
+  const refund = async (why: string) => {
+    await adjustCredits(env, userId, cost, `refund:${ttsId} (${why})`)
+    if (planId) await refundPlanBudget(env, projectId, planId, cost)
+  }
 
   let synthesis
   try {
@@ -99,6 +155,7 @@ export async function generateSceneNarration(
         // rather than a pile of uuids.
         path: `/narration/${slugify(scene.name)}.mp3`,
         body: synthesis.audio,
+        review: { ...review, revises, ttsHash: hash },
       })
     ).assetId
     await submitOps(
@@ -131,6 +188,8 @@ export async function generateSceneNarration(
     words: synthesis.words.length,
     sceneDuration: scene.duration,
     fits,
+    reviewStatus: review.status,
+    ...(review.note ? { reviewReason: review.note } : {}),
     ...(fits
       ? {}
       : {
