@@ -39,7 +39,13 @@ the copy that cannot go stale.
   /api/projects/:id/assets`) rather than a tool. It takes two callers now:
   server-side producers with the internal key, and **the owning user**, since
   plans/003 chose "users bring their own media" and upload is therefore the
-  whole ingest front door. The agent sees the result through `list_assets`.
+  whole ingest front door. The agent sees the result through `list_assets`,
+  which reports what the background analysis has learned so far — dimensions
+  and duration once probed, and `proxy 960x540` / `proxy pending` for a video
+  the editor will scrub from a stand-in. **No capability was added for
+  proxies**, deliberately: a proxy changes how a file behaves for a *person*
+  scrubbing and nothing about what an agent builds or exports, so it is a
+  property on the listing rather than a tool to call.
 
 One capability returns an **image**: `preview_frames` hands back a contact
 sheet as an MCP image block beside its caption — the only way an agent can see

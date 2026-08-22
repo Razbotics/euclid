@@ -41,12 +41,13 @@
 import './load-env'
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:http'
-import { writeFile, unlink } from 'node:fs/promises'
+import { readFile, writeFile, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import type { EuclidDoc } from '@euclid/dsl'
+import { needsProxy, proxySize, type EuclidDoc } from '@euclid/dsl'
 import { PreviewCapturer } from './sheet'
+import { buildProxyArgs } from './proxy'
 
 const API_URL = process.env.API_URL ?? 'http://localhost:8787'
 const KEY = process.env.INTERNAL_API_KEY ?? 'dev-internal-key'
@@ -384,6 +385,96 @@ async function detectShotsOne(): Promise<boolean> {
   return true
 }
 
+/**
+ * Make one scrubbing proxy, if a video is waiting for one.
+ *
+ * The most expensive thing this worker does on idle time: probing reads a
+ * header, shot detection decodes every frame, and this decodes *and re-encodes*
+ * every frame. So it runs last, and a ten-minute upload being transcoded must
+ * never be the reason a file uploaded after it is still unmeasured.
+ *
+ * What comes back is deliberately not a new asset. A clip references one asset
+ * and the API decides per request which bytes serve it — see the resolver on
+ * `GET /api/assets/:id`. The export never asks for these bytes.
+ */
+async function transcodeOne(): Promise<boolean> {
+  const res = await fetch(`${API_URL}/api/assets/proxy/next`, { headers })
+  if (!res.ok) return false
+  const { asset } = (await res.json()) as {
+    asset: {
+      id: string
+      kind: string
+      bytes: number
+      width: number | null
+      height: number | null
+      fps: number | null
+    } | null
+  }
+  if (!asset) return false
+
+  const settle = async (query: string) => {
+    await fetch(`${API_URL}/api/assets/${asset.id}/proxy${query}`, { method: 'PUT', headers })
+  }
+
+  // The predicate is shared with everything that reports on a proxy, so a file
+  // the worker declined and a file it failed on stay distinguishable without
+  // storing a reason.
+  if (!needsProxy(asset)) {
+    await settle('?none=1')
+    console.log(
+      `  proxy ${asset.id.slice(0, 8)}: none needed ` +
+        `(${asset.width}x${asset.height}, ${Math.round(asset.bytes / 1024)}KB)`,
+    )
+    return true
+  }
+
+  const size = proxySize(asset.width!, asset.height!)
+  const src = join(tmpdir(), `euclid-proxy-src-${asset.id}`)
+  const out = join(tmpdir(), `euclid-proxy-${asset.id}.mp4`)
+  let made: Buffer | null = null
+  const started = Date.now()
+  try {
+    const bytes = await fetch(`${API_URL}/api/assets/${asset.id}`, { headers })
+    if (!bytes.ok) throw new Error(`fetch ${bytes.status}`)
+    await writeFile(src, Buffer.from(await bytes.arrayBuffer()))
+
+    await new Promise<void>((resolve, reject) => {
+      const ff = spawn('ffmpeg', buildProxyArgs(src, out, size, asset.fps))
+      let stderr = ''
+      ff.stderr.on('data', (d) => (stderr = (stderr + d).slice(-2000)))
+      ff.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(`ffmpeg ${code}: ${stderr.trim().slice(-300)}`)),
+      )
+      ff.on('error', reject)
+    })
+    made = await readFile(out)
+  } catch (e) {
+    // Settled below with nothing stored. A file ffmpeg cannot re-encode still
+    // plays from the original — slower to scrub, which is a cost, not a break —
+    // and retrying it on every poll would spend the worker on it forever.
+    console.error(`  proxy ${asset.id.slice(0, 8)} failed: ${(e as Error).message}`)
+  } finally {
+    await unlink(src).catch(() => {})
+    await unlink(out).catch(() => {})
+  }
+
+  if (!made) {
+    await settle('?none=1')
+    return true
+  }
+  await fetch(`${API_URL}/api/assets/${asset.id}/proxy`, {
+    method: 'PUT',
+    headers: { ...headers, 'content-type': 'video/mp4' },
+    body: new Uint8Array(made),
+  })
+  console.log(
+    `  proxy ${asset.id.slice(0, 8)}: ${size.width}x${size.height}, ` +
+      `${Math.round(asset.bytes / 1024)}KB → ${Math.round(made.byteLength / 1024)}KB ` +
+      `in ${((Date.now() - started) / 1000).toFixed(1)}s`,
+  )
+  return true
+}
+
 console.log(`render worker polling ${API_URL} every ${POLL_MS}ms`)
 let done = 0
 while (running) {
@@ -409,6 +500,14 @@ while (running) {
     if (!did) {
       did = await detectShotsOne().catch((e) => {
         console.error(`shots error: ${(e as Error).message}`)
+        return false
+      })
+    }
+    // Last, because it is the only one of the three that re-encodes. The order
+    // is the cost order: read a header, decode, decode and encode.
+    if (!did) {
+      did = await transcodeOne().catch((e) => {
+        console.error(`proxy error: ${(e as Error).message}`)
         return false
       })
     }

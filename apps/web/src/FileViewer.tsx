@@ -63,6 +63,10 @@ export function fileGlyph(file: ProjectFile): string {
 export function FileViewer({ file }: { file: ProjectFile }) {
   const url = assetUrl(file.id)
   const kind = viewerKind(file.mime, file.path)
+  // Watching is scrubbing, so the player gets the proxy — but `open` and `save`
+  // stay on `url`, because handing someone a downscaled file under their own
+  // filename would be a lie about what they uploaded.
+  const playUrl = kind === 'video' ? assetUrl(file.id, 'proxy') : url
   // Pixel dimensions are only known once the image decodes, and they belong
   // with the other facts about the file rather than floating over it.
   const [dims, setDims] = useState<string | null>(null)
@@ -89,7 +93,7 @@ export function FileViewer({ file }: { file: ProjectFile }) {
       </div>
       <div className={`file-view-body${kind === 'text' || kind === 'model' ? ' scroll' : ''}`}>
         {kind === 'image' && <ImageView url={url} onDims={setDims} />}
-        {kind === 'video' && <video className="media" src={url} controls playsInline />}
+        {kind === 'video' && <video className="media" src={playUrl} controls playsInline />}
         {kind === 'audio' && (
           <div className="audio-view">
             <audio src={url} controls />

@@ -3,6 +3,7 @@ import { Application, Assets, Texture } from 'pixi.js'
 import { EuclidStage } from '@euclid/engine/pixi'
 import type { EuclidDoc } from '@euclid/dsl'
 import { MathJaxTexProvider } from './tex'
+import { assetUrl } from './useAssets'
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8787'
 
@@ -15,6 +16,13 @@ const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8787'
  * The editor seeks a blob URL of the whole asset rather than re-fetching per
  * frame — scrubbing asks for a new second constantly, and a request each time
  * would be both slow and a different kind of answer than the export gives.
+ *
+ * **And it asks for the proxy.** Downloading the file whole is what makes the
+ * source's size the wait before anything appears, and seeking inside it is what
+ * makes the source's keyframe spacing the wait on every scrub after that; a
+ * proxy is built to bound both. This is the only surface that does ask — the
+ * export and `preview_frames` go through `preload.ts`, which reads the
+ * original, so what an agent checks and what ships stay the same pixels.
  */
 const videoEls = new Map<string, Promise<HTMLVideoElement>>()
 const snapshot = document.createElement('canvas')
@@ -24,7 +32,7 @@ const sessionVideoProvider = {
     let elp = videoEls.get(assetId)
     if (!elp) {
       elp = (async () => {
-        const res = await fetch(`${API}/api/assets/${assetId}`, { credentials: 'include' })
+        const res = await fetch(assetUrl(assetId, 'proxy'), { credentials: 'include' })
         if (!res.ok) throw new Error(`asset ${assetId}: ${res.status}`)
         const el = document.createElement('video')
         el.src = URL.createObjectURL(await res.blob())

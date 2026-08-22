@@ -17,9 +17,17 @@ export interface AssetsState {
   remove: (file: ProjectFile) => Promise<void>
 }
 
-/** Where the bytes live. Same URL the narration player and the tabs use. */
-export function assetUrl(id: string): string {
-  return `${API}/api/assets/${id}`
+/**
+ * Where the bytes live. Same URL the narration player and the tabs use.
+ *
+ * `variant: 'proxy'` asks for the low-resolution, densely-keyframed copy — the
+ * right answer for anything a *person* scrubs, and the wrong one for anything
+ * that has to match the export. The API falls back to the original when no
+ * proxy exists, so asking is always safe; what is not safe is asking from a
+ * capture path, which is why `preload.ts` never does.
+ */
+export function assetUrl(id: string, variant?: 'proxy'): string {
+  return `${API}/api/assets/${id}${variant ? `?variant=${variant}` : ''}`
 }
 
 /**

@@ -27,6 +27,83 @@ export interface AssetRecord {
   /** Seconds at which the picture cuts. Null until the file has been watched. */
   shots?: number[] | null
   shotsAt?: number | null
+  /**
+   * Size of the scrubbing proxy, once one exists.
+   *
+   * Null with `proxyAt` null means "not transcoded yet"; null with `proxyAt`
+   * set means the worker considered it and stored nothing. There is no third
+   * state and no error column, because a missing proxy is never broken — the
+   * original is served instead, so the only consequence is that scrubbing is
+   * slower.
+   */
+  proxyBytes?: number | null
+  proxyAt?: number | null
+}
+
+/**
+ * The scrubbing proxy format, as numbers rather than as ffmpeg flags.
+ *
+ * A proxy exists so the **editor** can scrub real footage; the export and
+ * `preview_frames` always read the original. Two separate things make scrubbing
+ * slow and this addresses both:
+ *
+ * - **Bytes.** The editor fetches a clip whole and seeks inside a blob URL, so
+ *   the file size is the wait before the first frame appears at all.
+ * - **Keyframe distance**, which is the less obvious half and often the larger
+ *   one. Seeking to a frame means decoding forward from the keyframe before it,
+ *   so footage carrying a ten-second GOP — ordinary for a camera original —
+ *   costs up to ten seconds of decoding per scrub. A proxy keyframed every
+ *   second bounds that, regardless of how small the picture is.
+ */
+export const PROXY = {
+  /** Tallest a proxy gets. Sources at or under this are only re-keyframed. */
+  maxHeight: 540,
+  /**
+   * A source no larger than this is already comfortable to scrub, so
+   * transcoding it would spend worker time to save nothing.
+   */
+  maxDirectBytes: 8 * 1024 * 1024,
+  /** Visually adequate at 540p and small; this is a preview, not a deliverable. */
+  crf: 28,
+  /** Seconds between keyframes — the number the seek latency is bounded by. */
+  gopSeconds: 1,
+} as const
+
+/**
+ * Whether this file is worth transcoding.
+ *
+ * Pure and shared, so the worker's decision and every read-out of it come from
+ * one predicate. That is what makes the *absence* of a stored reason workable:
+ * a row settled (`proxyAt` set) with no proxy while this still returns true is
+ * a transcode that failed, and a row settled with this returning false is one
+ * that was never wanted. Neither needs a column — the same argument
+ * `assetIdsInDoc` makes for walking a document instead of keeping a list.
+ */
+export function needsProxy(
+  a: Pick<AssetRecord, 'kind' | 'width' | 'height' | 'bytes'>,
+): boolean {
+  if (a.kind !== 'video') return false
+  // Nothing measured means nothing to scale to. An unprobed file is not
+  // refused here so much as not yet askable.
+  if (!a.width || !a.height) return false
+  return a.height > PROXY.maxHeight || a.bytes > PROXY.maxDirectBytes
+}
+
+/** Round to an even number — H.264 cannot encode an odd dimension in yuv420p. */
+const even = (n: number) => Math.max(2, Math.round(n / 2) * 2)
+
+/**
+ * Proxy dimensions for a source, computed rather than left to an ffmpeg
+ * expression so they are testable without spawning anything — the same split
+ * `buildFfmpegArgs` makes for the mux.
+ *
+ * **Scales down only.** A file that qualifies on bytes alone (long, or a high
+ * bitrate at a modest size) keeps its dimensions and gains the re-encode; a
+ * proxy that upscaled would be larger than the thing it stands in for.
+ */
+export function proxySize(width: number, height: number): { width: number; height: number } {
+  const scale = Math.min(1, PROXY.maxHeight / height)
+  return { width: even(width * scale), height: even(height * scale) }
 }
 
 /** One line of measured facts about a file, for a listing. */
@@ -35,6 +112,15 @@ export function describeMedia(a: AssetRecord): string {
   if (a.width && a.height) bits.push(`${a.width}x${a.height}`)
   if (a.durationSec) bits.push(`${a.durationSec.toFixed(2)}s`)
   if (a.fps) bits.push(`${Math.round(a.fps)}fps`)
+  // The proxy affects how a file behaves in the editor and nothing about how it
+  // exports, so it is reported as a property of the file rather than as a
+  // status somebody has to go and look up.
+  if (a.probedAt && needsProxy(a)) {
+    const size = a.width && a.height ? proxySize(a.width, a.height) : null
+    if (a.proxyBytes && size) bits.push(`proxy ${size.width}x${size.height}`)
+    else if (!a.proxyAt) bits.push('proxy pending')
+    else bits.push('no proxy (transcode failed)')
+  }
   // "not probed yet" is worth saying: a clip with no duration cannot be placed
   // on a lane, and the reason is timing rather than a broken file.
   if (bits.length === 0 && a.kind !== 'model' && !a.probedAt) return 'not measured yet'

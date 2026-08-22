@@ -362,13 +362,26 @@ capability as a document contact sheet.
       the **TTS adapter extended**, because ElevenLabs already returns
       word-level timings in the shape `anchorTime` and `cuesFromWords` consume,
       whereas the fal roster is built around producing a *file* and would need
-      its own result path anyway
-- [ ] **Transcode + proxy.** Everything is checked against clips of a few
-      seconds; a real upload is minutes long at a bitrate the editor should not
-      scrub through. Another worker-side queue like probe and shots — the
-      interesting part is that a clip must *preview* from the proxy and
-      *export* from the original, which is a resolver decision rather than a
-      schema one
+      its own result path anyway. **Transcode + proxy landed 2026-08-22** (its
+      own item below), so what is left of the analysis half is STT alone
+- [x] **Transcode + proxy — done 2026-08-22.** A third worker-side queue, last
+      in the idle branch because it is the only one that re-encodes. The proxy
+      turned out to be **a variant, not a second asset**: a second R2 key on the
+      same row, chosen per request by `?variant=proxy`, because a second asset
+      row would put the choice in the *document* where an export could inherit
+      it. So the resolver is one query parameter and the safety argument is who
+      asks — the editor canvas and file viewer do, and `preload.ts`, which feeds
+      the export *and* `preview_frames` from one function, never does. Asserted
+      rather than trusted: `check-proxy.ts` runs the real `preloadImages` and
+      requires the bytes it pushed to equal the original exactly, and was
+      confirmed to fail, naming the proxy, when the variant was added to that
+      fetch. The non-obvious half is that **keyframe distance matters as much as
+      resolution** — a camera original's ten-second GOP costs a decode from it on
+      every scrub — so `-sc_threshold 0` is load-bearing, and the check encodes
+      its source with exactly one keyframe and measures 1 → 6 over six seconds
+      rather than measuring the file size. A missing proxy falls back to the
+      original, which is what makes an upload watchable immediately and a failed
+      transcode slow rather than broken
 - [ ] **Thumbnails and a poster frame per video**, so the explorer shows what a
       file is rather than its name. Same worker-side ffmpeg path
 - [ ] **A short-lived signed asset URL.** `generate_3d` needs an image the

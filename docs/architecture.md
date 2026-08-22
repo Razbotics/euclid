@@ -491,6 +491,13 @@ allowed for the owning user or an internal caller; the render worker uses the
 latter to fetch narration audio, and tenancy is enforced by joining through
 `projects`, not by trusting the caller.
 
+A read may also ask for a **variant**: `?variant=proxy` serves a video's
+scrubbing copy (see *Proxies*), and anything else serves the original. That one
+parameter is the whole resolver, and it is the reason a proxy is a second R2 key
+on the same row rather than a second asset — a second asset would put the choice
+of which bytes to use inside the *document*, where the export would inherit it.
+Here the choice belongs to whoever is asking, per request.
+
 ## Narration (TTS)
 
 `apps/api/src/tts.ts` defines a `TtsProvider` seam — `synthesize({ text,
@@ -598,6 +605,45 @@ column rather than being inferred from a null duration, because an image
 legitimately has no duration and would otherwise be re-probed forever; a file
 ffprobe cannot read is marked probed too, since that is a fact about the file
 rather than a reason to retry.
+
+Shot detection is a second queue behind the same poll, for a reason worth
+keeping: probing reads a header in milliseconds while detecting cuts decodes
+every frame, so a ten-minute upload must not hold up the measurement of
+everything queued behind it.
+
+## Proxies — what the editor scrubs
+
+A third queue behind the same poll, and last of the three, because it is the
+only one that *re-encodes*: probe reads, shots decodes, this decodes and
+encodes. The output is a low-resolution, densely-keyframed copy stored under a
+second R2 key on the same asset row.
+
+**Two costs, and only one of them is obvious.** The editor fetches a clip whole
+and seeks inside a blob URL, so the source's size is the wait before anything
+appears at all. The less obvious half is **keyframe distance**: seeking means
+decoding forward from the preceding keyframe, and a camera original routinely
+carries a ten-second GOP, so every scrub pays up to ten seconds of decode. The
+proxy is 540p at a one-second keyframe interval and addresses both — which is
+why `-sc_threshold 0` is load-bearing rather than cosmetic. Without it x264
+places keyframes at scene changes *instead of* the regular ones, so a long
+static take keeps its long gap and the proxy comes out smaller and no faster,
+which nothing would ever report.
+
+**Who asks is the whole safety argument.** The editor canvas and the file
+viewer ask for the proxy; `preload.ts` — which feeds the export *and*
+`preview_frames` from one function — never does. A preview frame is only worth
+trusting because it *is* an export frame ([plans/007](plans/007-agent-sight.md)),
+and a contact sheet drawn from proxy pixels would quietly break that.
+`check-proxy.ts` asserts it by running the real `preloadImages` and requiring
+the bytes it pushed to equal the original exactly.
+
+**A missing proxy is slow, never broken.** A read falls back to the original, so
+an upload is watchable in the seconds before its transcode and a file ffmpeg
+cannot re-encode simply stays as it was. That is what makes it safe to set
+`proxy_at` unconditionally — the `probed_at` argument again — and why there is
+no error column: `needsProxy()` is pure and shared, so a settled row it still
+returns true for is the failed case, derived rather than stored. Images are not
+proxied: one texture is not a seek per frame.
 
 ## Generative assets (fal)
 

@@ -14,6 +14,14 @@ import type { Page } from 'playwright'
  *
  * Audio is deliberately excluded: ffmpeg muxes it from files on disk and it
  * never reaches the page, so preloading it would move megabytes for nothing.
+ *
+ * **Never `?variant=proxy`.** The editor scrubs a low-resolution copy of a
+ * video, and that is exactly what these two paths must not do: a contact sheet
+ * drawn from proxy pixels would show an agent a softer picture than the export
+ * contains, and an export drawn from them would ship one. The API resolves the
+ * variant per request precisely so the choice can be made here, once, by
+ * omission — a proxy is for a person deciding where to cut, never for a
+ * surface that has to be the export.
  */
 export function imageAssetIds(doc: EuclidDoc): string[] {
   const drawn = new Set<string>()

@@ -103,6 +103,18 @@ an existing local DB won't pick up a new table on its own.
 >
 > ...and the same for `height INTEGER`, `fps REAL`, `probed_at INTEGER`.
 
+> **The assets proxy columns** were added the same way on 2026-08-22:
+>
+> ```sh
+> pnpm exec wrangler d1 execute euclid --local \
+>   --command "ALTER TABLE assets ADD COLUMN proxy_key TEXT"
+> ```
+>
+> ...and the same for `proxy_bytes INTEGER`, `proxy_at INTEGER`, plus
+> `CREATE INDEX IF NOT EXISTS idx_assets_unproxied ON assets (proxy_at, created_at)`.
+> Until they exist the editor still works: a missing proxy falls back to the
+> original, which is the same tolerance the feature has in production.
+
 > **Gotcha:** that idempotence covers new *tables*, not new *columns*.
 > `CREATE TABLE IF NOT EXISTS` is a no-op on an existing table, so a column
 > added to `schema.sql` never reaches a database that already has the table.
@@ -258,6 +270,8 @@ every run** — re-run and re-paste after restarting.
 | `bench-webcodecs-pipe.ts` | the WebCodecs path end to end — VP9 in the page → IVF → ffmpeg → MP4 — reporting where each millisecond goes (render / VideoFrame / encode / back-pressure). This is what showed compression is **free** and the cost is `new VideoFrame(canvas)`; `CODEC`, `REALTIME` and `BITRATE` vary the encoder (free; needs `dev:web`) |
 | `bench-capture.ts` | where export time actually goes: times `renderFrame` (Pixi/WebGL) against `canvas.screenshot()` (PNG round-trip) separately, on a vector document and a 4,096-triangle mesh. Answers plans/003's SwiftShader question — screenshot is **97-99%** of a frame in both the host and the container, so rasterisation is not the bottleneck (free; needs `dev:web`) |
 | `check-shots.ts` | shot detection against **chosen** ground truth: three 2s clips concatenated, so the cuts really are at 2.00s and 4.00s and the check is a match rather than an eyeball. Also that two cuts bound three segments, that a continuous take reports none rather than an empty answer, and that "not watched yet" says so (free; needs `dev:api`, `render-worker.ts`) |
+| `check-proxy.ts` | transcode + proxy (plans/003 §5) against **chosen** ground truth — the source is encoded with one keyframe in the whole file, so "the proxy seeks better" is the number 1 → 6 rather than an impression. Also: a 720p upload gets a 960x540 proxy and a 320x240 one is deliberately left alone, a proxy that has not been made yet falls back to the original (so an upload is watchable immediately), and the clip still captures. The load-bearing assertion runs `preloadImages` — the real function behind both the export and `preview_frames` — against a page stub and requires it to have pushed the **original, byte-for-byte**; it was confirmed to fail, naming the proxy, when the variant was added to that fetch (free; needs `dev:api`, `dev:web`, `render-worker.ts`) |
+| `smoke-proxy.ts` | the pure half of the same: which files want a proxy, and the two settings that go wrong silently — an odd dimension (H.264 refuses it minutes into the job) and a keyframe interval ffmpeg is free to ignore. Six aspect ratios, portrait included, stay even and undistorted (free, no network) |
 | `check-shapes.ts` | canvas shapes: all four presets create at their stated size, over-budget and odd-dimension refusals teach, and a 9:16 scene **draws and exports as 1080x1920** — the export assertion being the one that matters, since a pipeline quietly re-framing to 16:9 would pass every other check (free; needs `dev:api`, `dev:web`, `render-worker.ts`) |
 | `check-narration-sync.ts` | narration-anchored animation: word matching ignores case and punctuation, an anchored highlight lands on its word, and — the point — **rewriting the script moves the effect with it** (the word went 1.26s → 6.14s and the marker followed: 0.41% lit at the old time vs 4.87% at the new). Also the refusal when neither `start` nor `atWord` is given (**~3 credits**; needs `dev:api` with `ELEVENLABS_API_KEY`, `dev:web`, `render-worker.ts`) |
 | `check-video.ts` | the video node: the source-time mapping is pure, a clip draws only inside its range (and nothing after — it leaves rather than freezing), the overrun warning names the scene end, and — the headline — **two independent renders of one document are bit-identical** (PSNR inf), which is the purity invariant tested where it is hardest. Free: the clip under test is made with ffmpeg rather than generated (needs `dev:api`, `dev:web`, `render-worker.ts`) |

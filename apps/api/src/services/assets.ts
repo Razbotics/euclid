@@ -23,6 +23,9 @@ export interface AssetRow {
   probed_at: number | null
   shots: string | null
   shots_at: number | null
+  proxy_key: string | null
+  proxy_bytes: number | null
+  proxy_at: number | null
 }
 
 export const ASSET_KINDS = ['audio', 'video', 'image', 'model']
@@ -134,7 +137,7 @@ export async function listProjectAssets(
   await requireProjectAccess(env, projectId, userId)
   const rows = await env.DB.prepare(
     `SELECT id, kind, mime, bytes, duration_sec, path, r2_key, created_at,
-            width, height, fps, probed_at, shots, shots_at
+            width, height, fps, probed_at, shots, shots_at, proxy_bytes, proxy_at
      FROM assets WHERE project_id = ? ORDER BY created_at`,
   )
     .bind(projectId)
@@ -162,6 +165,11 @@ export async function listProjectAssets(
     probedAt: r.probed_at,
     shots: r.shots ? (JSON.parse(r.shots) as number[]) : null,
     shotsAt: r.shots_at,
+    // `proxy_key` deliberately stays out of the record: which R2 object serves
+    // a scrub is the API's decision, and a client that knew the key could ask
+    // for the wrong bytes.
+    proxyBytes: r.proxy_bytes,
+    proxyAt: r.proxy_at,
     usedBy: used.has(r.id) || renderKeys.has(r.r2_key),
   })) as (AssetRecord & { usedBy: boolean })[]
 }
@@ -242,6 +250,9 @@ export async function deleteAsset(
   }
 
   await env.ASSETS.delete(asset.r2_key)
+  // The proxy is a second object under the same row, so deleting the row
+  // without it leaves bytes nothing can ever name again.
+  if (asset.proxy_key) await env.ASSETS.delete(asset.proxy_key)
   await env.DB.prepare('DELETE FROM assets WHERE id = ?').bind(asset.id).run()
   // Don't leave a job advertising a download that now 410s.
   if (isRenderOutput) {

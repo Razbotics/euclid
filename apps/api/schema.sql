@@ -50,13 +50,25 @@ CREATE TABLE IF NOT EXISTS assets (
   -- detecting shots decodes the whole video. A file can be measured long
   -- before it has been watched.
   shots TEXT,
-  shots_at INTEGER
+  shots_at INTEGER,
+  -- A low-resolution, densely-keyframed re-encode the **editor** scrubs. The
+  -- export and preview_frames never touch it: they read r2_key, so a proxy can
+  -- never reach the finished video.
+  --
+  -- proxy_at without proxy_key is a settled row that stores nothing — either
+  -- the source was already small enough or the transcode failed. Which one is
+  -- derived from the row by needsProxy(), not recorded here, because a missing
+  -- proxy has no consequence beyond a slower scrub.
+  proxy_key TEXT,
+  proxy_bytes INTEGER,
+  proxy_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_assets_project ON assets (project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_assets_path ON assets (project_id, path);
 -- The worker's probe queue: everything never measured, oldest first.
 CREATE INDEX IF NOT EXISTS idx_assets_unprobed ON assets (probed_at, created_at);
 CREATE INDEX IF NOT EXISTS idx_assets_unshot ON assets (shots_at, created_at);
+CREATE INDEX IF NOT EXISTS idx_assets_unproxied ON assets (proxy_at, created_at);
 
 -- Generative asset requests handed to a provider (fal today).
 --

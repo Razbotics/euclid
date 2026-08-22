@@ -1,11 +1,11 @@
 # 003 — General video: assets, clips, reels (status: in progress — Phase 5)
 
-**Where this stands (2026-08-19).** §1 assets, §2 node types and §4 the render
+**Where this stands (2026-08-22).** §1 assets, §2 node types and §4 the render
 pipeline are done. §3 has an audio half and no video half. The rights question
 is **decided — option 1, users bring their own media** — so §5 ingest is
-unblocked and well started: upload, probe and shot detection are done. What
-remains of it is **transcode + proxy** and **STT**, the latter still carrying a
-provider decision.
+unblocked and well started: upload, probe, shot detection and now **transcode +
+proxy** are done. What remains of it is **STT**, which still carries a provider
+decision, plus thumbnails and a signed asset URL.
 
 Sequenced after animation depth (plans/006) as of 2026-08-16: the argument
 that put general video first was that verification, not visual vocabulary, was
@@ -577,14 +577,55 @@ measuring: 0.41% lit at the old time, 4.87% at the new. `check-narration-sync.ts
 
 ### What ingest still needs
 
-**Transcode + proxy.** Everything so far has been checked against clips of a
-few seconds. A real upload is minutes long at a bitrate the editor should not
-be scrubbing through, so editing wants a low-res proxy while the *export* keeps
-using the original. The machinery exists — ffmpeg in the render worker, on the
-idle side of the poll, storing a second asset — so this is another queue like
-probe and shots rather than anything new. The interesting part is the document:
-a clip must reference one asset and be *rendered* from the original while being
-*previewed* from the proxy, which is a resolver decision, not a schema one.
+**Transcode + proxy — done 2026-08-22.** A third worker-side queue after probe
+and shots, running last in the idle branch because it is the only one of the
+three that *re-encodes*: probe reads a header, shots decodes, this decodes and
+encodes. `check-proxy.ts`, `smoke-proxy.ts`.
+
+Three things this settled that were not obvious going in.
+
+**The proxy is not one asset but one variant.** The plan expected "storing a
+second asset", and that turns out to be the wrong shape: a second row would put
+the choice of which bytes to use *in the document*, where an export could
+inherit it. Instead the proxy is a second R2 key on the same row and the choice
+is made per request — `GET /api/assets/:id?variant=proxy`. So the resolver is
+one query parameter, and the whole of the safety argument is **who asks**:
+
+| surface | asks for | why |
+|---|---|---|
+| editor canvas, file viewer | proxy | a person scrubbing |
+| `preload.ts` → export **and** `preview_frames` | original | must be the same pixels |
+
+`preload.ts` feeds both capture paths from one function precisely so this choice
+is expressed once, by omission. That is asserted rather than trusted:
+`check-proxy.ts` runs the real `preloadImages` against a page stub and requires
+the bytes it pushed to equal the original exactly. Adding `?variant=proxy` to
+that fetch was confirmed to fail the check, naming the proxy.
+
+**Keyframe distance matters at least as much as resolution**, and only one of
+the two is obvious. The editor fetches a clip whole and seeks inside a blob URL,
+so bytes are the wait before the first frame — but every scrub after that costs
+a decode from the preceding keyframe, and camera originals routinely carry a
+ten-second GOP. Hence `-g fps`, `-keyint_min fps` and **`-sc_threshold 0`**:
+without the last one x264 places keyframes at scene changes *instead of* the
+regular ones, so a long static take keeps its ten-second gap and the proxy is
+smaller and no faster — a failure nothing would ever report. The check therefore
+encodes its source with exactly one keyframe and asserts the proxy has ~6 over
+six seconds, which measures the actual mechanism rather than the file size.
+
+**A missing proxy is slow, never broken.** The API falls back to the original,
+so an upload is watchable in the seconds before its transcode and a file ffmpeg
+cannot re-encode simply stays as it was. That is what makes it safe to settle
+`proxy_at` unconditionally — the `probed_at` argument, that work which cannot
+succeed must not be retried on every poll forever. It also means no error
+column: `needsProxy()` is pure and shared, so a settled row it still returns
+true for *is* the failed case, derived rather than stored.
+
+Not proxied: **images**. One texture is not a seek per frame, so the cost this
+removes does not exist there. And `?variant=proxy` on a video asset only ever
+affects playback — the explorer's `open` and `save` links stay on the original,
+because handing someone a downscaled file under their own filename would be a
+lie about what they uploaded.
 
 **STT — a transcript of what the footage says.** This is the half of ingest
 that gives an agent *meaning* rather than structure. Shot detection says where

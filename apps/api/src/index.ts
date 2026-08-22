@@ -46,6 +46,10 @@ app.use(
   cors({
     origin: (origin, c) => (origin === c.env.APP_ORIGIN ? origin : undefined),
     credentials: true,
+    // Without this the editor can read the bytes but not which variant it got:
+    // a cross-origin response hides every header not on this list, so
+    // "am I scrubbing the proxy?" would be unanswerable from the browser.
+    exposeHeaders: ['x-euclid-variant'],
   }),
 )
 
@@ -620,6 +624,77 @@ app.patch('/api/assets/:assetId/shots', async (c) => {
   return c.json({ ok: true, shots: shots.length })
 })
 
+/**
+ * The transcode queue: probed videos with no scrubbing proxy yet.
+ *
+ * Its own queue for the reason shots has one — this decodes *and re-encodes*
+ * every frame, so it is the most expensive thing the worker does on idle time
+ * and must sit behind the cheaper two. Which of these files actually wants a
+ * proxy is the worker's call, through the shared `needsProxy` predicate; the
+ * queue only knows which have not been settled.
+ */
+app.get('/api/assets/proxy/next', async (c) => {
+  if (!isInternal(c)) return c.json({ error: 'forbidden' }, 403)
+  const row = await c.env.DB.prepare(
+    `SELECT id, kind, bytes, width, height, fps, duration_sec FROM assets
+     WHERE kind = 'video' AND probed_at IS NOT NULL AND proxy_at IS NULL
+     ORDER BY created_at LIMIT 1`,
+  ).first<{
+    id: string
+    kind: string
+    bytes: number
+    width: number | null
+    height: number | null
+    fps: number | null
+    duration_sec: number | null
+  }>()
+  return c.json({ asset: row ?? null })
+})
+
+/**
+ * The worker's answer. Raw body stores a proxy; `?none=1` settles the row
+ * without one, which is what a source too small to bother with and a transcode
+ * that failed both come back as.
+ *
+ * `proxy_at` is set either way, for the reason `probed_at` is: work that cannot
+ * succeed must not be retried on every poll forever.
+ */
+app.put('/api/assets/:assetId/proxy', async (c) => {
+  if (!isInternal(c)) return c.json({ error: 'forbidden' }, 403)
+  const assetId = c.req.param('assetId')
+  const asset = await loadAsset(c.env, assetId)
+  if (!asset) return c.json({ error: 'asset_not_found' }, 404)
+
+  if (c.req.query('none') !== undefined || !c.req.raw.body) {
+    await c.env.DB.prepare('UPDATE assets SET proxy_at = ? WHERE id = ?')
+      .bind(Date.now(), assetId)
+      .run()
+    return c.json({ ok: true, proxy: null })
+  }
+
+  // A distinct key on the same row rather than a new asset: a clip references
+  // one asset, and which bytes serve it is a decision this API takes per
+  // request. A second asset row would put the choice in the document, where
+  // an export could inherit it.
+  const key = `assets/${asset.project_id}/${assetId}-proxy.mp4`
+  const object = await c.env.ASSETS.put(key, c.req.raw.body, {
+    httpMetadata: { contentType: 'video/mp4' },
+  })
+  if (!object || object.size === 0) {
+    await c.env.ASSETS.delete(key)
+    await c.env.DB.prepare('UPDATE assets SET proxy_at = ? WHERE id = ?')
+      .bind(Date.now(), assetId)
+      .run()
+    return c.json({ ok: true, proxy: null, detail: 'empty_proxy_body' })
+  }
+  await c.env.DB.prepare(
+    'UPDATE assets SET proxy_key = ?, proxy_bytes = ?, proxy_at = ? WHERE id = ?',
+  )
+    .bind(key, object.size, Date.now(), assetId)
+    .run()
+  return c.json({ ok: true, proxy: { bytes: object.size } })
+})
+
 app.get('/api/assets/:assetId', async (c) => {
   const asset = await loadAsset(c.env, c.req.param('assetId'))
   if (!asset) return c.json({ error: 'asset_not_found' }, 404)
@@ -627,12 +702,35 @@ app.get('/api/assets/:assetId', async (c) => {
   const userId = c.get('userId')
   if (asset.owner !== userId && userId !== 'internal') return c.json({ error: 'forbidden' }, 403)
 
-  // Range-aware: narration audio must be seekable or the editor cannot line it
-  // up with the playhead (see serveR2Range).
-  const ranged = await serveR2Range(c.env.ASSETS, asset.r2_key, c.req.header('range'), {
-    'content-type': asset.mime,
-    'cache-control': 'private, max-age=31536000, immutable',
-  })
+  /**
+   * **The resolver, and the whole of it.** `?variant=proxy` asks for the
+   * scrubbing copy; anything else gets the original. Callers split on what they
+   * are for rather than on what exists: the editor canvas and the file viewer
+   * scrub, so they ask for the proxy, while `preload.ts` — which feeds both the
+   * export *and* `preview_frames` — never does. That keeps the two capture
+   * paths reading identical bytes, which is the property plans/007 says a
+   * preview frame is only worth trusting for.
+   *
+   * Falling back to the original when no proxy exists is why the editor works
+   * during the minutes between an upload and its transcode, and why a failed
+   * transcode is slow rather than broken. `x-euclid-variant` says which was
+   * served, so "the proxy is not being used" is diagnosable from a response
+   * instead of from the database.
+   */
+  const wantsProxy = c.req.query('variant') === 'proxy'
+  const served = wantsProxy && asset.proxy_key ? 'proxy' : 'original'
+  const ranged = await serveR2Range(
+    c.env.ASSETS,
+    served === 'proxy' ? asset.proxy_key! : asset.r2_key,
+    c.req.header('range'),
+    {
+      'content-type': served === 'proxy' ? 'video/mp4' : asset.mime,
+      // Immutable is still true per variant — a proxy is written once and the
+      // original never changes — but the two must not share a cache entry.
+      'cache-control': 'private, max-age=31536000, immutable',
+      'x-euclid-variant': served,
+    },
+  )
   if (!ranged) return c.json({ error: 'asset_missing' }, 410)
   return ranged
 })

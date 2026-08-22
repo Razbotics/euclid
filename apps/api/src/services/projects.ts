@@ -93,9 +93,11 @@ export async function deleteProject(
   // Every R2 key this project owns. Render outputs are registered as assets
   // too and point at the same key, so the set is deduped rather than deleted
   // twice.
-  const assetKeys = await env.DB.prepare('SELECT r2_key FROM assets WHERE project_id = ?')
+  // Both objects per asset: a video's scrubbing proxy is a second key on the
+  // same row, and it would otherwise survive its project.
+  const assetKeys = await env.DB.prepare('SELECT r2_key, proxy_key FROM assets WHERE project_id = ?')
     .bind(projectId)
-    .all<{ r2_key: string }>()
+    .all<{ r2_key: string; proxy_key: string | null }>()
   const outputKeys = await env.DB.prepare(
     'SELECT output_key FROM render_jobs WHERE project_id = ? AND output_key IS NOT NULL',
   )
@@ -103,6 +105,7 @@ export async function deleteProject(
     .all<{ output_key: string }>()
   const keys = new Set([
     ...assetKeys.results.map((r) => r.r2_key),
+    ...assetKeys.results.flatMap((r) => (r.proxy_key ? [r.proxy_key] : [])),
     ...outputKeys.results.map((r) => r.output_key),
   ])
   for (const key of keys) await env.ASSETS.delete(key)
