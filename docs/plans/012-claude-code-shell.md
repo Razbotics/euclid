@@ -41,6 +41,32 @@ reaches for files or the inspector on demand.
       API (61 projects) — stack closed on a fresh profile, menu stacks
       panels in order, flyout lists/opens projects, `/` lands on the newest
 
+## Phase 2: feedback round (status: done)
+
+What the first build got wrong, per review of the running shell:
+
+- [x] Sidebar modes instead of hover-always: **docked** column by default
+      (no hover behaviour at all), and the top-left toggle switches to
+      **hover** mode — the column disappears, only the button remains in the
+      header, and hovering *the button* reveals the overlay. Mode remembered
+      (`euclid.sidebar`). The 46px rail is gone.
+- [x] ⋯ menu entries carry glyphs (folder / layers / check), ✓ on the right
+      when open; the same glyphs title the stack panels
+- [x] No tab strip: the centre is canvas + timeline only. A selected file
+      opens as *its own card directly under Files*, one at a time, toggled
+      off by reselecting or ✕; deletion closes it. FileViewer gained an
+      optional `onClose`, and lost its open-in-tab link (the card's save
+      link remains).
+- [x] Stack partitions as cards, Claude Code style: rounded, bordered, gap
+      between panels, per-panel expand (maximize one, fold the rest to their
+      headers — session-only, like solo) and close controls, all drawn as
+      SVG icons in fixed 24px hit boxes rather than text glyphs
+- [x] Sidebar partition lines: under the header, above the account row
+- [x] Timeline gutter: bordered seam against the scroller, uppercase lane
+      labels, tightened transport buttons
+- [x] `color-scheme: dark` at `:root`, so native audio/video controls and
+      scrollbars stop rendering as white furniture
+
 ## Notes / gotchas
 
 - The ⋯ menu is modal — its backdrop swallows the page, including the

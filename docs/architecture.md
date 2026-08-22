@@ -896,26 +896,41 @@ badge, and a bare `/` with no projects shows a landing note instead.
 
 ## Editor layout: the Claude Code shell (plans/012)
 
-The shell is arranged the way Claude Code's desktop app is: a thin sidebar
-rail for switching *contexts*, a centre that owns the work, and workspace
-detail as optional right-hand panels that stack as they open.
+The shell is arranged the way Claude Code's desktop app is: a sidebar for
+switching *contexts*, a centre that owns the work, and workspace detail as
+optional right-hand panels that stack as they open.
 
-- **Left — the sidebar rail** (`Sidebar.tsx`), 46px, always present. Hover
-  expands a flyout **overlay** — never a column, so glancing at the project
-  list cannot reflow the canvas — listing every project newest first, plus
-  the offline demo. The account button anchors the bottom of rail and flyout
-  alike and opens the (future) settings menu; it exists before settings do so
-  the spot where they will live is already discoverable.
-- **Centre — canvas and timeline**, the only column that grows. A tab strip
-  whose first tab is the canvas and whose other tabs are open files; the
-  timeline sits at the bottom of this column — it is the transport for the
-  document, and the panels beside it are not part of that transport.
-- **Right — the panel stack**, closed by default. The header's ⋯ menu
-  toggles three panels — **Files** (the asset explorer), **Scene** (the
-  inspector and narration panel), **Review** (the queue) — which stack
-  vertically in the order opened, each with its own header and close button.
-  ⌘B / ⌘⌥B toggle Files / Scene. Which panels are open and the stack's
-  width are remembered in `localStorage`.
+- **Left — the sidebar** (`Sidebar.tsx`), the project list plus the account
+  button. It has two modes, switched by the top-left toggle and remembered:
+  **docked** (the default) — a real 252px column with no hover behaviour at
+  all — and **hover**, where the column is gone entirely, only the toggle
+  button remains at the far left of the header, and hovering *the button*
+  slides the sidebar out as an overlay (never a column, so peeking at the
+  list cannot reflow the canvas). The account button opens the (future)
+  settings menu; it exists before settings do so the spot where they will
+  live is already discoverable.
+- **Centre — canvas and timeline, nothing else.** No tab strip: files open
+  inside the Files panel, so the preview is never covered and Pixi's app
+  never needs hiding or rebuilding. The timeline sits at the bottom of this
+  column — it is the transport for the document, and the panels beside it
+  are not part of that transport.
+- **Right — the panel stack**, closed by default. The header's ⋯ menu (each
+  entry with its glyph, ✓ when open) toggles three panels — **Files** (the
+  asset explorer), **Scene** (the inspector and narration panel), **Review**
+  (the queue) — which stack vertically in the order opened. Each panel is
+  its own card — rounded, bordered, a gap between them — with its own
+  header: glyph, title, and expand/close controls. Expand maximizes that
+  panel and folds the others to their headers (a viewing choice, like solo —
+  deliberately not persisted); ⌘B / ⌘⌥B toggle Files / Scene. Which panels
+  are open and the stack's width are remembered in `localStorage`.
+
+Selecting a file in the Files panel opens it as **its own card directly
+under Files** — titled with the file's name, carrying the same expand/close
+controls as any card — one file at a time, deselecting (or ✕) closes it, and
+a file deleted from the tree takes its card with it. The file list lives in
+`useAssets`, not in the explorer: the viewer needs the same records (mime,
+size, path) to know what to draw, and a delete has to close the card it
+invalidates. One fetch, one truth.
 
 A *new* agent question opens the Review panel by itself — an open review
 means an agent is stalled, and a stalled agent outranks a closed-by-default
@@ -923,23 +938,14 @@ stack — but dismissing the panel sticks until the next question arrives
 (the effect is keyed on the open-decision count, not on render). With every
 panel closed, a waiting question still shows as a dot on the ⋯ button.
 
-Resizing is clamped rather than free: the stack is bounded by what the rail
-and a 360px minimum canvas already claim, and the same clamp re-runs on
-window resize, so no drag and no narrow window can leave the centre at zero.
+Resizing is clamped rather than free: the stack is bounded by what the
+docked sidebar and a 360px minimum canvas already claim (hover mode just
+leaves slack, the safe direction), and the same clamp re-runs on window
+resize, so no drag and no narrow window can leave the centre at zero.
 A drag uses pointer capture and recomputes width from where the drag
 *started* — accumulating per-move deltas would let the handle drift away from
 the cursor every time the clamp bit, and without capture a fast drag would die
 the moment it crossed the `<canvas>` or a PDF `<iframe>`.
-
-Two decisions inside that are load-bearing:
-
-- **The canvas is hidden, never unmounted.** Pixi's `Application` and its
-  ticker are expensive to rebuild, and unmounting to read a text file would
-  restart the preview every time you glanced at one. Opening a file toggles
-  `display`, so playback and narration audio carry on behind it.
-- **The file list lives in `useAssets`, not in the explorer.** The tab strip
-  needs the same records (mime, size, path) to know which viewer to draw, and
-  a delete has to close the tab it invalidates. One fetch, one truth.
 
 ### Viewing a file
 

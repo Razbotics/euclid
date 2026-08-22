@@ -2,6 +2,9 @@
    coral accent. Everything reads from these tokens so the theme is one block,
    not five hundred hex literals. */
 :root {
+  /* Native widgets (audio/video controls, scrollbars) must follow the theme —
+     a white player in a dark panel is furniture from another room. */
+  color-scheme: dark;
   --bg: #262624;          /* the workspace */
   --bg-deep: #1f1e1c;     /* sidebar, tab strip, timeline — the chrome */
   --bg-raised: #2d2c29;   /* cards, menus, inputs */
@@ -55,27 +58,24 @@ header {
 .icon-btn:hover { background: var(--bg-hover); color: var(--text); }
 .icon-btn.on { color: var(--text); background: var(--bg-raised); }
 
-/* ---------- left sidebar: rail + hover flyout ---------- */
+/* ---------- left sidebar: docked column, or hover-reveal overlay ---------- */
 
-/* The flyout is an overlay over the canvas, never a column — opening it must
-   not reflow the editor. The rail is the only width the layout ever pays. */
-.sidebar { position: relative; flex: none; width: 46px; z-index: 20; }
-.side-rail {
-  width: 46px; height: 100%;
-  display: flex; flex-direction: column; align-items: center;
-  padding: 10px 0; gap: 8px;
+/* Docked (the default): a real column, no hover behaviour at all. */
+.sidebar-docked {
+  position: relative; flex: none; width: 252px;
+  display: flex; flex-direction: column;
   background: var(--bg-deep); border-right: 1px solid var(--border-soft);
 }
-.side-logo {
-  color: var(--accent); text-decoration: none; font-size: 17px;
-  width: 30px; height: 30px; border-radius: 6px;
-  display: flex; align-items: center; justify-content: center;
-}
-.side-logo:hover { background: var(--bg-hover); }
 
+/* Hover mode: the toggle button is all that remains, sitting at the far left
+   of the header; the flyout it reveals is an overlay — opening it must not
+   reflow the editor. The flyout is a child of the hover zone so leaving fires
+   only once the pointer has left button and panel both. */
+.side-hover { display: flex; align-items: center; }
+.side-toggle { font-size: 14px; padding: 4px 6px; display: flex; align-items: center; }
 .side-flyout {
-  position: absolute; left: 0; top: 0; bottom: 0; width: 252px;
-  display: flex; flex-direction: column;
+  position: fixed; left: 0; top: 0; bottom: 0; width: 252px;
+  display: flex; flex-direction: column; z-index: 40;
   background: var(--bg-deep); border-right: 1px solid var(--border);
   box-shadow: 8px 0 24px rgba(0, 0, 0, 0.35);
   opacity: 0; transform: translateX(-10px); pointer-events: none;
@@ -85,7 +85,8 @@ header {
 
 .side-head {
   display: flex; align-items: center; gap: 8px; flex: none;
-  padding: 12px 14px 8px;
+  padding: 9px 12px 8px;
+  border-bottom: 1px solid var(--border-soft);
 }
 .side-title { font-size: 14px; letter-spacing: .05em; }
 .side-badge {
@@ -117,12 +118,12 @@ header {
    discoverable. */
 .user-btn {
   display: flex; align-items: center; gap: 8px; flex: none;
-  margin: 6px; padding: 6px 8px; border-radius: 6px;
+  margin: 0; padding: 9px 12px; border-radius: 0;
   background: none; border: none; cursor: pointer;
+  border-top: 1px solid var(--border-soft);
   color: var(--text-mid); font-family: inherit; font-size: 13px;
 }
 .user-btn:hover, .user-btn.on { background: var(--bg-hover); color: var(--text); }
-.user-btn.compact { margin: 0; padding: 4px; }
 .user-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .avatar {
   width: 24px; height: 24px; border-radius: 50%; flex: none;
@@ -172,31 +173,70 @@ header {
   cursor: pointer;
 }
 .options-menu button:hover { background: var(--bg-hover); color: var(--text); }
-.options-check { width: 14px; flex: none; color: var(--accent); }
+.options-check { width: 14px; flex: none; color: var(--accent); text-align: right; }
 .options-key { color: var(--text-faint); font-size: 10px; }
+.options-icon { flex: none; color: var(--text-dim); }
+.options-menu button:hover .options-icon { color: var(--text); }
+.stack-head .options-icon { width: 12px; height: 12px; }
 
 /* ---------- workbench: editor | panel stack ---------- */
 
 main.workbench { display: flex; flex: 1; min-height: 0; }
 
 /* The right side is a stack of optional panels, closed by default. Each open
-   panel gets an equal share of the height — Files above Scene above Review is
-   the same shape as Claude Code's Files above Background tasks. */
+   panel is its own card — Files above Scene above Review is the same shape as
+   Claude Code's Files above Background tasks: rounded, bordered, a gap
+   between them, each with its own header and controls. */
 .stack {
   display: flex; flex-direction: column; min-width: 0; flex: none;
-  background: var(--bg-deep); border-left: 1px solid var(--border-soft);
+  gap: 8px; padding: 8px;
+  background: var(--bg); border-left: 1px solid var(--border-soft);
 }
 .stack-panel {
   flex: 1 1 0; min-height: 0; display: flex; flex-direction: column;
+  background: var(--bg-deep); border: 1px solid var(--border);
+  border-radius: 10px; overflow: hidden;
 }
-.stack-panel + .stack-panel { border-top: 1px solid var(--border); }
+/* One panel maximized: it takes the column, the others fold to their headers
+   — the header stays so the fold is reversible from where it happened. */
+.stack-panel.max { flex: 1 1 auto; }
+.stack-panel.min { flex: none; }
+.stack-panel.min .stack-body { display: none; }
 .stack-head {
-  display: flex; align-items: center; gap: 6px; padding: 7px 8px 7px 12px;
-  font-size: 11px; letter-spacing: .06em; color: var(--text-dim);
+  display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 12px;
+  font-size: 12px; color: var(--text-mid);
   border-bottom: 1px solid var(--border-soft); flex: none;
 }
-.stack-head .count { color: var(--text-faint); letter-spacing: 0; }
+.stack-panel.min .stack-head { border-bottom: none; }
+.stack-title {
+  color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.stack-head .count { color: var(--text-faint); font-size: 11px; }
+/* Header controls get a real hit area: a drawn icon centred in a fixed box,
+   not a text glyph at whatever size the font feels like. */
+.stack-head .icon-btn {
+  width: 24px; height: 24px; padding: 0; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 6px;
+}
 .stack-body { flex: 1; min-height: 0; overflow: auto; }
+
+/* The open file is its own card under Files; the viewer fills it, and its
+   internal head carries only the facts (path, size, save) — the card's
+   header owns the name and the controls. */
+.stack-body > .file-view { height: 100%; }
+.stack .file-view-head { flex-wrap: wrap; row-gap: 3px; padding: 6px 10px; }
+.stack .file-view-path { flex: 1; min-width: 0; font-size: 10px; color: var(--text-faint); }
+.stack .file-view-head .grow { display: none; }
+.stack .file-view-meta {
+  flex-basis: 100%; order: 3;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text-faint);
+}
+.stack .file-view-body { padding: 12px; }
+.stack .audio-view { width: 100%; }
+.stack .audio-view audio { width: 100%; }
 
 /* The drag handle. 6px of grab area sitting *over* the stack's border via a
    negative margin, so the seam still reads as one hairline. */
@@ -218,36 +258,9 @@ main.workbench { display: flex; flex: 1; min-height: 0; }
    whole app — and nothing under it should highlight as if it were text. */
 .app.resizing { cursor: col-resize; user-select: none; }
 
-/* ---------- the editor column: tabs, canvas, timeline ---------- */
+/* ---------- the editor column: canvas + timeline ---------- */
 
 .editor { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.tabstrip {
-  display: flex; align-items: stretch; flex: none;
-  background: var(--bg-deep); border-bottom: 1px solid var(--border-soft); overflow-x: auto;
-}
-.tab {
-  display: flex; align-items: center; background: transparent; border: none;
-  border-right: 1px solid var(--border-soft); color: var(--text-dim);
-  font-family: inherit; font-size: 12px;
-  white-space: nowrap; cursor: pointer; padding: 0;
-}
-/* A generated filename can be a whole sentence — clip it rather than let four
-   open files push the strip past the window. */
-.tab > .tab-open {
-  padding: 7px 4px 7px 12px; max-width: 220px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.tab-canvas { padding: 7px 12px; }
-.tab.active { background: var(--bg); color: var(--text); box-shadow: inset 0 2px 0 var(--accent); }
-.tab:hover { color: var(--text); }
-.tab-glyph { color: var(--text-faint); margin-right: 6px; }
-.tab.active .tab-glyph { color: var(--accent); }
-.tab-open, .tab-close {
-  background: none; border: none; color: inherit; font: inherit; cursor: pointer;
-}
-.tab-close { padding: 7px 10px 7px 6px; color: var(--text-faint); }
-.tab-close:hover { color: var(--text); }
-
 .editor-body { flex: 1; min-height: 0; display: flex; }
 /* Wraps the canvas so the caption overlay can position against it. */
 .stage { flex: 1; position: relative; display: flex; min-width: 0; }
@@ -275,11 +288,11 @@ main.workbench { display: flex; flex: 1; min-height: 0; }
   border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px;
 }
 
-.timeline { flex: none; border-top: 1px solid var(--border-soft); padding: 8px 12px 10px; background: var(--bg-deep); }
-.timeline-controls { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.timeline { flex: none; border-top: 1px solid var(--border-soft); padding: 6px 10px 8px; background: var(--bg-deep); }
+.timeline-controls { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .timeline-controls button {
-  background: var(--bg-raised); color: var(--text); border: none; border-radius: 4px;
-  width: 34px; height: 26px; cursor: pointer; font-family: inherit;
+  background: var(--bg-raised); color: var(--text); border: none; border-radius: 6px;
+  width: 30px; height: 24px; cursor: pointer; font-family: inherit; font-size: 12px;
 }
 .timeline-controls button:hover { background: var(--bg-hover); }
 .timeline-controls .zoom { display: flex; gap: 2px; }
@@ -293,12 +306,21 @@ main.workbench { display: flex; flex: 1; min-height: 0; }
    audio can never disagree about where a second is — which is the bug a
    per-lane scrollbar would introduce the first time you zoomed in. */
 .tl { display: flex; align-items: flex-start; }
-.tl-heads { flex: none; width: 148px; }
+/* The gutter is a column, not floating labels: a seam on its right binds it
+   to the lanes it names, and each row shares its lane's border so label and
+   lane read as one line. */
+.tl-heads {
+  flex: none; width: 136px;
+  border-right: 1px solid var(--border); margin-right: 8px;
+}
 .tl-head {
-  display: flex; align-items: center; gap: 3px;
-  height: 26px; padding: 0 6px 0 2px; font-size: 11px; color: var(--text-dim);
+  display: flex; align-items: center; gap: 4px;
+  height: 26px; padding: 0 8px 0 4px;
+  font-size: 10px; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--text-dim);
   border-bottom: 1px solid var(--border-soft);
 }
+/* The empty corner above the labels aligns with the ruler and stays quiet. */
 .tl-head.ruler-head { height: 16px; border-bottom: none; }
 .tl-head:nth-child(2) { height: 46px; }
 .tl-head.muted .lane-name { color: var(--text-faint); text-decoration: line-through; }

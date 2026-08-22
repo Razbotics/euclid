@@ -178,10 +178,12 @@ an existing local DB won't pick up a new table on its own.
 pnpm dev:api    # :8787 — API + Durable Objects + D1; also starts the public tunnel
 pnpm dev:mcp    # :8788 — MCP worker (service-binds to api; start api first)
 pnpm dev:web    # :5173 — `/` auto-opens the newest project; ?project=<id> opens one;
-                #        ?demo=1 = offline demo. Shell: sidebar rail (hover = project
-                #        list) | canvas + timeline | right panel stack (closed by
-                #        default; ⋯ menu or ⌘B / ⌘⌥B toggle Files / Scene; drag the
-                #        seam to resize, double-click to reset)
+                #        ?demo=1 = offline demo. Shell: sidebar (docked by default;
+                #        top-left button switches to hover mode, where hovering the
+                #        button reveals it) | canvas + timeline | right panel stack
+                #        (closed by default; ⋯ menu or ⌘B / ⌘⌥B toggle Files / Scene;
+                #        files open inside the Files panel; drag the seam to resize,
+                #        double-click to reset)
 
 # The editor's and render worker's ports are negotiable, not fixed
 # (2026-08-22). launch.json runs `web` and `render-worker` with autoPort on,

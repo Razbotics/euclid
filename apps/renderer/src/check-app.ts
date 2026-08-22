@@ -3,10 +3,12 @@
  * Run: pnpm --filter @euclid/renderer exec tsx src/check-app.ts
  *
  * There is no listing page any more: `/` auto-opens the newest project (needs
- * dev:api; degrades to a readable landing note without it), the sidebar's
- * hover flyout is the project list, and `?demo=1` opens the offline demo. The
- * right side starts closed and its panels are toggled from the header's ⋯
- * menu, stacking as they open.
+ * dev:api; degrades to a readable landing note without it), the sidebar is
+ * the project list — docked by default, its top-left toggle switches it to
+ * hover mode where only the button remains and hovering it reveals the
+ * overlay — and `?demo=1` opens the offline demo. The right side starts
+ * closed and its panels are toggled from the header's ⋯ menu, stacking as
+ * they open.
  */
 import assert from 'node:assert'
 import { chromium } from 'playwright'
@@ -43,7 +45,7 @@ await page.waitForSelector('.options-menu', { timeout: 3000 })
 await page.locator('.options-menu button', { hasText: 'Files' }).click()
 await page.locator('.options-menu button', { hasText: 'Scene' }).click()
 const stack = await page.evaluate(() =>
-  Array.from(document.querySelectorAll('.stack-panel .stack-head > span:first-child')).map(
+  Array.from(document.querySelectorAll('.stack-panel .stack-head .stack-title')).map(
     (h) => h.textContent?.trim() ?? '',
   ),
 )
@@ -58,22 +60,43 @@ await page.click('.menu-backdrop')
 const layout = await page.evaluate(() => ({
   canvasW: document.querySelector('canvas')?.getBoundingClientRect().width ?? 0,
   stackW: document.querySelector('.stack')?.getBoundingClientRect().width ?? 0,
-  railW: document.querySelector('.side-rail')?.getBoundingClientRect().width ?? 0,
+  sideW: document.querySelector('.sidebar-docked')?.getBoundingClientRect().width ?? 0,
   viewport: window.innerWidth,
 }))
 assert.ok(
   layout.stackW > 0 && layout.stackW < layout.viewport * 0.35,
   `the stack must stay a column, got ${layout.stackW}px of ${layout.viewport}px`,
 )
-assert.ok(layout.railW > 0 && layout.railW < 60, 'the sidebar rail is a thin fixed strip')
+assert.ok(
+  layout.sideW > 0 && layout.sideW < layout.viewport * 0.25,
+  `the sidebar docks as a column by default, got ${layout.sideW}px of ${layout.viewport}px`,
+)
 assert.ok(
   layout.canvasW > layout.viewport * 0.5,
   `canvas must keep most of the width, got ${layout.canvasW}px of ${layout.viewport}px`,
 )
 await page.screenshot({ path: 'editor.png' })
 
-// ---------- the sidebar flyout is the project list ----------
-await page.hover('.side-rail')
+// ---------- sidebar modes: docked by default, hover-reveal on toggle ----------
+// The docked column must not react to hover; the toggle switches it to hover
+// mode, where only the button remains and *hovering the button* reveals the
+// overlay.
+await page.click('.sidebar-docked .side-toggle')
+// Park the pointer mid-canvas: the header toggle appears where the docked one
+// was, and a pointer left sitting there would open the overlay by accident.
+await page.mouse.move(700, 400)
+await page.waitForTimeout(300)
+assert.equal(
+  await page.evaluate(() => document.querySelector('.sidebar-docked') !== null),
+  false,
+  'the toggle collapses the docked column',
+)
+assert.equal(
+  await page.evaluate(() => document.querySelector('.side-flyout.open') !== null),
+  false,
+  'collapsing does not itself open the overlay',
+)
+await page.hover('.side-hover')
 await page.waitForSelector('.side-flyout.open', { timeout: 3000 })
 const flyout = await page.evaluate(() => ({
   items: Array.from(document.querySelectorAll('.side-item[href^="?project="]')).map((a) => ({

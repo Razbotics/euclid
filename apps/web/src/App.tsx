@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { assetBasename, assetIdsInDoc, docDuration, globalToScene } from '@euclid/dsl'
 import { useProject } from './useProject'
-import { useAssets, type ProjectFile } from './useAssets'
+import { useAssets } from './useAssets'
 import { Preview } from './Preview'
 import { Timeline } from './Timeline'
 import { Inspector } from './Inspector'
@@ -11,7 +11,7 @@ import { CameraFrame } from './Camera'
 import { CaptionOverlay } from './Narration'
 import { AudioMixer } from './AudioMixer'
 import { Review, ReviewModeToggle } from './Review'
-import { Sidebar, useProjects, type ProjectsState } from './Sidebar'
+import { Sidebar, useProjects, useSidebarMode, type ProjectsState } from './Sidebar'
 
 /**
  * Routing, such as it is: `?project=<id>` opens the editor on that project,
@@ -42,24 +42,37 @@ export function App() {
 
 /** Bare `/` with nothing to open yet: the shell, and a hint in the middle. */
 function Landing({ projects }: { projects: ProjectsState }) {
+  const [sidebarMode, toggleSidebarMode] = useSidebarMode()
+  const sidebar = (
+    <Sidebar
+      projects={projects}
+      currentId={null}
+      offline={false}
+      mode={sidebarMode}
+      onToggleMode={toggleSidebarMode}
+    />
+  )
   return (
     <div className="app">
       <div className="shell">
-        <Sidebar projects={projects} currentId={null} offline={false} />
-        <div className="landing">
-          {projects.status === 'loading' && <p>loading projects…</p>}
-          {projects.status === 'error' && (
-            <p>
-              {projects.message} — start it with <code>pnpm dev:api</code>, or{' '}
-              <a href="?demo=1">open the offline demo</a>.
-            </p>
-          )}
-          {projects.status === 'ready' && (
-            <p>
-              No projects yet. An agent creates them over MCP with <code>create_project</code>,
-              or <a href="?demo=1">open the offline demo</a>.
-            </p>
-          )}
+        {sidebarMode === 'docked' && sidebar}
+        <div className="workspace">
+          {sidebarMode === 'hover' && <header>{sidebar}</header>}
+          <div className="landing">
+            {projects.status === 'loading' && <p>loading projects…</p>}
+            {projects.status === 'error' && (
+              <p>
+                {projects.message} — start it with <code>pnpm dev:api</code>, or{' '}
+                <a href="?demo=1">open the offline demo</a>.
+              </p>
+            )}
+            {projects.status === 'ready' && (
+              <p>
+                No projects yet. An agent creates them over MCP with <code>create_project</code>,
+                or <a href="?demo=1">open the offline demo</a>.
+              </p>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -78,6 +91,72 @@ const PANEL_TITLES: Record<PanelId, string> = {
   review: 'Review',
 }
 
+/** Panel-header controls as drawn icons — text glyphs render tiny and shift
+ *  per font, and a control you have to aim at is a control that gets missed. */
+function GlyphIcon({ kind }: { kind: 'refresh' | 'expand' | 'restore' | 'close' }) {
+  const path = {
+    refresh: (
+      <>
+        <path d="M13.2 8a5.2 5.2 0 1 1-1.5-3.7" />
+        <path d="M13.4 2.6v3.2h-3.2" />
+      </>
+    ),
+    expand: <path d="M9.5 2.5h4v4M13.3 2.7 9.2 6.8M6.5 13.5h-4v-4M2.7 13.3l4.1-4.1" />,
+    restore: <path d="M13.5 6.5h-4v-4M13.3 2.7 9.2 6.8M2.5 9.5h4v4M6.6 9.4l-4.1 4.1" />,
+    close: <path d="m4 4 8 8M12 4l-8 8" />,
+  }[kind]
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {path}
+    </svg>
+  )
+}
+
+/** The ⋯ menu draws each panel with a glyph, Claude Code style. */
+function PanelIcon({ id }: { id: PanelId }) {
+  const path = {
+    // a folder
+    files: <path d="M1.5 4.5a1 1 0 0 1 1-1h3l1.5 2h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-10.5a1 1 0 0 1-1-1z" />,
+    // stacked layers
+    scene: (
+      <>
+        <path d="M8 2.5 14 6 8 9.5 2 6z" />
+        <path d="M2.5 9.5 8 12.5l5.5-3" />
+      </>
+    ),
+    // a check in a circle
+    review: (
+      <>
+        <circle cx="8" cy="8" r="6" />
+        <path d="M5.5 8.2 7.3 10l3.2-3.6" />
+      </>
+    ),
+  }[id]
+  return (
+    <svg
+      className="options-icon"
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {path}
+    </svg>
+  )
+}
+
 interface Panels {
   open: PanelId[]
   rightWidth: number
@@ -86,10 +165,12 @@ const PANELS_KEY = 'euclid.panels.v2'
 const DEFAULT_PANELS: Panels = { open: [], rightWidth: 340 }
 
 /** The stack narrower than this is unusable; the canvas needs at least this
- *  much to still be the thing you are working on. The sidebar rail is fixed. */
+ *  much to still be the thing you are working on. The clamp always budgets
+ *  for the docked sidebar — hover mode just leaves slack, which is the safe
+ *  direction. */
 const MIN_STACK = 220
 const MIN_EDITOR = 360
-const RAIL_WIDTH = 46
+const SIDEBAR_WIDTH = 252
 
 function loadPanels(): Panels {
   try {
@@ -122,7 +203,7 @@ function savePanels(p: Panels) {
 /** A drag can never squeeze the editor out of existence: the stack is bounded
  *  by what the rail and a usable canvas already claim. */
 function clampPanels(p: Panels): Panels {
-  const max = Math.max(MIN_STACK, window.innerWidth - RAIL_WIDTH - MIN_EDITOR)
+  const max = Math.max(MIN_STACK, window.innerWidth - SIDEBAR_WIDTH - MIN_EDITOR)
   const rightWidth = Math.max(MIN_STACK, Math.min(p.rightWidth, max))
   return rightWidth === p.rightWidth ? p : { ...p, rightWidth }
 }
@@ -145,7 +226,12 @@ function Editor({
   const [solo, setSolo] = useState<string | null>(null)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [panels, setPanels] = useState<Panels>(loadPanels)
+  const [sidebarMode, toggleSidebarMode] = useSidebarMode()
   const [optionsOpen, setOptionsOpen] = useState(false)
+  /** One card can take the whole stack; the rest collapse to their headers.
+   *  A viewing choice, like solo — deliberately not persisted. The open
+   *  file's viewer is a card too, so it participates. */
+  const [maximized, setMaximized] = useState<PanelId | 'viewer' | null>(null)
   /** True mid-drag, so the whole app can stop selecting text under the cursor. */
   const [resizing, setResizing] = useState(false)
 
@@ -161,26 +247,27 @@ function Editor({
     `${assetReload}:${reviewBump}:${doc ? [...assetIdsInDoc(doc)].sort().join(',') : ''}`,
   )
 
-  // The editor column is a tab strip: the canvas is tab zero and never closes,
-  // and every opened file is a tab beside it, VS Code style.
-  const [openIds, setOpenIds] = useState<string[]>([])
-  const [activeTab, setActiveTab] = useState<string>('canvas')
-  const openFiles = openIds
-    .map((id) => assets.files?.find((f) => f.id === id))
-    .filter((f): f is ProjectFile => !!f)
-
-  // A file deleted from the tree (or by an agent, over the same list) takes its
-  // tab with it — a tab pointing at a 404 is worse than no tab.
+  // A file opens *inside the Files panel*, in a viewer section under the tree
+  // — the centre belongs to the canvas and timeline alone. One file at a time;
+  // clicking the same file again closes it.
+  const [viewFileId, setViewFileId] = useState<string | null>(null)
+  // A file deleted from the tree (or by an agent, over the same list) takes
+  // its viewer with it — a viewer pointing at a 404 is worse than none.
   useEffect(() => {
     if (!assets.files) return
-    const alive = new Set(assets.files.map((f) => f.id))
-    setOpenIds((ids) => (ids.every((id) => alive.has(id)) ? ids : ids.filter((id) => alive.has(id))))
-  }, [assets.files])
+    if (viewFileId && !assets.files.some((f) => f.id === viewFileId)) setViewFileId(null)
+  }, [assets.files, viewFileId])
+  const viewFile = assets.files?.find((f) => f.id === viewFileId) ?? null
+  // A maximized viewer whose card just left the stack (file closed, Files
+  // panel closed) must not leave every other card folded to its header.
   useEffect(() => {
-    if (activeTab !== 'canvas' && !openIds.includes(activeTab)) setActiveTab('canvas')
-  }, [openIds, activeTab])
+    if (maximized === 'viewer' && (!viewFile || !panels.open.includes('files'))) {
+      setMaximized(null)
+    }
+  }, [maximized, viewFile, panels.open])
 
-  const togglePanel = (id: PanelId) =>
+  const togglePanel = (id: PanelId) => {
+    setMaximized((m) => (m === id ? null : m))
     setPanels((p) => {
       const next = clampPanels({
         ...p,
@@ -189,6 +276,7 @@ function Editor({
       savePanels(next)
       return next
     })
+  }
 
   // An open review means an agent is stalled, and a stalled agent outranks a
   // closed-by-default stack — a *new* question opens the Review panel itself.
@@ -235,28 +323,6 @@ function Editor({
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // Opening the sixth file must not put its tab off the end of the strip.
-  const stripRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    stripRef.current?.querySelector('.tab.active')?.scrollIntoView({
-      block: 'nearest',
-      inline: 'nearest',
-    })
-  }, [activeTab, openIds])
-
-  const openFile = (file: ProjectFile) => {
-    setOpenIds((ids) => (ids.includes(file.id) ? ids : [...ids, file.id]))
-    setActiveTab(file.id)
-  }
-
-  const closeTab = (id: string) => {
-    const i = openIds.indexOf(id)
-    const next = openIds.filter((x) => x !== id)
-    setOpenIds(next)
-    // Focus the neighbour the way an editor does, not always the canvas.
-    if (activeTab === id) setActiveTab(next[Math.min(i, next.length - 1)] ?? 'canvas')
-  }
-
   // Playback clock: rAF accumulates into `time`; rendering itself stays a pure
   // function of (doc, time), so scrubbing and playing are the same operation.
   const playingRef = useRef(playing)
@@ -288,8 +354,13 @@ function Editor({
   }
 
   const at = globalToScene(doc, time)
-  const activeFile = openFiles.find((f) => f.id === activeTab) ?? null
   const stackOpen = panels.open.length > 0
+
+  // The stack's render order: the viewer card rides directly under Files,
+  // and exists only while Files is open and a file is selected.
+  const stackEntries: (PanelId | 'viewer')[] = panels.open.flatMap((id) =>
+    id === 'files' && viewFile ? [id, 'viewer' as const] : [id],
+  )
 
   const panelBody = (id: PanelId) => {
     switch (id) {
@@ -297,8 +368,8 @@ function Editor({
         return (
           <Assets
             state={assets}
-            activeId={activeTab}
-            onOpen={openFile}
+            activeId={viewFileId}
+            onOpen={(f) => setViewFileId((cur) => (cur === f.id ? null : f.id))}
             offline={offline}
             projectId={projectId}
             onUploaded={() => setAssetReload((n) => n + 1)}
@@ -330,13 +401,24 @@ function Editor({
     }
   }
 
+  const sidebar = (
+    <Sidebar
+      projects={projects}
+      currentId={projectId}
+      offline={offline}
+      mode={sidebarMode}
+      onToggleMode={toggleSidebarMode}
+    />
+  )
+
   return (
     <div className={`app${resizing ? ' resizing' : ''}`}>
       <div className="shell">
-        <Sidebar projects={projects} currentId={projectId} offline={offline} />
+        {sidebarMode === 'docked' && sidebar}
 
         <div className="workspace">
           <header>
+            {sidebarMode === 'hover' && sidebar}
             <span className="doc-glyph">◈</span>
             <span className="doc-title">{doc.name}</span>
             {offline && <span className="badge offline">offline demo — not a real project</span>}
@@ -362,9 +444,7 @@ function Editor({
                   <div className="options-menu">
                     {(Object.keys(PANEL_TITLES) as PanelId[]).map((id) => (
                       <button key={id} onClick={() => togglePanel(id)}>
-                        <span className="options-check">
-                          {panels.open.includes(id) ? '✓' : ''}
-                        </span>
+                        <PanelIcon id={id} />
                         {PANEL_TITLES[id]}
                         {id === 'review' && openDecisionCount > 0 && (
                           <span className="decision-badge">{openDecisionCount}</span>
@@ -372,6 +452,9 @@ function Editor({
                         <span className="grow" />
                         {id === 'files' && <span className="options-key">⌘B</span>}
                         {id === 'scene' && <span className="options-key">⌘⌥B</span>}
+                        <span className="options-check">
+                          {panels.open.includes(id) ? '✓' : ''}
+                        </span>
                       </button>
                     ))}
                   </div>
@@ -382,41 +465,17 @@ function Editor({
 
           <main className="workbench">
             <section className="editor">
-              <div className="tabstrip" ref={stripRef}>
-                <button
-                  className={`tab tab-canvas${activeTab === 'canvas' ? ' active' : ''}`}
-                  onClick={() => setActiveTab('canvas')}
-                >
-                  <span className="tab-glyph">◉</span> canvas
-                </button>
-                {openFiles.map((f) => (
-                  <span key={f.id} className={`tab${activeTab === f.id ? ' active' : ''}`}>
-                    <button className="tab-open" onClick={() => setActiveTab(f.id)} title={f.path}>
-                      <span className="tab-glyph">{fileGlyph(f)}</span> {assetBasename(f.path)}
-                    </button>
-                    <button className="tab-close" onClick={() => closeTab(f.id)} title="close">
-                      ✕
-                    </button>
-                  </span>
-                ))}
-              </div>
-
+              {/* The centre is the canvas and the timeline, nothing else —
+                  files open inside the Files panel, so the preview is never
+                  covered and Pixi's app never needs hiding or rebuilding. */}
               <div className="editor-body">
-                {/* The canvas is hidden, never unmounted: Pixi's app and its
-                    ticker are expensive to rebuild, and tearing one down to
-                    read a text file would restart the preview every time you
-                    glance at one. */}
-                <div
-                  className="stage"
-                  style={{ display: activeTab === 'canvas' ? 'flex' : 'none' }}
-                >
+                <div className="stage">
                   <Preview doc={doc} time={time} />
                   {/* Only appears for a scene that has a camera — otherwise
                       the frame is the canvas and there is nothing to say. */}
                   <CameraFrame doc={doc} time={time} />
                   {captions && <CaptionOverlay doc={doc} time={time} playing={playing} />}
                 </div>
-                {activeFile && <FileViewer key={activeFile.id} file={activeFile} />}
               </div>
 
               <AudioMixer doc={doc} time={time} playing={playing} muted={muted} solo={solo} />
@@ -453,33 +512,73 @@ function Editor({
             )}
             {stackOpen && (
               <aside className="stack" style={{ width: panels.rightWidth }}>
-                {panels.open.map((id) => (
-                  <section key={id} className="stack-panel">
-                    <div className="stack-head">
-                      <span>{PANEL_TITLES[id]}</span>
-                      {id === 'files' && (
-                        <span className="count">{assets.files?.length ?? ''}</span>
-                      )}
-                      {id === 'review' && openDecisionCount > 0 && (
-                        <span className="decision-badge">{openDecisionCount}</span>
-                      )}
-                      <span className="grow" />
-                      {id === 'files' && (
-                        <button
-                          className="icon-btn"
-                          onClick={() => void assets.reload()}
-                          title="refresh"
-                        >
-                          ⟳
+                {stackEntries.map((id) => {
+                  const state =
+                    maximized === null ? '' : maximized === id ? ' max' : ' min'
+                  const expandBtn = stackEntries.length > 1 && (
+                    <button
+                      className="icon-btn"
+                      onClick={() => setMaximized((m) => (m === id ? null : id))}
+                      title={maximized === id ? 'restore' : 'expand'}
+                    >
+                      <GlyphIcon kind={maximized === id ? 'restore' : 'expand'} />
+                    </button>
+                  )
+                  // The open file is its own card, right under Files: a
+                  // separate section, not a footnote inside the tree.
+                  if (id === 'viewer') {
+                    return (
+                      <section key="viewer" className={`stack-panel${state}`}>
+                        <div className="stack-head">
+                          <span className="asset-glyph">{fileGlyph(viewFile!)}</span>
+                          <span className="stack-title">{assetBasename(viewFile!.path)}</span>
+                          <span className="grow" />
+                          {expandBtn}
+                          <button
+                            className="icon-btn"
+                            onClick={() => setViewFileId(null)}
+                            title="close"
+                          >
+                            <GlyphIcon kind="close" />
+                          </button>
+                        </div>
+                        <div className="stack-body">
+                          {/* keyed so switching files resets the fetch state */}
+                          <FileViewer key={viewFile!.id} file={viewFile!} />
+                        </div>
+                      </section>
+                    )
+                  }
+                  return (
+                    <section key={id} className={`stack-panel${state}`}>
+                      <div className="stack-head">
+                        <PanelIcon id={id} />
+                        <span className="stack-title">{PANEL_TITLES[id]}</span>
+                        {id === 'files' && (
+                          <span className="count">{assets.files?.length ?? ''}</span>
+                        )}
+                        {id === 'review' && openDecisionCount > 0 && (
+                          <span className="decision-badge">{openDecisionCount}</span>
+                        )}
+                        <span className="grow" />
+                        {id === 'files' && (
+                          <button
+                            className="icon-btn"
+                            onClick={() => void assets.reload()}
+                            title="refresh"
+                          >
+                            <GlyphIcon kind="refresh" />
+                          </button>
+                        )}
+                        {expandBtn}
+                        <button className="icon-btn" onClick={() => togglePanel(id)} title="close">
+                          <GlyphIcon kind="close" />
                         </button>
-                      )}
-                      <button className="icon-btn" onClick={() => togglePanel(id)} title="close">
-                        ✕
-                      </button>
-                    </div>
-                    <div className="stack-body">{panelBody(id)}</div>
-                  </section>
-                ))}
+                      </div>
+                      <div className="stack-body">{panelBody(id)}</div>
+                    </section>
+                  )
+                })}
               </aside>
             )}
           </main>
