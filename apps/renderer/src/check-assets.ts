@@ -3,8 +3,10 @@
  * Run: pnpm --filter @euclid/renderer exec tsx src/check-assets.ts
  *
  * Proves the storage layer narration audio depends on: bytes survive the
- * round-trip unchanged, and only the owning user (or an internal caller like
- * the render worker) can read them back.
+ * round-trip unchanged, and the same tenancy rule governs both ends of the
+ * asset lifecycle — only the owning user (or an internal caller acting as
+ * nobody, like the render worker) can write files into a project or read them
+ * back out.
  */
 import './load-env'
 import assert from 'node:assert'
@@ -78,17 +80,29 @@ assert.equal(missing.status, 404, 'unknown asset → 404')
 
 // 5. The two upload doors, and what each actually promises.
 //
-// This used to assert that a keyless request was refused, on the grounds that
+// This once asserted that a keyless request was refused, on the grounds that
 // creation was internal-only. That stopped being true when plans/003 chose
 // "users bring their own media" and opened the route to the owning user, and
-// the assertion had since been failing against correct behaviour.
+// the assertion had been failing against correct behaviour ever since.
 //
-// The non-owner 403 is deliberately **not** asserted here, because neither
-// caller this check can construct is a non-owner: `as()` presents the internal
-// key, which the route trusts about identity by design, and a keyless caller
-// under DEV_ALLOW_ANON *is* the owner. That case needs a real session, which is
-// Phase 6's auth work. What is reachable — and is the whole ingest front door —
-// is the type allowlist on the user's side.
+// The non-owner 403 was then left unasserted, on the grounds that no caller
+// this check can construct is a non-owner: `as()` presents the internal key,
+// which the route trusted about identity, and a keyless caller under
+// DEV_ALLOW_ANON *is* the owner. That reasoning is obsolete, because trusting
+// the key about identity was itself the bug. The key authenticates a worker,
+// not a user, so a keyed caller claiming someone else's id **is** a non-owner
+// and is refused — no session and no Phase 6 required. This is the assertion
+// whose absence let the upload route drift out of step with the read route
+// beside it, and it is the exact mirror of case 3.
+const intruderUpload = await fetch(`${API_URL}/api/projects/${projectId}/assets?kind=audio`, {
+  method: 'POST',
+  headers: { ...as(INTRUDER), 'content-type': 'audio/mpeg' },
+  body: payload,
+})
+assert.equal(intruderUpload.status, 403, `non-owner must not upload, got ${intruderUpload.status}`)
+
+// Unknown project is 404 rather than 403: the gate looks the project up before
+// it decides anything, so a probe cannot tell "not yours" from "does not exist".
 const unknownProject = await fetch(`${API_URL}/api/projects/no-such-project/assets?kind=audio`, {
   method: 'POST',
   headers: { ...as(OWNER), 'content-type': 'audio/mpeg' },
@@ -96,6 +110,9 @@ const unknownProject = await fetch(`${API_URL}/api/projects/no-such-project/asse
 })
 assert.equal(unknownProject.status, 404, 'uploading to a project that does not exist → 404')
 
+// What the key *does* buy is trust about content, and that is all it buys.
+// Without it this is a user upload and is held to the type allowlist — the
+// whole ingest front door.
 const badType = await fetch(`${API_URL}/api/projects/${projectId}/assets`, {
   method: 'POST',
   headers: { 'content-type': 'application/x-msdownload' },
@@ -106,7 +123,9 @@ const refusal = (await badType.json()) as { detail?: string; allowed?: string[] 
 assert.match(refusal.detail ?? '', /x-msdownload/, 'and the refusal names the type that was sent')
 assert.ok(refusal.allowed?.includes('video/mp4'), 'and lists what would have worked')
 
-// 6. Bad kind is rejected before anything is stored.
+// 6. Bad kind is rejected before anything is stored. An internal caller is
+// believed about `kind`, so this is the one that has to be validated.
+
 const badKind = await fetch(`${API_URL}/api/projects/${projectId}/assets?kind=spreadsheet`, {
   method: 'POST',
   headers: { ...as(OWNER), 'content-type': 'audio/mpeg' },

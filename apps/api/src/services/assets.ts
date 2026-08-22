@@ -4,7 +4,7 @@ import {
   normalizeAssetPath,
   type AssetRecord,
 } from '@euclid/dsl'
-import { AccessError, docOf, requireProjectAccess } from '../shared'
+import { AccessError, docOf, mayAccess, requireProjectAccess } from '../shared'
 import type { Env } from '../env'
 
 export interface AssetRow {
@@ -114,10 +114,16 @@ export async function loadAsset(env: Env, assetId: string) {
     .first<AssetRow & { owner: string }>()
 }
 
-async function requireAsset(env: Env, assetId: string, userId: string) {
+/**
+ * An asset's gate. Assets have no owner column of their own — tenancy comes
+ * from the project they hang off, which is why `loadAsset` joins it — and the
+ * rule applied to that owner is {@link mayAccess}, the same one the project
+ * routes use. Exported because the read route needs it too.
+ */
+export async function requireAsset(env: Env, assetId: string, userId: string) {
   const asset = await loadAsset(env, assetId)
   if (!asset) throw new AccessError(`asset ${assetId} not found`, 404)
-  if (asset.owner !== userId && userId !== 'internal') throw new AccessError('forbidden', 403)
+  if (!mayAccess(asset.owner, userId)) throw new AccessError('forbidden', 403)
   return asset
 }
 

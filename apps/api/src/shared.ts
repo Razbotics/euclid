@@ -30,10 +30,29 @@ export class AccessError extends Error {
 }
 
 /**
+ * **The tenancy rule.** Every gate in this worker is this one predicate, so
+ * that a route cannot quietly decide something different — which is how the
+ * asset upload route came to disagree with the asset read route.
+ *
+ * The row's owner is looked up in D1 and compared against the *claimed*
+ * identity. The internal service key is not part of it: the key says "this
+ * caller is one of our own workers", not "this caller may touch anything". A
+ * worker acting on a user's behalf forwards that user's id (the MCP worker
+ * does) and is held to exactly that user's rights; a worker acting on nobody's
+ * behalf sends no `x-user-id` at all, the middleware names it `internal`, and
+ * that is the single identity allowed past a mismatch.
+ *
+ * Note what this makes impossible: a leaked internal key can no longer be
+ * pointed at an arbitrary project by claiming to be its owner — the claim is
+ * checked against D1 either way.
+ */
+export function mayAccess(ownerId: string, userId: string): boolean {
+  return ownerId === userId || userId === 'internal'
+}
+
+/**
  * Ownership gate shared by every server-side path that isn't a raw DO forward.
- * Tenancy is enforced by looking the project up in D1, never by trusting the
- * caller — `internal` is the render/MCP worker acting on a user's behalf and is
- * the only identity allowed past a mismatch.
+ * See {@link mayAccess} for the rule itself.
  */
 export async function requireProjectAccess(
   env: Env,
@@ -44,9 +63,7 @@ export async function requireProjectAccess(
     .bind(projectId)
     .first<{ user_id: string }>()
   if (!row) throw new AccessError(`project ${projectId} not found`, 404)
-  if (row.user_id !== userId && userId !== 'internal') {
-    throw new AccessError('forbidden', 403)
-  }
+  if (!mayAccess(row.user_id, userId)) throw new AccessError('forbidden', 403)
 }
 
 /**

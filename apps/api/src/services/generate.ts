@@ -1,6 +1,6 @@
 import { slugify } from '../shared'
 import { adjustCredits, getBalance } from '../billing'
-import { requireProjectAccess } from '../shared'
+import { mayAccess, requireProjectAccess } from '../shared'
 import {
   extensionFor,
   falModel,
@@ -209,7 +209,7 @@ export async function collectGeneration(
     .bind(jobId)
     .first<GenerationJobRow>()
   if (!job) throw new GenerationError('job_not_found', `generation ${jobId} not found`, 404)
-  if (job.user_id !== userId && userId !== 'internal') {
+  if (!mayAccess(job.user_id, userId)) {
     throw new GenerationError('forbidden', 'not your generation', 403)
   }
 

@@ -284,7 +284,7 @@ every run** — re-run and re-paste after restarting.
 | `check-gateway.ts` | agent gateway (plans/008): instructions → describe → execute, and **every capability in the catalog** — transitions and overlap-replace, the credit gate, both `update_node` traps, arg coercion, asset in-use refusal (free; needs `dev:api` only) |
 | `check-decisions.ts` | agent → human → agent question loop, driven headless as a shell-less client would (free; needs `dev:api` + `dev:mcp`) |
 | `check-delete.ts` | project deletion: confirm guard, side-effect-free dry run, tenancy, and that the cascade clears D1 rows, R2 bytes **and** the Durable Object's document (free; needs `dev:api`) |
-| `check-assets.ts` | asset upload → download is byte-identical; tenancy enforced; the explorer routes the editor binds to — list, move (incl. traversal refusal), delete (needs `dev:api`) |
+| `check-assets.ts` | asset upload → download is byte-identical; tenancy enforced on **both** ends (a keyed caller claiming another user's id can neither write nor read); the explorer routes the editor binds to — list, move (incl. traversal refusal), delete (needs `dev:api`, with `DEV_ALLOW_ANON=1` for the user-upload 415 case) |
 | `check-narration.ts [--refund]` | TTS generation end-to-end: pricing, debit, op reaches the doc, overflow warning (**spends credits**; `--refund` needs a broken key, costs nothing) |
 | `check-app.ts` | project list renders and opens a project; demo editor loads; zero console/page errors |
 | `check-narration-ui.ts` | editor narration preview: audio loads cross-origin, exact captions render, overrun panel fixes the scene (**spends credits**; needs `dev:api` + `dev:web`) |

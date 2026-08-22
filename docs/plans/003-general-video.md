@@ -183,6 +183,20 @@ same shape (a rule that is silently inert):
   stretches (`align-self: stretch; flex: 1; min-height: 0`) and the image is
   genuinely contained.
 
+One security gotcha, found 2026-08-22 while writing transcode+proxy:
+
+- **"Two callers with different rights" is about content, not about tenancy** —
+  and the upload route read it as both. It gated on the internal key *alone*,
+  so any caller holding the key could write into any project regardless of the
+  `x-user-id` it claimed, while the read route beside it honoured the claim and
+  refused. The rule is now one predicate, `mayAccess` in
+  `apps/api/src/shared.ts`, that every gate calls: the key authenticates a
+  *worker*, not a *user*. Tightening it broke nothing, because the in-worker
+  producers (TTS, fal) never used the HTTP route — they call `storeAsset()`
+  directly after their own `requireProjectAccess`. `check-assets.ts` case 5 now
+  asserts the cross-tenant write is refused; against the pre-fix worker that
+  same call returned 200.
+
 Still open:
 - Thumbnails in the tree and drag-to-timeline — both wait on the `video` and
   `image` nodes, since there is nothing to drop onto yet.
