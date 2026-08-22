@@ -1,0 +1,33 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "api",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@euclid/api", "dev"],
+      "port": 8787,
+      "autoPort": false
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@euclid/web", "dev"],
+      "port": 5173,
+      "autoPort": false
+    },
+    {
+      "name": "mcp",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@euclid/mcp", "dev"],
+      "port": 8788,
+      "autoPort": false
+    },
+    {
+      "name": "render-worker",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@euclid/renderer", "exec", "tsx", "src/render-worker.ts"],
+      "port": 8790,
+      "autoPort": false
+    }
+  ]
+}
