@@ -606,11 +606,17 @@ main.workbench { display: flex; flex: 1; min-height: 0; }
 .asset-meta { font-size: 10px; color: var(--text-faint); white-space: nowrap; }
 .asset-actions { display: flex; gap: 2px; opacity: 0; }
 .asset-file:hover .asset-actions { opacity: 1; }
+/* Row actions get the same treatment as panel-header controls: a glyph
+   centred in a real hit box, not a speck of text you have to aim at. */
 .asset-actions a, .asset-actions button {
   background: none; border: none; color: var(--text-dim); cursor: pointer;
-  font-size: 11px; padding: 1px 3px; text-decoration: none; line-height: 1;
+  font-size: 14px; line-height: 1; padding: 0; text-decoration: none;
+  width: 20px; height: 20px; border-radius: 4px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
 }
-.asset-actions a:hover, .asset-actions button:hover { color: var(--text); }
+.asset-actions a:hover, .asset-actions button:hover:not(:disabled) {
+  background: var(--bg-hover); color: var(--text);
+}
 .asset-actions button:disabled { opacity: .4; cursor: default; }
 
 /* ---------- inline file viewers ---------- */
