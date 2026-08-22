@@ -1035,6 +1035,19 @@ route at all — TTS and fal call `storeAsset()` directly, after their own
 `requireProjectAccess` — which is why holding the route to the rule costs them
 nothing.
 
+**That sentence about a leaked key is narrower than it reads, and the limit is
+worth knowing.** What impersonation buys is now nothing; what the key itself
+buys is unchanged. A holder who sends *no* `x-user-id` is named `internal` and
+passes every gate for every project — measured, not assumed: a keyed upload
+claiming another user's id is refused 403, and the identical upload with the
+header removed succeeds. `INTERNAL_API_KEY` is therefore a full-access
+credential, in the same class of secret as a database password, and the
+tightening closed impersonation rather than leakage. Closing the rest means
+authorising the genuinely user-less work — the render worker fetching narration
+audio, and the probe, shots and proxy queues, which by design span every user —
+per job instead of per process. That is a Phase 6 question alongside the auth
+UI, not a comment fix.
+
 Credits meter renders + TTS only — agent
 iteration must stay free (users burn their own Claude tokens over MCP), so
 MCP tools return compact text (outlines, ids) rather than anything expensive.

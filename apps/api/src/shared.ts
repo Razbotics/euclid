@@ -45,6 +45,18 @@ export class AccessError extends Error {
  * Note what this makes impossible: a leaked internal key can no longer be
  * pointed at an arbitrary project by claiming to be its owner — the claim is
  * checked against D1 either way.
+ *
+ * And note what it leaves possible, because the sentence above is narrower
+ * than it reads: the holder of a leaked key can simply **send no `x-user-id`
+ * at all**, be named `internal` by the middleware, and pass every gate here
+ * for every project. Measured, not reasoned about — a keyed upload claiming
+ * another user's id is refused 403, and the same upload with the header
+ * removed succeeds. So this closes *impersonation*, not key leakage; the key
+ * remains a full-access credential and belongs in the same class of secret as
+ * a database password. Removing that last bypass means giving the workers
+ * which legitimately act on nobody's behalf — the render worker fetching
+ * narration audio, the probe/shots/proxy queues — a way to be authorised per
+ * job rather than per process, which is real work and not a comment.
  */
 export function mayAccess(ownerId: string, userId: string): boolean {
   return ownerId === userId || userId === 'internal'
