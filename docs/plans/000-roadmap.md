@@ -474,6 +474,19 @@ agent holding a terminal too.
       **UI** and the credits page are still to do
 - [ ] Deploy: workers, D1, R2, Containers; production secrets
 
+## Parallel track: agent surface gaps → plans/011-agent-surface-gaps.md
+Proposed 2026-08-22, from driving the surface through milestone run 8 —
+gaps ranked by calls actually wasted, not plausibility. Top of the list:
+draw-order control (rebuild-to-reorder cost more than everything else
+combined), a free `sample_at` read over resolved state, a naming-convention
+pass, and undo over the event log that already exists to provide it.
+- [ ] Draw-order: `reorder_node` or an insert-position on creators
+- [ ] `sample_at` — resolved positions at time t, without pixels
+- [ ] Catalog naming-convention pass
+- [ ] `revert_to_version` over the DO event log
+- [ ] Composition review: decisions carry a preview capture
+- [ ] Camera/path interaction warning; geometry sugar; batch executor
+
 ## Parallel track: agent gateway → plans/008-mcp-gateway.md
 Started 2026-08-15. Collapses the agent surface onto one implementation: a
 capability catalog in the API worker behind three fixed MCP tools, so a new
