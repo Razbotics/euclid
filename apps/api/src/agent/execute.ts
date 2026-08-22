@@ -128,8 +128,27 @@ export function buildInstructions(): string {
     ...wrap(`For space, and inert until the camera turns: ${nodePhrases('spatial')}.`),
     '',
     '  Coordinates are canvas pixels, origin top-left — a 1920x1080 canvas centres',
-    '  at (960, 540). Nodes anchor at their centre. Every `start` and `duration` is',
-    '  in SCENE-LOCAL seconds.',
+    '  at (960, 540). Nodes anchor at their centre.',
+    '',
+    '  TWO CONVENTIONS, so a name you learn on one capability transfers to the next:',
+    ...wrap(
+      `**Time is scene-local when the call names a scene, and global when it does not.** ` +
+        `A ${ref('write_on')} start, an ${ref('animate')} start/duration and ` +
+        `${ref('sample_at')}'s \`t\` all take sceneId, so they are seconds from that ` +
+        `scene's opening. ${ref('preview_frames')} and the audio lanes ` +
+        `(${ref('add_audio_clip')}) do not name a scene, so their times run from the ` +
+        `start of the whole video. Nothing is both.`,
+      '    ',
+    ),
+    ...wrap(
+      `**\`x\`/\`y\` are absolute canvas pixels and place the node; anything else ` +
+        `geometric in the same call is measured FROM there.** A ${ref('add_path')}'s ` +
+        `points, a line's \`x2\`/\`y2\`, a ${ref('add_vector3')}'s from/to and a group's ` +
+        `children are all offsets. The one exception is ${ref('add_axes')} / ` +
+        `${ref('plot_function')}, whose x/y are the TOP-LEFT of the plot rectangle ` +
+        `rather than a centre — a rectangle has no natural anchor.`,
+      '    ',
+    ),
     '',
     `  A scene can also have a camera (${ref('set_camera')} / ${ref('move_camera')}). Node`,
     '  coordinates never change — the camera decides which part of the scene the',
@@ -199,6 +218,13 @@ export function buildInstructions(): string {
         `it looks right, and layout errors are invisible in any text you can read. ` +
         `${ref('get_project')} is still the cheap read and reports pacing (dead air is ` +
         `flagged \`(long)\`); ${ref('get_scene')} gives exact keyframes.`,
+    ),
+    '',
+    ...wrap(
+      `**A wrong turn is cheap to undo.** ${ref('get_history')} lists every version, and ` +
+        `${ref('revert_to_version')} puts the document back to one of them in a single call — ` +
+        `ids, tracks and transitions intact. Reverting appends rather than rewinds, so nothing ` +
+        `is destroyed and a revert can itself be reverted. Prefer it to rebuilding by hand.`,
     ),
     '',
     ...wrap(

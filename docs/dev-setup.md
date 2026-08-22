@@ -361,7 +361,7 @@ every run** — re-run and re-paste after restarting.
 | `check-narration.ts [--refund]` | TTS generation end-to-end: pricing, debit, op reaches the doc, overflow warning (**spends credits**; `--refund` needs a broken key, costs nothing) |
 | `check-app.ts` | project list renders and opens a project; demo editor loads; zero console/page errors |
 | `check-narration-ui.ts` | editor narration preview: audio loads cross-origin, exact captions render, overrun panel fixes the scene (**spends credits**; needs `dev:api` + `dev:web`) |
-| `check-live.ts <projectId>` | external op appears in the open editor via WebSocket |
+| `check-live.ts <projectId>` | external op appears in the open editor via WebSocket — **and so does a revert** (plans/011): the editor renames, renames again, then the project is reverted over HTTP and the old name returns live with no reload. That works only because a restore is an ordinary op, so no editor code knows undo exists |
 | `render.ts --project <id>` | full MP4 export with narration audio (needs ffmpeg) |
 | `check-mux.ts` | A/V sync in a real render, measured with `silencedetect` (**spends credits**; needs ffmpeg + `dev:api` + `dev:web`) |
 | `bench-webcodecs.ts` | WebCodecs codec support + 1080p encode throughput in headless Chromium |

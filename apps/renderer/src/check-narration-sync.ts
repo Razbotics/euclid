@@ -68,7 +68,7 @@ const nodeId = (await ok('add_latex', {
 
 await ok('set_narration', {
   projectId, sceneId,
-  narrationText: 'Here is the most beautiful equation in all of mathematics.',
+  text: 'Here is the most beautiful equation in all of mathematics.',
 })
 await ok('generate_narration', { projectId, sceneId }, true)
 
@@ -92,7 +92,7 @@ assert.ok(
 // ---------- 2. rewriting the script moves it — the whole point ----------
 await ok('set_narration', {
   projectId, sceneId,
-  narrationText:
+  text:
     'Mathematicians have argued for a very long time about which formula deserves the title, ' +
     'and most of them settle on this equation.',
 })

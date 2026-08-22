@@ -58,7 +58,16 @@ export class ProjectDO extends DurableObject<Env> {
       }
       if (!this.doc) {
         this.doc = emptyDoc(body.id, body.name, body.canvas)
-        await this.ctx.storage.put({ doc: this.doc, version: this.version })
+        // `snap:base` is written here, and only here, for a new project: this
+        // is the one moment version 0 exists, and it cannot be reconstructed
+        // afterwards because the canvas arrives as an argument rather than as
+        // an op. See ensureHistoryBase.
+        await this.ctx.storage.put({
+          doc: this.doc,
+          version: this.version,
+          historyFrom: 0,
+          'snap:base': this.doc,
+        })
       }
       return json({ version: this.version })
     }
@@ -106,6 +115,75 @@ export class ProjectDO extends DurableObject<Env> {
         start: eventKey(since + 1),
       })
       return json({ version: this.version, events: [...events.values()] })
+    }
+
+    /**
+     * Undo (plans/011 gap 4). The event log has always been here — this is
+     * what finally reads it backwards.
+     *
+     * A revert is an ordinary op envelope, so it takes a version of its own
+     * rather than rewinding the counter: history is append-only, every open
+     * editor learns about it on the same WebSocket as any other edit, and a
+     * revert can itself be reverted. Nothing is destroyed by going back.
+     */
+    if (url.pathname === '/revert' && request.method === 'POST') {
+      if (!this.doc) return json({ error: 'not_initialized' }, 404)
+      const { version, actor } = (await request.json()) as {
+        version: number
+        actor: { type: 'agent' | 'user' | 'system'; id?: string }
+      }
+      if (!Number.isInteger(version) || version < 0 || version > this.version) {
+        return json(
+          {
+            error: 'bad_version',
+            detail: `version must be a whole number between 0 and ${this.version}`,
+          },
+          400,
+        )
+      }
+      if (version === this.version) {
+        return json(
+          { error: 'bad_version', detail: `the project is already at version ${version}` },
+          400,
+        )
+      }
+      const at = await this.docAtVersion(version)
+      if ('error' in at) return json({ error: 'no_history', detail: at.error }, 422)
+      const before = this.version
+      const res = await this.submit({
+        id: `revert-${before}-to-${version}`,
+        baseVersion: before,
+        actor,
+        ops: [{ kind: 'doc.restore', doc: at.doc, fromVersion: version }],
+      })
+      if (!res.ok) return res
+      return json({ version: this.version, restoredFrom: version, wasVersion: before })
+    }
+
+    /** What there is to revert to — one line per version, cheap enough to list. */
+    if (url.pathname === '/history') {
+      const from = (await this.ctx.storage.get<number>('historyFrom')) ?? null
+      const events = await this.ctx.storage.list<{
+        version: number
+        envelope: OpEnvelope
+        at: number
+      }>({ prefix: 'evt:' })
+      return json({
+        version: this.version,
+        historyFrom: from,
+        entries: [...events.values()]
+          .sort((a, b) => a.version - b.version)
+          .map((e) => ({
+            version: e.version,
+            at: e.at,
+            actor: e.envelope.actor,
+            // The op kinds, not the ops: an envelope can carry a whole
+            // document (a restore does), and a history listing that echoed
+            // one back would be larger than the project.
+            kinds: e.envelope.ops.map((o) => o.kind),
+            restoredFrom: e.envelope.ops.find((o) => o.kind === 'doc.restore')?.fromVersion,
+          })),
+      })
     }
 
     // ---------- decisions ----------
@@ -393,11 +471,99 @@ export class ProjectDO extends DurableObject<Env> {
     return [...rows.values()].sort((a, b) => a.createdAt - b.createdAt)
   }
 
+  /**
+   * The document history is anchored on one snapshot, not on version 0.
+   *
+   * Replaying the event log needs a base, and version 0 is *not* recoverable
+   * from the log: a project's canvas arrives through `/init`, never as an op,
+   * so an empty document reconstructed from the current one would guess it.
+   * Instead the base is stored explicitly — at `/init` for new projects, and
+   * lazily on the next write for projects that predate this, whose history
+   * therefore begins at whatever version they were on. Saying "history starts
+   * at 14" is honest; pretending to replay to 0 and quietly inventing the
+   * canvas is not.
+   *
+   * One snapshot, not one per version: the log plus a base reconstructs any
+   * version in between, and snapshots are the size of the whole document.
+   */
+  private async ensureHistoryBase(): Promise<void> {
+    if ((await this.ctx.storage.get<number>('historyFrom')) !== undefined) return
+    await this.ctx.storage.put({ historyFrom: this.version, 'snap:base': this.doc })
+  }
+
+  /**
+   * The document as it stood at `version`, rebuilt from the base plus the log.
+   *
+   * Self-validating on purpose: it replays all the way to the *current*
+   * version and compares with the document actually stored. If those disagree
+   * — a trimmed log, a reducer whose semantics moved under old events — then
+   * every intermediate version it could return is equally untrustworthy, and
+   * the honest answer is to refuse rather than to hand back a plausible
+   * document. A wrong revert is silent, total data loss.
+   */
+  private async docAtVersion(
+    version: number,
+  ): Promise<{ doc: EuclidDoc } | { error: string }> {
+    const from = await this.ctx.storage.get<number>('historyFrom')
+    const base = await this.ctx.storage.get<EuclidDoc>('snap:base')
+    if (from === undefined || !base) {
+      return { error: 'this project has no recorded history yet — make one edit first' }
+    }
+    if (version < from) {
+      return {
+        error:
+          `version ${version} is before this project's recorded history, which starts at ` +
+          `${from}. Earlier versions were never snapshotted, so there is nothing to restore.`,
+      }
+    }
+    const events = await this.ctx.storage.list<{ version: number; envelope: OpEnvelope }>({
+      prefix: 'evt:',
+      start: eventKey(from + 1),
+    })
+    const log = [...events.values()].sort((a, b) => a.version - b.version)
+
+    let replayed = base
+    let target: EuclidDoc | null = version === from ? base : null
+    let expected = from
+    for (const e of log) {
+      // A gap means an envelope is missing, which makes everything after it a
+      // different document than the one that was actually stored.
+      if (e.version !== ++expected) {
+        return { error: `the event log jumps from ${expected - 1} to ${e.version}; history is incomplete` }
+      }
+      try {
+        replayed = applyEnvelope(replayed, e.envelope)
+      } catch (err) {
+        return { error: `replaying version ${e.version} failed: ${(err as Error).message}` }
+      }
+      if (e.version === version) target = replayed
+    }
+    if (expected !== this.version) {
+      return { error: `the log ends at version ${expected} but the project is at ${this.version}` }
+    }
+    // Compared key-order-independently: two documents that differ only in the
+    // order Zod happened to build their keys are the same document, and a
+    // spurious refusal here would make undo unavailable for no reason. A
+    // genuine difference still shows, and the failure direction is the safe
+    // one — refuse rather than restore something that was never real.
+    if (stableJson(replayed) !== stableJson(this.doc)) {
+      return {
+        error:
+          `replaying the log does not reproduce the current document, so no earlier version ` +
+          `can be trusted either. History is readable but not restorable for this project.`,
+      }
+    }
+    if (!target) return { error: `version ${version} is not in the log` }
+    return { doc: target }
+  }
+
   private async submit(envelope: OpEnvelope): Promise<Response> {
     if (!this.doc) return json({ error: 'not_initialized' }, 404)
     if (envelope.baseVersion !== this.version) {
       return json({ error: 'version_conflict', version: this.version }, 409)
     }
+    // Before the write, so the snapshot is the state this envelope starts from.
+    await this.ensureHistoryBase()
     let next: EuclidDoc
     try {
       next = applyEnvelope(this.doc, envelope)
@@ -464,6 +630,15 @@ function decisionKey(id: string): string {
 
 function planKey(id: string): string {
   return `plan:${id}`
+}
+
+/** JSON with object keys sorted, so equality means "same document", not "same build order". */
+function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_k, v) =>
+    v && typeof v === 'object' && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : 1)))
+      : v,
+  )
 }
 
 function eventKey(version: number): string {

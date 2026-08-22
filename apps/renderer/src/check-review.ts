@@ -174,7 +174,7 @@ const sceneId = scene.data.sceneId as string
 await ok('set_narration', {
   projectId,
   sceneId,
-  narrationText: 'A circle is every point at one distance.',
+  text: 'A circle is every point at one distance.',
 })
 const take1 = await ok('generate_narration', { projectId, sceneId }, true)
 assert.equal(take1.data.reviewStatus, 'pending', take1.text)

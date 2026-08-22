@@ -91,6 +91,70 @@ for (const phrase of ['shapes', 'matrix and tokens', 'vector3/axes3d/points3', '
 }
 console.log(`instructions OK — ${listed.capabilities.length} capabilities, revision ${listed.revision}`)
 
+// ---------- the naming conventions must be true, not just stated ----------
+// plans/011 gap 3: run 8's five wrong argument guesses were all corrected by
+// the error text, but each was a wasted round trip, and the cause was the
+// catalog disagreeing with itself rather than the agent not reading. Prose
+// that claims a convention is worth nothing if the catalog quietly breaks it,
+// so the claim is checked against every schema here.
+const schemas = (
+  JSON.parse(
+    (await post('/api/agent/tools/describe?format=json', {
+      names: listed.capabilities.map((c) => c.name),
+    })).body,
+  ) as { capabilities: { name: string; args: { properties?: Record<string, unknown> } }[] }
+).capabilities.map((c) => ({ name: c.name, args: Object.keys(c.args.properties ?? {}) }))
+
+// One idea, one name. The catalog throws at load on a banned spelling, so this
+// can only fail if that mechanism is deleted — which is what it is here to say.
+for (const banned of ['textContent', 'narrationText', 'colour']) {
+  const offender = schemas.find((s) => s.args.includes(banned))
+  assert.ok(!offender, `${offender?.name} declares \`${banned}\`, a second spelling of a settled name`)
+}
+// ...and the settled name really is in use, so the rename cannot have been
+// reverted to something else entirely.
+for (const [cap, arg] of [['add_text', 'text'], ['set_narration', 'text'], ['add_text', 'color']]) {
+  assert.ok(
+    schemas.find((s) => s.name === cap)!.args.includes(arg!),
+    `${cap} must take \`${arg}\` — that is the name three milestone runs reached for`,
+  )
+}
+
+// "Time is scene-local when the call names a scene, and global when it does
+// not." A convention is only useful if it has no unlisted exceptions, so the
+// capabilities taking a time WITHOUT a sceneId are pinned: adding a fourth is
+// fine, but it has to be a deliberate edit here and in the orientation prose,
+// not a silent third rule.
+// Moments only. A *duration* (`duration`, `durationSec`, `playSec`, `tailSec`)
+// is a length and has no frame of reference to get wrong — this check found
+// that distinction by failing on generate_audio, which takes a durationSec and
+// names no scene while having nothing to do with the timeline.
+const TIME_ARG = /^(at|t|start|startSec)$/
+const globalTime = schemas
+  .filter((s) => s.args.some((a) => TIME_ARG.test(a)) && !s.args.includes('sceneId'))
+  .map((s) => s.name)
+  .sort()
+assert.deepStrictEqual(
+  globalTime,
+  ['add_audio_clip', 'preview_frames', 'update_audio'],
+  'these are the capabilities whose times are GLOBAL because they name no scene — ' +
+    'the orientation block states exactly this rule, so a new one here makes it a lie',
+)
+assert.match(
+  instructions.body,
+  /scene-local when the call names a scene/,
+  'the orientation block must state the time convention',
+)
+assert.match(
+  instructions.body,
+  /measured FROM there/,
+  'the orientation block must state the coordinate convention',
+)
+console.log(
+  `naming OK — settled spellings enforced at catalog load, and the time convention ` +
+    `holds with exactly ${globalTime.length} stated exceptions`,
+)
+
 // ---------- tool 2: describe ----------
 const described = await post('/api/agent/tools/describe', { names: ['animate', 'update_node'] })
 assert.equal(described.status, 200, 'describe must work')
@@ -112,7 +176,7 @@ const projectId = project.data.id
 
 const sceneText = await exec('add_scene', { projectId, name: 'S', duration: 5 })
 const sceneId = sceneText.match(/scene (\S+)/)![1]!
-const nodeText = await exec('add_text', { projectId, sceneId, textContent: 'hi', x: 960, y: 540 })
+const nodeText = await exec('add_text', { projectId, sceneId, text: 'hi', x: 960, y: 540 })
 const nodeId = nodeText.match(/node (\S+)/)![1]!
 console.log('fixture ready:', projectId)
 
@@ -222,7 +286,7 @@ assert.match(
 // ---------- capabilities that only read ----------
 const outline = await exec('get_project', { projectId })
 assert.match(outline, /scene sc_/, 'get_project must outline scenes')
-await exec('set_narration', { projectId, sceneId, narrationText: 'One two three.' })
+await exec('set_narration', { projectId, sceneId, text: 'One two three.' })
 const captions = await exec('get_captions', { projectId, format: 'srt' })
 assert.match(captions, /One two three/, 'captions must derive from narration text alone')
 
@@ -451,7 +515,7 @@ const backA = (await exec('add_shape', { projectId, sceneId: orderScene, shape: 
   .match(/node (\S+)/)![1]!
 const backB = (await exec('add_shape', { projectId, sceneId: orderScene, shape: 'rect', x: 400, y: 300 }))
   .match(/node (\S+)/)![1]!
-const drop = (await exec('add_text', { projectId, sceneId: orderScene, textContent: 'sky', x: 960, y: 540 }))
+const drop = (await exec('add_text', { projectId, sceneId: orderScene, text: 'sky', x: 960, y: 540 }))
   .match(/node (\S+)/)![1]!
 // The thing a rebuild destroys: a transition bound to this id.
 await exec('write_on', { projectId, sceneId: orderScene, nodeId: drop, start: 0, duration: 1 })
@@ -583,6 +647,75 @@ const noSuch = await post('/api/agent/tools/sample_at/execute', {
 })
 assert.equal(noSuch.status, 404, 'an unknown node must fail rather than return an empty listing')
 console.log('sample_at OK — group composition, camera framing and off-frame reported without pixels')
+
+// ---------- undo, over the event log that was always there ----------
+// plans/011 gap 4. architecture.md claimed "free undo/history from the event
+// log" from the beginning and nothing exposed it, so run 8 rebuilt scenes by
+// hand. What has to be true is stronger than "the document changed back": a
+// rebuild loses the transitions bound to the node ids it deletes, and the
+// whole value of a revert is that it does not.
+const undoScene = (await exec('add_scene', { projectId, name: 'Undo', duration: 6 }))
+  .match(/scene (\S+)/)![1]!
+const doomed = (await exec('add_latex', {
+  projectId, sceneId: undoScene, tex: 'a^2+b^2', x: 960, y: 400,
+})).match(/node (\S+)/)![1]!
+await exec('write_on', { projectId, sceneId: undoScene, nodeId: doomed, start: 0, duration: 2 })
+await exec('highlight', {
+  projectId, sceneId: undoScene, nodeId: doomed, start: 3, duration: 2, tex: 'a',
+})
+
+const historyOf = async (): Promise<{ version: number; historyFrom: number | null }> =>
+  JSON.parse((await post('/api/agent/tools/get_history/execute?format=json', { projectId })).body).data
+
+const good = (await historyOf()).version
+await exec('remove_node', { projectId, sceneId: undoScene, nodeId: doomed })
+assert.ok(
+  !JSON.parse(await exec('get_scene', { projectId, sceneId: undoScene })).nodes.some(
+    (n: { id: string }) => n.id === doomed,
+  ),
+  'the node is gone before the revert, or the test proves nothing',
+)
+
+const reverted = await exec('revert_to_version', { projectId, version: good })
+// The version goes UP. Reverting by rewinding the counter would make history
+// lossy and leave every connected editor holding a version that no longer
+// exists; this is why a restore is an ordinary op.
+const after = await historyOf()
+assert.ok(after.version > good + 1, `a revert must append a version, got ${after.version}`)
+assert.match(reverted, /still in the history/, 'the reply must say the revert is itself undoable')
+
+const back = JSON.parse(await exec('get_scene', { projectId, sceneId: undoScene })) as {
+  nodes: { id: string; transitions: { type: string }[] }[]
+}
+const restored = back.nodes.find((n) => n.id === doomed)
+assert.ok(restored, 'the node must come back under the SAME id — that is what a rebuild cannot do')
+assert.deepStrictEqual(
+  restored!.transitions.map((t) => t.type).sort(),
+  ['highlight', 'write'],
+  'and with everything that was attached to it: a rebuild loses exactly this',
+)
+
+// A revert can be reverted, which is what "nothing is destroyed" means.
+await exec('revert_to_version', { projectId, version: good + 1 })
+assert.ok(
+  !JSON.parse(await exec('get_scene', { projectId, sceneId: undoScene })).nodes.some(
+    (n: { id: string }) => n.id === doomed,
+  ),
+  'reverting the revert must put the deletion back',
+)
+
+// Refusals name the range rather than reporting a status code.
+for (const [v, why] of [[9999, 'past the end'], [-1, 'negative']] as [number, string][]) {
+  const r = await post('/api/agent/tools/revert_to_version/execute', { projectId, version: v })
+  assert.equal(r.status, 400, `revert must refuse a version ${why}`)
+}
+const noop = await post('/api/agent/tools/revert_to_version/execute', {
+  projectId,
+  version: (await historyOf()).version,
+})
+assert.equal(noop.status, 400, 'reverting to the current version must refuse rather than no-op')
+assert.match(noop.body, /already at version/, 'and say why')
+console.log('undo OK — node and both transitions restored under the same id, and the revert is itself a version')
 
 // ---------- an unfilled shape is an outline, not a hole ----------
 // Filling with the background colour was the only way to get a ring, which

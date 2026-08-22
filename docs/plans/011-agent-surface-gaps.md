@@ -61,7 +61,7 @@ exactly. `resolveScene` already exists, so this is cheap:
       that quietly disagreed with the stage would be worse than none, because
       it would be trusted.
 
-### 3. Argument naming is inconsistent, so priors transfer badly
+### 3. Argument naming is inconsistent, so priors transfer badly   (status: done)
 
 `set_narration` takes `narrationText`, `add_text` takes `textContent` and
 `fill`, `preview_frames` takes `at`, a line's `x2`/`y2` are relative while a
@@ -70,21 +70,57 @@ was corrected on the next call by the error text — the teaching works — but
 each was still a wasted round trip, and the cause was inconsistency, not
 ignorance.
 
-- [ ] A naming-convention pass over the catalog: one word for "the text",
-      one stated convention for absolute vs relative coordinates, stated in
-      the orientation block. Renames are cheap here — the gateway means no
-      client restart, and `ref()` keeps the prose honest
+- [x] One word for "the text": `set_narration(narrationText:)` and
+      `add_text(textContent:)` both became `text`, and `add_text(fill:)`
+      became `color` to match latex/matrix/tokens/axes. The evidence chose the
+      name rather than taste — three separate runs reached for `text` and were
+      wrong both times, so the catalog was disagreeing with itself and the
+      agent's prior was the right one. Both document fields were *already*
+      `text`, so the rename removed a divergence rather than adding one.
+- [x] The convention is **enforced, not intended**: `BANNED_ARGS` in
+      `catalog.ts` maps each settled name's old spellings, and the catalog
+      throws at module load if one reappears — same shape as the duplicate-name
+      check and `ref()`. Confirmed by reintroducing `narrationText`: the worker
+      refused to boot, naming the fix. `fill` is deliberately not banned; on a
+      shape it is half of a `fill`/`stroke` pair and means something `color`
+      does not.
+- [x] Two conventions stated in the orientation block **and checked against
+      every schema** in `check-gateway.ts`: *time is scene-local when the call
+      names a scene, global when it does not* (exactly three capabilities on
+      the global side, and the list is pinned so a fourth cannot appear
+      silently), and *`x`/`y` are absolute and place the node; anything else
+      geometric in the same call is measured from there* (the axes/plot
+      rectangle is the one stated exception).
 
-### 4. No undo, though the event log exists to provide it
+### 4. No undo, though the event log exists to provide it   (status: done)
 
 architecture.md itself says the event log gives "free undo/history"; no
 capability exposes it. Run 8's scene rebuilds would have been one safe
 revert instead of dozens of delete/re-add calls, and review-mode thinking
 pairs naturally with it (reject for *documents*, not just assets).
 
-- [ ] `revert_to_version(projectId, version)` — the DO replays or restores;
-      the broadcast keeps every editor honest. Needs a decision about
-      whether reverting is itself an event (it should be)
+- [x] `get_history` (what there is to go back to) and `revert_to_version`.
+      Reverting **is** an event, as predicted: a `doc.restore` op carrying the
+      target document, submitted as an ordinary envelope, so the version goes
+      UP, history stays append-only and a revert can be reverted.
+- [x] The broadcast keeps every editor honest — and it costs the editor
+      nothing, because a restore is an op and goes through the same shared
+      reducer as everything else. `check-live.ts` proves it: rename, rename
+      again, revert over HTTP, and the old name returns in the open editor with
+      no reload. **There is no code in the editor that knows undo exists.**
+- [x] The base problem the plan did not anticipate: **version 0 is not
+      reconstructible from the log**, because a project's canvas arrives as an
+      argument to `/init` and never as an op. One snapshot (`snap:base`) plus
+      `historyFrom` fixes it — written at `/init` for new projects, lazily on
+      the next write for older ones, whose history then honestly begins partway
+      through instead of pretending to reach 0.
+- [x] The rebuild is self-validating: before returning any earlier version it
+      replays to the *current* one and compares. Disagreement means every
+      intermediate version is equally untrustworthy, so it refuses rather than
+      returning something plausible.
+- [x] Verified: a deleted latex node comes back under its own id with **both**
+      its transitions attached — which is precisely what rebuilding by hand
+      cannot do — and reverting the revert puts the deletion back.
 
 ### 5. Composition review has no artifact
 
@@ -165,6 +201,28 @@ text/LaTeX extents being estimated (preview closes the loop by design).
   refuse it explicitly; nothing downstream will.
 - `findNode` now returns the containing group's id (`parentId`), which is what
   lets a placement resolve "where it is now" without a second walk.
+- **The evidence picks the name.** Gap 3 looked like a taste question until
+  the three runs that guessed `text` were counted. When an agent's prior and
+  the catalog disagree and the prior is consistent across runs, the catalog is
+  what is wrong.
+- A convention nothing enforces has already rotted somewhere nobody has
+  looked. Both halves of gap 3 are mechanical: banned spellings throw at
+  catalog load, and the time rule's exception list is pinned in
+  `check-gateway.ts`. Writing the rule in prose alone would have been the
+  third time hand-written orientation text went stale.
+- Narrowing the time rule to **moments** came from the check failing:
+  `generate_audio` takes a `durationSec`, names no scene, and has nothing to do
+  with the timeline. A *duration* is a length and has no frame of reference to
+  get wrong — only a moment does.
+- **Version 0 is not in the event log.** The plan assumed "the DO replays or
+  restores" was the whole design. It is not: `/init` takes the canvas as an
+  argument, so replaying from an invented empty document would guess the canvas
+  of any project whose shape is not the default. One stored snapshot plus a
+  `historyFrom` marker is what makes replay honest, and it is why old projects
+  get partial history rather than fake history.
+- Replay is compared against reality before it is trusted, and the comparison
+  is key-order-independent — otherwise two documents Zod happened to build in
+  different orders would refuse a perfectly good undo.
 - Ink cannot see *where*. `check-order.ts` asserts the **computed** area a dot
   covers at a known zoom (8.73%), not "some ink" — a dot half out of frame
   still lights the picture and would pass a `> 0` test while sitting somewhere

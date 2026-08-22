@@ -133,6 +133,34 @@ shape as `remove_asset`'s `force`.
   stage sorts by **depth** and uses this order only to break ties, and the
   result says so; moving a spatial node into a group switches its projection
   off entirely, and warns.
+- **One idea, one argument name — enforced, not just intended** (plans/011
+  gap 3). Three separate milestone runs reached for `text` on `add_text` and
+  `set_narration` and were wrong both times; the catalog was disagreeing with
+  itself, and the agent's prior was the correct one. Both now take `text`, and
+  `add_text` takes `color` like every other text-like node. A settled name's
+  old spellings are listed in `BANNED_ARGS` and the catalog **throws at module
+  load** if one reappears — the same shape as the duplicate-name check and
+  `ref()`. `fill` is deliberately not in that list: on a shape it is half of a
+  `fill`/`stroke` pair and means something `color` does not.
+- **Two conventions, stated in the orientation block and checked against the
+  schemas.** *Time is scene-local when the call names a scene, and global when
+  it does not* — `preview_frames` and the audio lanes are the only three
+  capabilities on the global side, and `check-gateway.ts` pins that list so a
+  fourth cannot appear silently. *`x`/`y` are absolute canvas pixels and place
+  the node; anything else geometric in the same call is measured from there* —
+  a path's points, a line's `x2`/`y2`, a group's children. The one exception is
+  `add_axes`/`plot_function`, whose x/y is the top-left of the plot rectangle.
+- **Undo exists, and it is not destructive** (plans/011 gap 4). `get_history`
+  lists every version with its actor and op kinds; `revert_to_version` puts the
+  document back to one of them. A revert is an ordinary op envelope
+  (`doc.restore`), so the version goes **up**: history is append-only, a revert
+  can be reverted, and every open editor applies it through the shared reducer
+  off the same WebSocket — the editor contains no code that knows undo exists.
+  A node comes back under its own id with its tracks and transitions attached,
+  which is exactly what rebuilding by hand cannot do. It restores the
+  *document*, not the world: assets, spent credits, render jobs and the review
+  plan do not move. `delete_project` is the one thing it cannot undo — it
+  destroys the log a revert replays.
 - **Resolved state is readable without pixels**: `sample_at(sceneId, t)` runs
   the same `resolveScene` the renderer draws from and reports where every node
   *ends up* — world position with group transforms composed in, followers

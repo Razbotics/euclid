@@ -3,12 +3,14 @@ import {
   CameraSchema,
   CanvasSchema,
   ColorSchema,
+  EuclidDocSchema,
   NarrationSchema,
   NodeSchema,
   SceneSchema,
   TrackSchema,
   type Camera,
   type Canvas,
+  type EuclidDoc,
   type Narration,
   type EuclidNode,
   type Scene,
@@ -37,6 +39,27 @@ const NodePatchSchema = z.record(z.string(), z.unknown())
 export const OpSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('project.rename'), name: z.string().min(1) }),
   z.object({ kind: z.literal('project.setCanvas'), canvas: CanvasSchema }),
+
+  /**
+   * Put the document back to an earlier state, whole.
+   *
+   * Undo is the one mutation that cannot be expressed as a diff without
+   * inventing one: computing a minimal op sequence between two documents is a
+   * tree-diff problem, and a wrong answer there is silent corruption. So the
+   * restore carries the target document itself — and because it is still an
+   * *op*, it goes through `applyOps`, is re-validated like everything else,
+   * lands in the event log, and broadcasts to every open editor. Reverting is
+   * therefore itself an event: the version only ever goes up, and a revert can
+   * be reverted.
+   *
+   * `fromVersion` is recorded for the history listing, not used by the reducer
+   * — the DO is what knows versions; the reducer only knows documents.
+   */
+  z.object({
+    kind: z.literal('doc.restore'),
+    doc: EuclidDocSchema,
+    fromVersion: z.number().int().min(0),
+  }),
 
   z.object({ kind: z.literal('scene.add'), scene: SceneSchema, index: z.number().int().min(0).optional() }),
   z.object({ kind: z.literal('scene.remove'), sceneId: z.string() }),
@@ -180,6 +203,11 @@ export const op = {
     patch,
   }),
   removeNode: (sceneId: string, nodeId: string): Op => ({ kind: 'node.remove', sceneId, nodeId }),
+  restoreDoc: (doc: EuclidDoc, fromVersion: number): Op => ({
+    kind: 'doc.restore',
+    doc,
+    fromVersion,
+  }),
   moveNode: (sceneId: string, nodeId: string, index: number, parentId?: string): Op => ({
     kind: 'node.move',
     sceneId,

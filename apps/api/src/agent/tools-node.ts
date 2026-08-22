@@ -86,28 +86,35 @@ export const nodeTools = [
   capability({
     name: 'add_text',
     summary: 'Add a text node, anchored at its centre.',
-    doc: 'Plain prose — titles, labels, captions burned into the frame. For anything mathematical prefer add_latex, which typesets properly. Anchored at its centre.',
+    doc: [
+      'Plain prose — titles, labels, captions burned into the frame. For anything mathematical prefer add_latex, which typesets properly. Anchored at its centre.',
+      '',
+      'Note a text node **stores** its ink as `fill`, so `update_node` on one takes `{"fill":"#…"}`. The creator says `color` because that is the word every other text-like node uses (latex, matrix, tokens, axes); `fill`/`stroke` stay the pair for shapes, which have an area and an outline.',
+    ].join('\n'),
     args: z.object({
       projectId: PROJECT_ID,
       sceneId: SCENE_ID,
-      textContent: z.string(),
+      text: z.string().describe('the words to draw'),
       x: z.number(),
       y: z.number(),
       fontSize: z.number().positive().default(48),
-      fill: COLOR.default('#ffffff'),
+      color: COLOR.default('#ffffff'),
       fontFamily: z.string().default('Georgia, serif'),
       parentId: PARENT_ID,
     }),
-    async handler(ctx, { projectId, sceneId, textContent, x, y, fontSize, fill, fontFamily, parentId }) {
+    async handler(ctx, { projectId, sceneId, text, x, y, fontSize, color, fontFamily, parentId }) {
       const id = newId('txt')
       await ctx.submit(projectId, [
         op.addNode(sceneId, {
           ...baseNode({ x, y }),
           id,
           type: 'text',
-          text: textContent,
+          text,
           fontSize,
-          fill,
+          // The document calls a text node's ink `fill`; the surface calls it
+          // `color`, as it does on latex, matrix, tokens and axes. See the doc
+          // string — update_node patches the document, so it takes `fill`.
+          fill: color,
           fontFamily,
         }, parentId),
       ])
@@ -851,7 +858,7 @@ export const nodeTools = [
   capability({
     name: 'remove_node',
     summary: 'Delete a node from a scene.',
-    doc: 'Removes the node and everything attached to it — tracks and transitions go with it. Not undoable through this surface (the event log keeps the history, but there is no revert capability).',
+    doc: 'Removes the node and everything attached to it — tracks and transitions go with it. Undoable: `revert_to_version` puts the whole document back, node id and all, so a removal you regret costs one call rather than a rebuild. To change what a node draws *behind* rather than delete it, use reorder_node.',
     args: z.object({ projectId: PROJECT_ID, sceneId: SCENE_ID, nodeId: NODE_ID }),
     async handler(ctx, { projectId, sceneId, nodeId }) {
       const { doc } = await ctx.getDoc(projectId)

@@ -9,6 +9,7 @@ export class OpError extends Error {
       | 'node_not_found'
       | 'parent_not_group'
       | 'invalid_move'
+      | 'wrong_document'
       | 'duplicate_id'
       | 'invalid_patch'
       | 'invalid_result'
@@ -75,6 +76,24 @@ function applyOp(doc: EuclidDoc, op: Op): void {
     case 'project.setCanvas':
       doc.canvas = op.canvas
       return
+
+    case 'doc.restore': {
+      // Restoring another project's document into this one would be silent,
+      // total data loss, and an id is the only thing that can tell them apart.
+      if (op.doc.id !== doc.id) {
+        throw new OpError(
+          'wrong_document',
+          `this restore carries document ${op.doc.id}, but the project is ${doc.id}`,
+        )
+      }
+      // Replaced in place rather than reassigned: applyOp mutates the draft
+      // the caller is holding, and there is no reference to swap. Keys are
+      // cleared first so an optional the old document had and the restored one
+      // does not — audio, a camera — really goes away.
+      for (const k of Object.keys(doc)) delete (doc as unknown as Record<string, unknown>)[k]
+      Object.assign(doc, structuredClone(op.doc))
+      return
+    }
 
     case 'scene.add': {
       if (doc.scenes.some((s) => s.id === op.scene.id)) {

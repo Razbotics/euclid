@@ -88,8 +88,8 @@ const sceneId = (await ok('add_scene', {
   projectId: portrait.projectId, name: 'vertical', duration: 2, background: '#0d1117',
 })).data.sceneId
 await ok('add_text', {
-  projectId: portrait.projectId, sceneId, textContent: 'shot on 9:16',
-  x: portrait.w / 2, y: 300, fontSize: 72, fill: '#e6edf3',
+  projectId: portrait.projectId, sceneId, text: 'shot on 9:16',
+  x: portrait.w / 2, y: 300, fontSize: 72, color: '#e6edf3',
 })
 await ok('add_mesh', {
   projectId: portrait.projectId, sceneId, shape: 'torus',

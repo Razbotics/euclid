@@ -478,9 +478,9 @@ agent holding a terminal too.
 Proposed and started 2026-08-22, from driving the surface through milestone
 run 8 — gaps ranked by calls actually wasted, not plausibility. The top two
 are done: draw-order control (rebuild-to-reorder cost more than every argument
-mistake in the run combined) and a free `sample_at` read over resolved state.
-Still open: a naming-convention pass, and undo over the event log that already
-exists to provide it.
+mistake in the run combined) and a free `sample_at` read over resolved state,
+followed by the naming pass and undo. Still open: composition review, geometry
+sugar, the batch executor, and the `flow_along` + `orbit_camera` warning.
 - [x] Draw-order: `reorder_node` + a `node.move` op (2026-08-22). Moves the
       id rather than the node, because rebase-on-409 makes a remove+add pair
       re-insert a stale copy. Proved in pixels: a disc reads 24.33% lit →
@@ -488,8 +488,15 @@ exists to provide it.
 - [x] `sample_at` — resolved positions at time t, without pixels
       (2026-08-22). Checked against the *renderer*, not itself: framing the
       camera on its answer reads 8.78% against a computed 8.73%
-- [ ] Catalog naming-convention pass
-- [ ] `revert_to_version` over the DO event log
+- [x] Catalog naming-convention pass (2026-08-22). `text` and `color` settled
+      by three runs' worth of wrong guesses; old spellings now throw at catalog
+      load, and the two stated conventions (scene-local vs global time,
+      absolute vs relative coordinates) are checked against every schema
+- [x] `revert_to_version` + `get_history` over the DO event log (2026-08-22).
+      A revert is itself an op, so the version goes up and the open editor
+      applies it through the shared reducer — no editor code knows undo exists.
+      Needed one thing the log lacks: a snapshot to replay from, since a
+      project's canvas never arrives as an op
 - [ ] Composition review: decisions carry a preview capture
 - [~] Camera/path interaction warning — the spatial-node-into-a-group case
       (created by, and closed with, draw-order) warns; the `flow_along` +

@@ -140,7 +140,7 @@ const sceneId = (await run('add_scene', { projectId, name: 'S', duration: 5 })).
   /scene (\S+)/,
 )![1]!
 const nodeId = (
-  await run('add_text', { projectId, sceneId, textContent: 'hi', x: 960, y: 540 })
+  await run('add_text', { projectId, sceneId, text: 'hi', x: 960, y: 540 })
 ).match(/node (\S+)/)![1]!
 
 console.log('fixture ready:', projectId)

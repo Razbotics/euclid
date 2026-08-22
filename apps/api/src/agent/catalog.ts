@@ -34,6 +34,49 @@ if (BY_NAME.size !== ALL.length) {
   throw new Error('duplicate capability name in the catalog')
 }
 
+/**
+ * Argument names that are settled, and the spellings that must not come back.
+ *
+ * Every one of these was a real wrong guess in a milestone run. Three separate
+ * runs reached for `text` — on `add_text` and on `set_narration` — and were
+ * wrong both times, which is the strongest evidence available for what the
+ * name *should* be: the catalog was disagreeing with itself, and the agent was
+ * right. Run 4 wrote `colour`.
+ *
+ * Only true synonyms live here — one idea with one right spelling. `fill` is
+ * absent on purpose: on a shape it is half of a `fill`/`stroke` pair and means
+ * something `color` does not, so banning it would be wrong. The line this
+ * draws is that a *single ink* is `color`; an area with an outline has both.
+ *
+ * Checked at module load, like the duplicate-name check above and `ref()` in
+ * the orientation block: a convention nothing enforces is a convention that
+ * has already rotted somewhere nobody has looked.
+ */
+const BANNED_ARGS: Record<string, string> = {
+  textContent: 'text',
+  narrationText: 'text',
+  textValue: 'text',
+  colour: 'color',
+  nodeID: 'nodeId',
+  sceneID: 'sceneId',
+  projectID: 'projectId',
+}
+
+for (const cap of ALL) {
+  if (!(cap.args instanceof z.ZodObject)) continue
+  for (const arg of Object.keys(cap.args.shape)) {
+    const canonical = BANNED_ARGS[arg]
+    if (canonical) {
+      throw new Error(
+        `capability "${cap.name}" declares \`${arg}\`, which is a second spelling of ` +
+          `\`${canonical}\`. One idea, one name — an agent that learned the name on ` +
+          `another capability must be able to reuse it here. Rename it, or, if this ` +
+          `really is a different idea, give it a name that says so.`,
+      )
+    }
+  }
+}
+
 export const capabilities: readonly Capability[] = ALL
 
 export function getCapability(name: string): Capability | undefined {

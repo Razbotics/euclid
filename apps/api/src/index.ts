@@ -162,6 +162,10 @@ app.get('/api/projects/:id/plans', (c) => forwardToDO(c, c.req.param('id'), '/pl
 
 app.get('/api/projects/:id/doc', (c) => forwardToDO(c, c.req.param('id'), '/doc'))
 app.get('/api/projects/:id/events', (c) => forwardToDO(c, c.req.param('id'), '/events'))
+// Undo over the event log (plans/011 gap 4). The revert is a POST because it
+// writes: it lands as an ordinary envelope, so the version goes up, not back.
+app.get('/api/projects/:id/history', (c) => forwardToDO(c, c.req.param('id'), '/history'))
+app.post('/api/projects/:id/revert', (c) => forwardToDO(c, c.req.param('id'), '/revert'))
 app.post('/api/projects/:id/ops', (c) => forwardToDO(c, c.req.param('id'), '/ops'))
 app.get('/api/projects/:id/ws', (c) => forwardToDO(c, c.req.param('id'), '/ws'))
 

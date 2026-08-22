@@ -9,9 +9,25 @@ import {
   outlineDoc,
 } from '@euclid/dsl'
 import { createProject, deleteProject, listProjects, projectContents } from '../services/projects'
+import { projectStub } from '../shared'
 import { reviewModeOf } from '../services/plan'
 import { PROJECT_ID, SCENE_ID, COLOR } from './schemas'
 import { capability, said, CapabilityError } from './types'
+
+/**
+ * An envelope's op kinds as one readable phrase.
+ *
+ * Counted rather than listed: a single envelope can carry up to 50 ops, and a
+ * history line reading `node.add, node.add, node.add, …` says less than
+ * `3x node.add` does in a quarter of the width.
+ */
+function summariseKinds(kinds: string[]): string {
+  const counts = new Map<string, number>()
+  for (const k of kinds) counts.set(k, (counts.get(k) ?? 0) + 1)
+  return [...counts]
+    .map(([k, n]) => (n > 1 ? `${n}x ${k}` : k))
+    .join(', ')
+}
 
 export const projectTools = [
   capability({
@@ -84,7 +100,7 @@ export const projectTools = [
     name: 'delete_project',
     summary: 'Delete a project and everything it owns. IRREVERSIBLE — needs confirm: true.',
     doc: [
-      'Free, and **permanent**. Removes the document, every scene, all narration audio and render outputs, and the event log the history lives in. There is no undo capability, and no other capability can bring any of it back.',
+      'Free, and **permanent**. Removes the document, every scene, all narration audio and render outputs, and the event log itself. `revert_to_version` cannot help here — it replays that log, and this destroys it. Nothing brings any of it back.',
       '',
       'Called without `confirm: true` it deletes nothing and instead reports what the project holds — scenes, duration, assets, renders. Read that back before confirming; a project that took credits to narrate and render cannot be recreated by re-running anything.',
       '',
@@ -106,7 +122,7 @@ export const projectTools = [
         `${contents.renders} render(s)`
       if (!confirm) {
         return said(
-          `NOT DELETED — ${holds}. This is permanent and there is no undo. ` +
+          `NOT DELETED — ${holds}. This is permanent, and the one thing revert_to_version cannot undo. ` +
             `Call again with confirm: true if that is really what you want.`,
           { ...contents, deleted: false },
         )
@@ -140,6 +156,116 @@ export const projectTools = [
         ? 'review mode ON — paid generation needs an approved plan (get_plan / propose_plan)\n'
         : ''
       return said(banner + outlineDoc(doc), { doc, reviewMode: gated })
+    },
+  }),
+
+  capability({
+    name: 'get_history',
+    summary: 'Every version of this project and what changed — what revert_to_version can go back to.',
+    doc: [
+      'Free. Every edit any writer has made, newest last: version number, who made it, and which ops it carried. This is the list `revert_to_version` takes a number from.',
+      '',
+      '`historyFrom` is where restorable history begins. For a project created since versioning landed that is 0 — the empty document. A project that predates it has no snapshot of its original state (a canvas arrives when the project is created, not as an op, so it cannot be reconstructed from the log), and its history starts at whatever version it was on when it was next edited. Everything before that is listed but not restorable.',
+      '',
+      'A revert appears here like any other edit, marked with the version it restored. Going back does not erase anything — the version only ever goes up, so a revert can itself be reverted.',
+    ].join('\n'),
+    args: z.object({
+      projectId: PROJECT_ID,
+      limit: z.number().int().min(1).max(200).default(40).describe('most recent N'),
+    }),
+    async handler(ctx, { projectId, limit }) {
+      await ctx.requireProject(projectId)
+      const res = await projectStub(ctx.env, projectId).fetch('https://do/history')
+      if (!res.ok) throw new CapabilityError(`history unavailable: ${await res.text()}`, 502)
+      const { version, historyFrom, entries } = (await res.json()) as {
+        version: number
+        historyFrom: number | null
+        entries: {
+          version: number
+          at: number
+          actor: { type: string; id?: string }
+          kinds: string[]
+          restoredFrom?: number
+        }[]
+      }
+      const shown = entries.slice(-limit)
+      const lines = shown.map((e) => {
+        const what = e.restoredFrom !== undefined
+          ? `reverted to version ${e.restoredFrom}`
+          : summariseKinds(e.kinds)
+        const restorable = historyFrom !== null && e.version >= historyFrom
+        return (
+          `  v${e.version}${restorable ? '' : ' (not restorable)'} by ${e.actor.type} — ${what}`
+        )
+      })
+      return said(
+        `project ${projectId} is at version ${version}, ${entries.length} edit(s) recorded` +
+          (shown.length < entries.length ? `, showing the last ${shown.length}` : '') +
+          (historyFrom === null
+            ? '\n  no restorable history yet — make one edit and it starts from there'
+            : historyFrom > 0
+              ? `\n  restorable from v${historyFrom} (this project predates version history)`
+              : '') +
+          `\n${lines.join('\n')}\n` +
+          (historyFrom === null
+            ? `Nothing here can be restored yet — the snapshot revert replays from is written on ` +
+              `the next edit, and history runs from there.`
+            : `Go back with revert_to_version. The revert is itself a new version, so nothing is lost.`),
+        { version, historyFrom, entries: shown },
+      )
+    },
+  }),
+
+  capability({
+    name: 'revert_to_version',
+    summary: 'Put the document back to an earlier version. The revert is itself a new version.',
+    doc: [
+      'Free, and **not destructive**: reverting appends rather than rewinds, so the version goes UP and everything you reverted away from is still in the history. A revert can be reverted.',
+      '',
+      'This is the cheap way out of a wrong turn. Rebuilding a scene by hand costs dozens of calls and loses every transition bound to the node ids you delete; this is one call, and the document comes back exactly as it was — ids, tracks, transitions and all.',
+      '',
+      'Call `get_history` for the version numbers. `version` is the state you want *back*, not the number of steps to undo: reverting to v12 from v20 makes v21 identical to v12.',
+      '',
+      'Every open editor sees it immediately — it broadcasts on the same channel as any other edit, so nobody is left looking at a document that no longer exists.',
+      '',
+      '**It restores the document, not the world around it.** Assets, credits already spent, render jobs and the review plan are not part of the document and do not move. Reverting past the point where a generated image was placed removes the node, not the file — the asset is still in the project, and `add_image` will put it back without paying again.',
+    ].join('\n'),
+    args: z.object({
+      projectId: PROJECT_ID,
+      version: z.number().int().min(0).describe('the version to restore, from get_history'),
+    }),
+    async handler(ctx, { projectId, version }) {
+      await ctx.requireProject(projectId)
+      const res = await projectStub(ctx.env, projectId).fetch('https://do/revert', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ version, actor: { type: 'agent', id: ctx.userId } }),
+      })
+      if (!res.ok) {
+        const { detail, error } = (await res.json().catch(() => ({}))) as {
+          detail?: string
+          error?: string
+        }
+        // The DO's refusals already name the remedy (the valid range, where
+        // history starts, why a replay cannot be trusted) — passing them
+        // through beats restating them worse.
+        throw new CapabilityError(
+          `${detail ?? error ?? 'revert failed'} Call get_history for what is available.`,
+          res.status === 422 ? 422 : 400,
+        )
+      }
+      const { version: now, wasVersion } = (await res.json()) as {
+        version: number
+        wasVersion: number
+      }
+      const { doc } = await ctx.getDoc(projectId)
+      return said(
+        `restored version ${version} — the project was at v${wasVersion} and is now at v${now}, ` +
+          `whose document is identical to v${version}. Nothing was destroyed: v${wasVersion} is ` +
+          `still in the history, so revert_to_version ${wasVersion} undoes this.\n` +
+          outlineDoc(doc),
+        { version: now, restoredFrom: version, wasVersion, doc },
+      )
     },
   }),
 

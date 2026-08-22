@@ -45,6 +45,44 @@ if (!res.ok) throw new Error(`ops rejected: ${await res.text()}`)
 
 await page.locator('.project-name', { hasText: newName }).waitFor({ timeout: 5000 })
 console.log(`rename arrived over WebSocket: "${newName}"`)
+
+/**
+ * ...and so does an undo (plans/011 gap 4).
+ *
+ * `revert_to_version` claims every open editor sees it immediately. That is
+ * only true because a restore is an *op*: it rides the same broadcast and the
+ * editor puts it through the same shared reducer, with no code in the editor
+ * that knows undo exists. This is the check that the claim is real rather than
+ * a reasonable-sounding consequence — a revert that left an open editor
+ * showing a document the server no longer has is the failure mode.
+ */
+const atName = (await (await fetch(`${API}/api/projects/${projectId}/doc`, { headers: HEADERS })).json()) as {
+  version: number
+}
+const laterName = `Live Sync ${atName.version} (later)`
+await fetch(`${API}/api/projects/${projectId}/ops`, {
+  method: 'POST',
+  headers: HEADERS,
+  body: JSON.stringify({
+    id: crypto.randomUUID(),
+    baseVersion: atName.version,
+    actor: { type: 'agent', id: 'check-live' },
+    ops: [{ kind: 'project.rename', name: laterName }],
+  }),
+})
+await page.locator('.project-name', { hasText: laterName }).waitFor({ timeout: 5000 })
+
+const revert = await fetch(`${API}/api/projects/${projectId}/revert`, {
+  method: 'POST',
+  headers: HEADERS,
+  body: JSON.stringify({ version: atName.version, actor: { type: 'agent', id: 'check-live' } }),
+})
+if (!revert.ok) throw new Error(`revert rejected: ${await revert.text()}`)
+// Back to the previous name, live, with no reload — and the editor never
+// learned what a revert is.
+await page.locator('.project-name', { hasText: newName }).waitFor({ timeout: 5000 })
+console.log(`revert arrived over WebSocket too: "${laterName}" → "${newName}", no reload`)
+
 await page.screenshot({ path: 'editor-live.png' })
 await browser.close()
 

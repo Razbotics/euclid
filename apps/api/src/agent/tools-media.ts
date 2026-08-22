@@ -55,14 +55,14 @@ export const mediaTools = [
     args: z.object({
       projectId: PROJECT_ID,
       sceneId: SCENE_ID,
-      narrationText: z.string(),
+      text: z.string().describe('the words to be spoken'),
       voiceId: z.string().optional(),
     }),
-    async handler(ctx, { projectId, sceneId, narrationText, voiceId }) {
+    async handler(ctx, { projectId, sceneId, text, voiceId }) {
       const { doc } = await ctx.getDoc(projectId)
       ctx.sceneOrThrow(doc, sceneId)
-      await ctx.submit(projectId, [op.setNarration(sceneId, { text: narrationText, voiceId })])
-      const words = narrationText.trim() ? narrationText.trim().split(/\s+/).length : 0
+      await ctx.submit(projectId, [op.setNarration(sceneId, { text, voiceId })])
+      const words = text.trim() ? text.trim().split(/\s+/).length : 0
       return said(`narration set for ${sceneId} (${words} words)`, { sceneId, words })
     },
   }),

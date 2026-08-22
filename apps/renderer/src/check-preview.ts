@@ -124,7 +124,7 @@ const otherId = (await ok('create_project', { name: 'Preview Second Doc' })).dat
 const otherScene = (await ok('add_scene', { projectId: otherId, name: 'Only', duration: 4 })).data
   .sceneId
 await ok('add_text', {
-  projectId: otherId, sceneId: otherScene, textContent: 'SECOND', x: 960, y: 540, fontSize: 140,
+  projectId: otherId, sceneId: otherScene, text: 'SECOND', x: 960, y: 540, fontSize: 140,
 })
 const second = await ok('preview_frames', { projectId: otherId, at: [1] })
 const secondInk = (second.data.ink as number[])[0]!
@@ -149,7 +149,7 @@ const blankId = (await ok('create_project', { name: 'Preview Blank Frame' })).da
 const blankScene = (await ok('add_scene', { projectId: blankId, name: 'Nothing', duration: 4 })).data
   .sceneId
 await ok('add_text', {
-  projectId: blankId, sceneId: blankScene, textContent: 'LATER', x: 960, y: 540, fontSize: 120,
+  projectId: blankId, sceneId: blankScene, text: 'LATER', x: 960, y: 540, fontSize: 120,
 })
 await ok('write_on', {
   projectId: blankId, sceneId: blankScene, nodeId: (

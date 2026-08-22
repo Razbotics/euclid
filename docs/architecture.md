@@ -56,6 +56,32 @@ Validation is layered: Zod schema on the envelope (bad shape → 400), reducer
 invariants (missing node, duplicate id → 422), and a full-document re-parse
 after each envelope so no op sequence can persist an invalid document.
 
+Undo (plans/011) is what finally reads that log backwards, and it needed one
+thing the log does not contain: a base to replay from. **Version 0 is not
+reconstructible from the events** — a project's canvas arrives as an argument
+to `/init`, never as an op — so the DO stores one snapshot (`snap:base`) plus
+the version it belongs to (`historyFrom`). New projects snapshot at `/init`;
+projects that predate this get one lazily on their next write, so their history
+honestly begins partway through rather than pretending to reach 0 and inventing
+a canvas. One snapshot, not one per version: the base plus the log rebuilds
+anything in between, and a snapshot is the size of the whole document.
+
+The rebuild is **self-validating**. Before returning any earlier version it
+replays all the way to the *current* one and compares with the document
+actually stored; if those disagree — a trimmed log, a reducer whose semantics
+moved under old events — then every intermediate version is equally
+untrustworthy and it refuses. A wrong revert is silent, total data loss, so the
+failure direction is chosen deliberately.
+
+Reverting is itself an event: a `doc.restore` op carrying the target document,
+submitted as an ordinary envelope. The version therefore goes **up**, history
+stays append-only, a revert can be reverted — and because it is an op, every
+open editor applies it through the shared reducer off the same broadcast.
+*There is no code in the editor that knows undo exists*, which is the clearest
+dividend the "all mutations are ops" rule has paid. It carries a whole document
+rather than a diff on purpose: computing a minimal op sequence between two
+documents is a tree-diff problem, and a wrong answer there corrupts silently.
+
 An op names what it touches and carries as little of it as possible, and
 `node.move` (plans/011) is the case that shows why. Moving a node could have
 been a `node.remove` + `node.add` pair in one envelope — atomic, and no new op
