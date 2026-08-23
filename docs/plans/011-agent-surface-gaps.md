@@ -173,6 +173,85 @@ argument against over-batching, so the middle ground:
       as teachable as it is today. Paid capabilities stay excluded, so the
       paid-door permission split is untouched
 
+## Milestone run 9 — measuring what the first four gaps changed (2026-08-23)
+
+Subject: Kepler's second law, 36s, three scenes, built end to end through the
+gateway. **95 gateway round trips, zero failed calls.** Runs 4 and 8 had 10
+and 5 respectively, every one corrected from the error text; this run had none
+to correct.
+
+*Caveat that limits what this proves:* the run was driven by the same session
+that had just built gaps 1-4, so fluency with `reorder_node`, `sample_at`,
+`revert_to_version` and the naming conventions is **not** evidence they are
+discoverable. The evidence is clean only for the parts of the surface this
+session did not write — `add_points3`, `add_path`, `flow_along`, `animate`,
+`write_on`, `add_latex`, `preview_frames` — all of which were called correctly
+first time, from one-line summaries, with five `describe` calls total.
+
+### What the four closed gaps actually did
+
+- **Draw-order (gap 1) came up unprompted and cost one call.** The starfield
+  was added last, as an afterthought, exactly as in run 8 — `reorder_node ...
+  to: "back"` fixed it without touching the five nodes already in the scene.
+  In run 8 this was a scene rebuild, twice.
+- **`sample_at` (gap 2) was used to check physics, not layout.** Six calls
+  confirmed the planet reaches perihelion at (360, 540) and aphelion at
+  (1560, 540), and that it covers 534px near the sun against 262px far away in
+  the same two seconds. That is the claim the video makes, and it was verified
+  from numbers rather than from tiles.
+- **Undo (gap 4) was never needed.** No wrong turn big enough. Not evidence it
+  is useless — evidence this run went well.
+- **Naming (gap 3): contaminated, unmeasurable here.** Zero argument errors,
+  but the session knew the conventions.
+
+### The finding: half the run was one missing capability
+
+**48 of 95 calls — 51% — were `animate`, all of them building two
+non-uniform-speed motions along an ellipse.** `flow_along` travels by arc
+length at a *constant* speed, and its `easing` is one monotone curve over the
+whole traversal, so it cannot express "fast at perihelion, slow at aphelion,
+fast again". The only route is a position track, and `animate` takes one
+segment per call: 24 calls per motion, twice.
+
+This re-ranks the remaining work. The plan's gap 8 (batch execution) was
+measured at ~40 round trips for three scenes; this run spent 48 on a single
+effect. But batching is the *weaker* fix — it would make those 48 calls cheaper
+without making them fewer, and the agent still hand-solves Kepler's equation
+and emits 24 coordinate pairs. Ranked by what each would have removed here:
+
+- [ ] **`animate` accepting a list of keyframes** (`keyframes: [{t, value}…]`)
+      — 48 calls → 2. One op per call is the current rule and it is costing
+      more than the rule is worth; a track *is* a list of keyframes, so this
+      matches the document rather than fighting it. Highest value, smallest
+      change.
+- [ ] **A speed profile on `flow_along`** (e.g. `at: [{t, u}]`, u a fraction
+      of arc length) — 48 calls → 2, *and* the agent stops computing
+      positions: the path stays the source of geometry, which is the whole
+      argument for `flow_along` existing. Subsumes the case above for motion
+      specifically.
+- [ ] Batch execution (gap 8) — still worth having for the long tail, but it
+      is now clearly the third-best fix for the cost it was ranked on.
+
+### Confirmed, with a correction
+
+**Gap 7 (`add_arc`) is real and should include ellipses.** The orbit was
+hand-sampled twice, 72 points each — precisely what the plan predicted, and the
+plan says "circle/ellipse/arc/polygon", which is right. Note the cost is not in
+*calls* (2 `add_path`) but in **output tokens**: a shell-less agent types every
+coordinate. That is the argument for the sugar, and the plan's call-based
+ranking understates it.
+
+### Non-findings, recorded so they are not rediscovered
+
+- `update_node` with `{"transitions": []}` **does** clear a node's
+  transitions, which is how `flow_along` was undone. Nothing in the surface
+  says transitions are patchable; `update_node`'s prose lists two traps and
+  not this. Worth one sentence in its doc.
+- An outline printed through a backslash-interpreting shell shows
+  `rac{dA}{dt}` for a perfectly good `\frac{dA}{dt}`. This cost two calls to
+  disprove and is **not** a system bug — over MCP the text is JSON-encoded and
+  never interpreted. Recorded only because it looked exactly like one.
+
 ## Deliberate non-gaps
 
 Known trade-offs, documented elsewhere, not blind spots: STT for uploaded

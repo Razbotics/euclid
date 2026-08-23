@@ -502,6 +502,18 @@ sugar, the batch executor, and the `flow_along` + `orbit_camera` warning.
       (created by, and closed with, draw-order) warns; the `flow_along` +
       `orbit_camera` case is still open. Geometry sugar and the batch
       executor are still to do
+- [x] **Milestone run 9 (2026-08-23)** — 36s Kepler's-second-law explainer,
+      95 round trips, **zero failed calls** (runs 4 and 8 had 10 and 5).
+      Draw-order came up unprompted and cost one call where run 8 rebuilt two
+      scenes; `sample_at` verified the physics rather than the layout. The
+      finding re-ranks what is left: **51% of the run was one missing
+      capability** — `animate` takes one keyframe segment per call, and
+      `flow_along` has no speed profile, so two non-uniform motions cost 48
+      calls. Batch execution is now the third-best fix for the cost it was
+      ranked on
+- [ ] `animate` accepting a list of keyframes (48 calls → 2)
+- [ ] A speed profile on `flow_along` (48 calls → 2, and no hand-computed
+      positions)
 
 ## Parallel track: agent gateway → plans/008-mcp-gateway.md
 Started 2026-08-15. Collapses the agent surface onto one implementation: a
