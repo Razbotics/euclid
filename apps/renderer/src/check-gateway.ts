@@ -223,6 +223,182 @@ assert.match(sneaky.body, /execute_paid/, 'the refusal must name the paid execut
 const wrongWay = await post('/api/agent/tools/get_project/execute?paid=1', { projectId })
 assert.equal(wrongWay.status, 400, 'a free capability must refuse the paid executor')
 
+// ---------- the same errors, shaped for a caller that is code (plans/013) ----------
+// `?format=json` used to answer text/plain when it failed, so a caller that
+// parses every reply — which is exactly what code inside a programmatic tool
+// call does — hit a parse error on every capability error, turning the best
+// teaching surface in this system into a crash. The prose is unchanged and
+// still arrives verbatim; it is now inside JSON, with the kind the throwing
+// site actually knew.
+const jsonFail = async (path: string, body: unknown) => {
+  const r = await post(path, body)
+  let parsed: { error?: { message?: string; status?: number; kind?: string; revision?: string } }
+  try {
+    parsed = JSON.parse(r.body)
+  } catch {
+    assert.fail(`${path} failed with a non-JSON body under ?format=json: ${r.body.slice(0, 120)}`)
+  }
+  assert.ok(parsed.error, `${path} must answer {error:{…}}, got ${r.body.slice(0, 120)}`)
+  assert.equal(parsed.error!.status, r.status, 'the status in the body must match the HTTP status')
+  assert.ok(parsed.error!.revision, 'a JSON error must carry the catalog revision, like a success')
+  return { status: r.status, ...parsed.error! }
+}
+
+const eBadArgs = await jsonFail('/api/agent/tools/animate/execute?format=json', {
+  projectId,
+  sceneId,
+  nodeId,
+})
+assert.equal(eBadArgs.status, 400)
+assert.equal(eBadArgs.kind, 'invalid_args')
+assert.match(
+  eBadArgs.message!,
+  /invalid arguments for animate/,
+  'the prose must survive the move into JSON verbatim — it is still what teaches',
+)
+
+// `animat` rather than `anmiate`: only a name that actually near-misses
+// exercises the suggestion, and a transposition does not (the match is a
+// shared 4-character prefix or a substring, so "anmi" reaches nothing).
+const eUnknown = await jsonFail('/api/agent/tools/animat/execute?format=json', {})
+assert.equal(eUnknown.status, 404)
+assert.equal(eUnknown.kind, 'unknown_capability')
+assert.match(eUnknown.message!, /Did you mean.*animate/, 'the near-miss suggestion must survive too')
+
+const ePaid = await jsonFail('/api/agent/tools/render_video/execute?format=json', { projectId })
+assert.equal(ePaid.status, 403)
+assert.equal(ePaid.kind, 'wrong_executor')
+
+const eNoScene = await jsonFail('/api/agent/tools/get_scene/execute?format=json', {
+  projectId,
+  sceneId: 'sc_nope',
+})
+assert.equal(eNoScene.status, 404)
+assert.equal(eNoScene.kind, 'not_found')
+assert.match(eNoScene.message!, /This project has/, 'a lookup failure must still name what exists')
+
+const eDescribe = await jsonFail('/api/agent/tools/describe?format=json', { names: ['animat'] })
+assert.equal(eDescribe.kind, 'unknown_capability', 'describe must fail in the same shape')
+
+// The tenancy gate throws 404 for "no such project" and 403 for "not yours",
+// and the kind has to follow *that* rather than being blanket-mapped: the first
+// version of this shipped `kind: "forbidden"` on a 404 whose own message said
+// "not found", which is precisely the lie a kind field exists to avoid.
+const eNoProject = await jsonFail('/api/agent/tools/get_project/execute?format=json', {
+  projectId: 'no-such-project',
+})
+assert.equal(eNoProject.status, 404)
+assert.equal(eNoProject.kind, 'not_found', 'a kind must never contradict its own status/message')
+
+// The text door is unchanged — a model reads prose, and it must not start
+// receiving JSON because a sibling caller wanted some.
+const stillProse = await post('/api/agent/tools/animate/execute', { projectId, sceneId, nodeId })
+assert.equal(stillProse.status, 400)
+assert.ok(
+  !stillProse.body.trimStart().startsWith('{'),
+  'without ?format=json an error must stay plain prose, not become JSON',
+)
+assert.match(stillProse.body, /invalid arguments for animate/)
+console.log('json errors OK — parseable, kinded where known, prose intact, text door unchanged')
+
+// ---------- result contracts, for a caller that reads `data` (plans/013) ----------
+// describe documented arguments and said nothing about what came back, which is
+// the half a script needs before it can write the loop.
+const contracts = JSON.parse(
+  (await post('/api/agent/tools/describe?format=json', {
+    names: ['sample_at', 'get_shots', 'animate'],
+  })).body,
+) as { capabilities: { name: string; result?: { properties?: Record<string, unknown> } }[] }
+const byName = Object.fromEntries(contracts.capabilities.map((c) => [c.name, c]))
+
+assert.ok(byName.sample_at!.result, 'sample_at must publish the shape a sweep computes over')
+assert.deepStrictEqual(
+  Object.keys(byName.sample_at!.result!.properties ?? {}).sort(),
+  ['camera', 'globalT', 'nodes', 'sceneId', 'spatial', 't'],
+  'sample_at\'s declared result must match what its handler actually returns',
+)
+// A write capability has nothing a script computes over, and must not be made
+// to invent one — an absent contract is honest, an empty one is noise.
+assert.ok(!byName.animate!.result, 'animate must not declare a result it has no use for')
+
+// The defect the contract work found: get_shots omitted `segments` while
+// detection was pending and carried it in both settled branches, so a caller
+// looping over it crashed on exactly the asset it was waiting for. `pending` is
+// the signal; an absent key never is.
+const shotsProps = byName.get_shots!.result!.properties ?? {}
+for (const field of ['shots', 'segments', 'pending']) {
+  assert.ok(field in shotsProps, `get_shots must declare \`${field}\` in every branch`)
+}
+const shotsRequired = (byName.get_shots!.result as { required?: string[] }).required ?? []
+assert.ok(
+  shotsRequired.includes('segments'),
+  'segments must be REQUIRED — the pending branch used to drop it, which is the bug',
+)
+
+// And the prose form has to show it too, since that is what a model reads.
+const describedResult = await post('/api/agent/tools/describe', { names: ['sample_at'] })
+assert.match(describedResult.body, /^RESULT/m, 'describe must print the result contract as prose')
+assert.match(describedResult.body, /ARGUMENTS/, 'and must still print the arguments first')
+console.log('result contracts OK — declared on the reads, absent on the writes, printed both ways')
+
+// ---------- and the contract has to be TRUE, not just published ----------
+// A declared result is a claim about a handler that assembles `data` by hand,
+// so nothing in the type system holds the two together — which is exactly how
+// get_shots came to promise `segments` and omit it while detection was pending.
+// This is the mechanism that holds them: call the capability for real, and
+// require every field the contract calls required to actually be there.
+type JsonSchema = {
+  required?: string[]
+  properties?: Record<string, JsonSchema>
+  items?: JsonSchema
+}
+
+function missingFields(schema: JsonSchema, value: unknown, path = ''): string[] {
+  const out: string[] = []
+  if (schema.properties && value && typeof value === 'object' && !Array.isArray(value)) {
+    const obj = value as Record<string, unknown>
+    for (const key of schema.required ?? []) {
+      if (!(key in obj)) out.push(`${path}${key}`)
+    }
+    for (const [key, sub] of Object.entries(schema.properties)) {
+      if (key in obj) out.push(...missingFields(sub, obj[key], `${path}${key}.`))
+    }
+  }
+  // One element is enough: a handler builds every entry of a list the same way,
+  // and checking all of them only makes the failure noisier.
+  if (schema.items && Array.isArray(value) && value.length) {
+    out.push(...missingFields(schema.items, value[0], `${path}0.`))
+  }
+  return out
+}
+
+async function contractHolds(name: string, args: Record<string, unknown>): Promise<void> {
+  const [contract] = (
+    JSON.parse((await post('/api/agent/tools/describe?format=json', { names: [name] })).body) as {
+      capabilities: { result?: JsonSchema }[]
+    }
+  ).capabilities
+  assert.ok(contract?.result, `${name} should declare a result contract`)
+  const r = await post(`/api/agent/tools/${name}/execute?format=json`, args)
+  assert.equal(r.status, 200, `${name} should succeed, got ${r.status}: ${r.body.slice(0, 200)}`)
+  const missing = missingFields(contract!.result!, (JSON.parse(r.body) as { data: unknown }).data)
+  assert.deepStrictEqual(
+    missing,
+    [],
+    `${name} declares ${missing.join(', ')} as required but its handler did not return ${
+      missing.length > 1 ? 'them' : 'it'
+    }. The contract is a promise a script will hold you to.`,
+  )
+}
+
+await contractHolds('get_project', { projectId })
+await contractHolds('get_scene', { projectId, sceneId })
+await contractHolds('get_history', { projectId })
+await contractHolds('get_plan', { projectId })
+await contractHolds('list_assets', { projectId })
+await contractHolds('sample_at', { projectId, sceneId, t: 0 })
+console.log('contracts hold — every required field is really returned, on 6 reads')
+
 // The trap that cost a milestone run: a patch of top-level x/y changed nothing
 // and reported success. It must now be rejected outright.
 const flatXY = await post('/api/agent/tools/update_node/execute', {

@@ -516,6 +516,31 @@ sugar, the batch executor, and the `flow_along` + `orbit_camera` warning.
 - [ ] A speed profile on `flow_along` (48 calls → 2, and no hand-computed
       positions)
 
+## Parallel track: programmatic tool calling → plans/013-programmatic-tool-calling.md
+Proposed 2026-08-23. Lets the model call `execute` from inside a
+code-execution script (loops, filters, fan-out) instead of one round trip
+per call — the thing that makes a twenty-sample `sample_at` verification
+sweep affordable. MCP-connector tools are excluded from PTC categorically,
+so this rides the HTTP gateway through the external-agent harness; the MCP
+worker is unaffected. Phase 1 (structured `data` actually reaching callers,
+JSON-shaped errors under `format=json`, result contracts in `describe`) is
+additive and helps today's MCP clients before any harness exists.
+- [x] Phase 1: the structured half reaches the caller (2026-08-23). A failure
+      under `?format=json` is now JSON — it used to be `text/plain` whichever
+      format was asked for, so a caller that parses every reply crashed on
+      *every* capability error. `kind` is set at the throwing site and never
+      inferred from the status, after the first cut put `kind: "forbidden"` on
+      a 404 whose own message said "not found". The reads publish the shape of
+      their `data` through `describe`, and `check-gateway.ts` calls six of them
+      for real to hold the claim against the handler — which is what found the
+      defect that motivated the phase: `get_shots` promised `segments` and
+      omitted it while detection was pending. The MCP half was **deliberately
+      not done** (see the plan): no reader needs it, and always-on
+      `structuredContent` would cost the cheap-text non-negotiable
+- [ ] Phase 2: the PTC front door (custom-tool surface; `ask_user`,
+      `execute_paid`, `preview_frames` enforced direct-only)
+- [ ] Phase 3: idempotent retries + a measured milestone run
+
 ## Parallel track: agent gateway → plans/008-mcp-gateway.md
 Started 2026-08-15. Collapses the agent surface onto one implementation: a
 capability catalog in the API worker behind three fixed MCP tools, so a new

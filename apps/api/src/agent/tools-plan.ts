@@ -165,6 +165,23 @@ export const planTools = [
       'No plan at all in review mode means propose_plan is your next call.',
     ].join('\n'),
     args: z.object({ projectId: PROJECT_ID }),
+    result: z.object({
+      reviewMode: z.boolean().describe('true while the gate is on'),
+      plans: z
+        .array(
+          z.looseObject({
+            id: z.string(),
+            revision: z.number(),
+            status: z.string().describe('proposed | approved | rejected | superseded'),
+            estTotalCredits: z.number().describe('server-priced; the ceiling this plan approves'),
+            decisionId: z.string().nullish().describe('the open question, while `proposed`'),
+          }),
+        )
+        .describe(
+          'every revision, OLDEST FIRST — the last entry is the latest, and the approved one ' +
+            '(which may not be the latest) is the budget in force.',
+        ),
+    }),
     async handler(ctx, { projectId }) {
       await ctx.requireProject(projectId)
       const reviewMode = await reviewModeOf(ctx.env, projectId)

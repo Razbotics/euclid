@@ -147,6 +147,19 @@ export const projectTools = [
       'This is an outline, not the document. For a scene\'s exact keyframes and transitions, use get_scene.',
     ].join('\n'),
     args: z.object({ projectId: PROJECT_ID }),
+    // `doc` is named rather than enumerated on purpose. It is the document as
+    // @euclid/dsl defines it, and inlining that (recursive) schema into every
+    // describe would cost more than it teaches — a pointer to the contract
+    // that actually governs it stays true when the DSL moves.
+    result: z.object({
+      doc: z
+        .unknown()
+        .describe(
+          'the full EuclidDoc — canvas, scenes[], each with nodes[]/tracks/transitions/narration. ' +
+            'The text is an OUTLINE of this; the data is the whole thing.',
+        ),
+      reviewMode: z.boolean().describe('true while paid generation needs an approved plan'),
+    }),
     async handler(ctx, { projectId }) {
       const { doc } = await ctx.getDoc(projectId)
       // Stated on the cheap read too, not only in orientation: an agent that
@@ -172,6 +185,27 @@ export const projectTools = [
     args: z.object({
       projectId: PROJECT_ID,
       limit: z.number().int().min(1).max(200).default(40).describe('most recent N'),
+    }),
+    result: z.object({
+      version: z.number().describe('what the project is at now'),
+      historyFrom: z
+        .number()
+        .nullable()
+        .describe('lowest restorable version; null means no snapshot exists yet'),
+      entries: z
+        .array(
+          z.object({
+            version: z.number(),
+            at: z.number().describe('epoch ms'),
+            actor: z.object({ type: z.string(), id: z.string().optional() }),
+            kinds: z.array(z.string()).describe('op kinds this version carried'),
+            restoredFrom: z
+              .number()
+              .optional()
+              .describe('present when this version was itself a revert'),
+          }),
+        )
+        .describe('oldest first, truncated to `limit` from the END (most recent)'),
     }),
     async handler(ctx, { projectId, limit }) {
       await ctx.requireProject(projectId)
@@ -274,6 +308,15 @@ export const projectTools = [
     summary: 'Full JSON of one scene, for detailed inspection.',
     doc: 'Everything in the scene — nodes, tracks, transitions, narration — as JSON. Free, but far larger than get_project: reach for it when an outline is not enough to explain what you are seeing.',
     args: z.object({ projectId: PROJECT_ID, sceneId: SCENE_ID }),
+    result: z.object({
+      scene: z
+        .unknown()
+        .describe(
+          'one EuclidDoc scene: id, name, duration, nodes[], transitions[], narration, camera. ' +
+            'Here the text and the data are the same JSON — this is the one capability where ' +
+            'reading `text` and parsing it yourself is not wrong, only wasteful.',
+        ),
+    }),
     async handler(ctx, { projectId, sceneId }) {
       const { doc } = await ctx.getDoc(projectId)
       const scene = ctx.sceneOrThrow(doc, sceneId)

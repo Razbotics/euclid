@@ -105,6 +105,23 @@ shape as `remove_asset`'s `force`.
   credits; everything else is free to call as often as needed. (`?format=json`
   on the gateway returns the structured payload instead, which is what the
   editor binds to — same handler, two renderings.)
+- **The reads publish the shape of their `data`** (plans/013). `describe` used
+  to document arguments and say nothing about what came back, which is the half
+  a *program* needs before it can write the loop — and a program is what reads
+  this once the agent composes calls in code rather than one per turn. A
+  capability may declare an optional `result` Zod schema; `describe` prints it
+  under `RESULT`, after the arguments, and `?format=json` carries it as JSON
+  Schema. Declared on the seven reads a script computes over (`get_project`,
+  `get_scene`, `get_history`, `get_plan`, `list_assets`,
+  `get_narration_timing`, `get_shots`, `sample_at`) and **deliberately absent
+  on the writes** — a write has nothing to compute over, and an empty contract
+  is noise. It is a claim about a handler that assembles `data` by hand, so
+  nothing in the type system holds the two together: `check-gateway.ts` calls
+  each one for real and requires every field the contract calls required to
+  actually be there. That mechanism found the defect that motivated it —
+  `get_shots` promised `segments` and omitted it while detection was still
+  pending, so a caller looping over it crashed on exactly the asset it was
+  waiting for.
 - Writes auto-rebase: fetch version → submit → retry ×3 on 409.
 - Coordinates are canvas pixels, origin top-left. Times are scene-local
   seconds. Nodes anchor at their center. A scene may also have a **camera**
@@ -258,14 +275,34 @@ shape as `remove_asset`'s `force`.
   *does* exist ("scene sc_1 not found. This project has: …"). Responses carry
   `catalog revision`, so a schema that moved mid-thread can say so instead of
   looking like a malformed call.
+- **A failure under `?format=json` is JSON too** (plans/013). It used to answer
+  `text/plain` whichever format was asked for, so a caller that parses every
+  reply hit a parse error on *every* capability error — the best teaching
+  surface in the system, reaching a program as a crash. The body is now
+  `{"error": {message, status, kind?, revision}}`, with the prose verbatim in
+  `message`; the text door is untouched, because a model reads prose and must
+  not start receiving JSON because a sibling caller wanted some. `kind` is one
+  of `invalid_args`, `unknown_capability`, `wrong_executor`, `not_found`,
+  `rejected`, `forbidden`, `gated` — **set only where the throwing site knew
+  it, never inferred from the status**, since 403 covers both "not your
+  project" and "the human has not approved that asset". Absent means read the
+  message. The tenancy gate is the one place a status *is* the meaning (404 no
+  such project, 403 not yours) and is read back accordingly; the first cut of
+  this shipped `kind: "forbidden"` on a 404 whose own message said "not
+  found", which is exactly the lie the field exists to avoid.
 
 ## Adding a capability
 
 One catalog entry in `apps/api/src/agent/tools-*.ts` — name, summary, prose
-contract, Zod args, optional `costsCredits`, handler — and it is listed,
-describable and executable. No MCP worker change, no client restart, no row to
-add here. `apps/api` is on **zod v4** (see dev-setup for why that is load
-bearing).
+contract, Zod args, optional `result`, optional `costsCredits`, handler — and
+it is listed, describable and executable. No MCP worker change, no client
+restart, no row to add here. `apps/api` is on **zod v4** (see dev-setup for why
+that is load bearing).
+
+Add `result` only if the capability is one a *script* would compute over — the
+reads. If you do, add it to the `contractHolds` list in `check-gateway.ts` in
+the same change: an unverified contract is worse than none, because a caller
+will believe it.
 
 Verified by `check-gateway.ts` (catalog over HTTP) and `check-mcp-tools.ts`
 (the same surface over JSON-RPC, which is where client-side argument

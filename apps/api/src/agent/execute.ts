@@ -1,6 +1,12 @@
 import { z, type ZodError } from 'zod'
 import type { EuclidNode } from '@euclid/dsl'
-import { CATALOG_REVISION, argsSchemaOf, capabilities, getCapability } from './catalog'
+import {
+  CATALOG_REVISION,
+  argsSchemaOf,
+  capabilities,
+  getCapability,
+  resultSchemaOf,
+} from './catalog'
 import { CapabilityError, type AgentCtx, type Capability, type CapabilityResult } from './types'
 
 /**
@@ -245,6 +251,8 @@ export interface DescribeResult {
   doc: string
   costsCredits: boolean
   args: unknown
+  /** JSON Schema for `data`, on the capabilities that declare one. */
+  result?: unknown
 }
 
 /**
@@ -253,16 +261,19 @@ export interface DescribeResult {
  * exist.
  */
 export function describeCapabilities(names: string[]): DescribeResult[] {
-  if (names.length === 0) throw new CapabilityError('pass at least one capability name')
+  if (names.length === 0) {
+    throw new CapabilityError('pass at least one capability name', 400, 'invalid_args')
+  }
   return names.map((name) => {
     const cap = getCapability(name)
-    if (!cap) throw new CapabilityError(unknownCapability(name), 404)
+    if (!cap) throw new CapabilityError(unknownCapability(name), 404, 'unknown_capability')
     return {
       name: cap.name,
       summary: cap.summary,
       doc: cap.doc,
       costsCredits: !!cap.costsCredits,
       args: argsSchemaOf(cap),
+      ...(cap.result ? { result: resultSchemaOf(cap) } : {}),
     }
   })
 }
@@ -277,6 +288,16 @@ export function formatDescribe(d: DescribeResult): string {
     '',
     'ARGUMENTS',
     JSON.stringify(d.args, null, 2),
+    // Only the capabilities a script computes over declare this, and only for
+    // a caller reading the reply as data — the text line above is what a model
+    // reads. Printed after the arguments so the common case is still first.
+    ...(d.result
+      ? [
+          '',
+          'RESULT (the `data` field, when you read this reply as JSON rather than text)',
+          JSON.stringify(d.result, null, 2),
+        ]
+      : []),
   ].join('\n')
 }
 
@@ -316,19 +337,22 @@ export async function executeCapability(
   opts: { allowPaid: boolean },
 ): Promise<ExecuteOutcome> {
   const cap = getCapability(name)
-  if (!cap) throw new CapabilityError(unknownCapability(name), 404)
+  if (!cap) throw new CapabilityError(unknownCapability(name), 404, 'unknown_capability')
 
   if (cap.costsCredits && !opts.allowPaid) {
     throw new CapabilityError(
       `${name} spends credits, so it must be called through execute_paid, not execute. ` +
         `This split exists so approving the free executor can never approve a charge.`,
       403,
+      'wrong_executor',
     )
   }
   if (!cap.costsCredits && opts.allowPaid) {
     throw new CapabilityError(
       `${name} is free — call it through execute. execute_paid is only for ` +
         `capabilities that spend credits.`,
+      400,
+      'wrong_executor',
     )
   }
 
@@ -339,6 +363,8 @@ export async function executeCapability(
         `Call describe(["${name}"]) for the full argument contract ` +
         `(catalog revision ${CATALOG_REVISION} — if you are working from an ` +
         `earlier describe, it may have moved).`,
+      400,
+      'invalid_args',
     )
   }
 

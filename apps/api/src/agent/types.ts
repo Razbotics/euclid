@@ -63,11 +63,66 @@ export interface Capability<A = any> {
   doc: string
   args: z.ZodType<A>
   /**
+   * The shape of `data`, for a caller that reads it as data.
+   *
+   * Optional, and only worth writing on the capabilities a script computes
+   * over — the reads. A model reading `text` needs none of this; code calling
+   * `json.loads` on the reply needs to know the field names before it writes
+   * the loop, and Anthropic's programmatic-tool-calling guidance is explicit
+   * that a documented output shape is what makes that work.
+   *
+   * Declared rather than inferred: `data` is assembled by hand in the handler,
+   * so this is a claim about it, and `check-gateway.ts` is what holds the two
+   * together.
+   */
+  result?: z.ZodType
+  /**
    * Spends credits. Routed through a separate executor tool so a human's
    * standing "always allow" on the free executor can never cover a render.
    */
   costsCredits?: boolean
   handler: (ctx: AgentCtx, args: A) => Promise<CapabilityResult>
+}
+
+/**
+ * What kind of failure this is, for a caller that is code rather than a model.
+ *
+ * Deliberately **optional and never inferred from the status code**. A status
+ * is a transport fact — 403 covers both "not your project" and "the human has
+ * not approved that asset yet" — so deriving a taxonomy from it would be a
+ * guess dressed as data, which is the same defect as a silently dropped
+ * argument. A kind is set only where the throwing site knows the answer;
+ * absent means "read the message", which is what a model does anyway.
+ */
+export type ErrorKind =
+  /** The arguments did not match the capability's schema. */
+  | 'invalid_args'
+  /** No capability by that name. */
+  | 'unknown_capability'
+  /** Right capability, wrong door — free called as paid, or the reverse. */
+  | 'wrong_executor'
+  /** A named project/scene/node/asset does not exist. */
+  | 'not_found'
+  /** The reducer refused the edit. */
+  | 'rejected'
+  /** Ownership: the caller may not touch this. */
+  | 'forbidden'
+  /** A human gate is closed — review mode, or an unapproved asset. */
+  | 'gated'
+
+/**
+ * The kind behind an `AccessError`.
+ *
+ * The one place a status code really is the meaning: the tenancy gate throws
+ * 404 for "no such project" and 403 for "not yours", deliberately distinct
+ * (and deliberately *not* distinguished in the message, which must not leak
+ * whether someone else's project exists). Reading it back is therefore not the
+ * inference this type otherwise forbids — mapping every AccessError to
+ * `forbidden` was, and it put `kind: "forbidden"` on a 404 whose own message
+ * said "not found".
+ */
+export function accessKind(status: number): ErrorKind {
+  return status === 404 ? 'not_found' : 'forbidden'
 }
 
 /**
@@ -80,6 +135,7 @@ export class CapabilityError extends Error {
   constructor(
     message: string,
     readonly status = 400,
+    readonly kind?: ErrorKind,
   ) {
     super(message)
     this.name = 'CapabilityError'
@@ -92,6 +148,7 @@ export function capability<S extends z.ZodType>(entry: {
   summary: string
   doc: string
   args: S
+  result?: z.ZodType
   costsCredits?: boolean
   handler: (ctx: AgentCtx, args: z.infer<S>) => Promise<CapabilityResult>
 }): Capability<z.infer<S>> {
