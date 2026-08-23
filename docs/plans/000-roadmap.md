@@ -479,8 +479,10 @@ Proposed and started 2026-08-22, from driving the surface through milestone
 run 8 — gaps ranked by calls actually wasted, not plausibility. The top two
 are done: draw-order control (rebuild-to-reorder cost more than every argument
 mistake in the run combined) and a free `sample_at` read over resolved state,
-followed by the naming pass and undo. Still open: composition review, geometry
-sugar, the batch executor, and the `flow_along` + `orbit_camera` warning.
+followed by the naming pass and undo. Run 9's re-ranking is now closed too —
+`animate` keyframe lists, then the `flow_along` speed profile, then the
+geometry sugar those two motions were typed onto. Still open: composition
+review, the batch executor, and the `flow_along` + `orbit_camera` warning.
 - [x] Draw-order: `reorder_node` + a `node.move` op (2026-08-22). Moves the
       id rather than the node, because rebase-on-409 makes a remove+add pair
       re-insert a stale copy. Proved in pixels: a disc reads 24.33% lit →
@@ -498,10 +500,17 @@ sugar, the batch executor, and the `flow_along` + `orbit_camera` warning.
       Needed one thing the log lacks: a snapshot to replay from, since a
       project's canvas never arrives as an op
 - [ ] Composition review: decisions carry a preview capture
+- [x] Geometry sugar: `add_arc` (2026-08-23) — circle, ellipse, arc and
+      regular polygon as **one** generator onto an ordinary `path`, so a
+      polygon is just a closed full turn with a small `samples` and no second
+      argument had to be invented. Saves output tokens rather than calls: two
+      runs hand-sampled circles, one of them twice at 72 points each. The
+      document keeps no memory of being a circle, which the check asserts —
+      along with a rim frame at 2.00% against a centre frame at 0.00%, the
+      only measurement that can tell a ring from a disc
 - [~] Camera/path interaction warning — the spatial-node-into-a-group case
       (created by, and closed with, draw-order) warns; the `flow_along` +
-      `orbit_camera` case is still open. Geometry sugar and the batch
-      executor are still to do
+      `orbit_camera` case is still open. The batch executor is still to do
 - [x] **Milestone run 9 (2026-08-23)** — 36s Kepler's-second-law explainer,
       95 round trips, **zero failed calls** (runs 4 and 8 had 10 and 5).
       Draw-order came up unprompted and cost one call where run 8 rebuilt two

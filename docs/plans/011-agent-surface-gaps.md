@@ -159,8 +159,32 @@ Run 8 hand-sampled circle points twice (the orbit ring, the phase
 half-disc). `plot_function` proves the pattern: sugar compiles to dumb
 points, the document never holds a formula.
 
-- [ ] `add_arc` (circle/ellipse/arc/polygon generators onto a `path`), the
-      same shape `samplePlot` has
+- [x] `add_arc` (circle/ellipse/arc/polygon generators onto a `path`), the
+      same shape `samplePlot` has — **done 2026-08-23**. A pure `sampleArc` in
+      the DSL and one capability over it; the document holds plain points and
+      no memory of the radius, the angles or the fact that it was a circle,
+      which is what keeps every downstream consumer seeing one shape of thing.
+      The four shapes are **one generator**, not four: an arc is a partial
+      sweep, an ellipse is unequal radii, and a regular polygon is a closed
+      full turn with a small `samples` — so `samples` IS the side count there,
+      and no second argument had to be invented for it (`sides` would have been
+      two names for one idea, which the gap-3 check now forbids at load).
+      Angles are radians from 3 o'clock increasing **clockwise**, matching the
+      sense a node's `rotation` turns in, because canvas y points down. The
+      degrees mistake is the one this form invites and it is *silent* — a
+      90-radian sweep draws a perfectly plausible closed ellipse — so the
+      response names it and prints the radian value that was meant.
+      Verified by `check-arc.ts`, which is deliberately two halves: the points
+      are arithmetic (a 64-gon sits just inside 2πr, a full turn drops its
+      duplicate endpoint, four samples make a diamond that pins the clockwise
+      convention), and everything else proves it is an *ordinary path*. The
+      document is inspected for leftover geometry fields; a camera on the rim
+      reads 2.00% while one on the centre reads 0.00% — a ring, which no
+      measure of total ink could tell from a disc — and the same call with
+      `fill` floods that middle frame to 100%; and `flow_along`'s speed profile
+      rides the generated circle to 6 o'clock at a quarter turn. Reversing the
+      y term in the generator fails the diamond assertion, which is how the
+      convention earned being trusted.
 
 ### 8. No batch execution
 
@@ -273,7 +297,9 @@ hand-sampled twice, 72 points each — precisely what the plan predicted, and th
 plan says "circle/ellipse/arc/polygon", which is right. Note the cost is not in
 *calls* (2 `add_path`) but in **output tokens**: a shell-less agent types every
 coordinate. That is the argument for the sugar, and the plan's call-based
-ranking understates it.
+ranking understates it. **Closed 2026-08-23** — and the ellipse half was the
+load-bearing part, since the run's shape was an orbit and a circle generator
+would have left it typing points anyway.
 
 ### Non-findings, recorded so they are not rediscovered
 

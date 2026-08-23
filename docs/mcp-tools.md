@@ -265,6 +265,20 @@ shape as `remove_asset`'s `force`.
 - A graph's **mapping is a node**: `add_axes` owns the rectangle, the ranges
   and the ticks, and `plot_function` takes its `axesId` to borrow them, so a
   curve cannot disagree with the frame it is read against.
+- **Geometry sugar compiles to dumb points** (plans/011 gap 7). `add_arc`
+  makes a circle, ellipse, arc or regular polygon and produces an ordinary
+  `path` — the document keeps no radius, no angles and no memory of being a
+  circle, exactly as `plot_function` keeps no formula. So the result writes on,
+  fills, morphs and is ridden by `flow_along` with no special case anywhere.
+  It saves **output tokens rather than calls**: `add_path` already took every
+  point at once, but two milestone runs still had to *compute* them, one of
+  them twice in a single run at 72 points each. `x`/`y` are the centre; equal
+  `rx`/`ry` is the only thing that makes it a circle; and on a closed full turn
+  `samples` **is** the number of sides, so 3 is a triangle and 64 reads as
+  smooth. Angles are radians from 3 o'clock, increasing **clockwise** because
+  canvas y points down — the same sense `rotation` turns in — and a sweep past
+  a full turn is reported with the radian value that was probably meant, since
+  passing degrees draws a plausible whole ellipse and is otherwise invisible.
 - Structured content is addressed by **what it is, not where it is**: `tex`
   names a sub-expression of an equation, `cells` names a row, column, cell or
   band of a `matrix`/`tokens` node (`{"rows":1}`, `{"rows":[0,1],"cols":2}`,
