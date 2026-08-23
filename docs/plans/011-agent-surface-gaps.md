@@ -235,11 +235,34 @@ and emits 24 coordinate pairs. Ranked by what each would have removed here:
       samples as a number and places the node at (NaN, NaN) with nothing in the
       document looking wrong. `LIMITS.maxKeyframesPerTrack` (500) is the new
       ceiling; there was none while only two could be added at a time.
-- [ ] **A speed profile on `flow_along`** (e.g. `at: [{t, u}]`, u a fraction
-      of arc length) — 48 calls → 2, *and* the agent stops computing
-      positions: the path stays the source of geometry, which is the whole
-      argument for `flow_along` existing. Subsumes the case above for motion
-      specifically.
+- [x] **A speed profile on `flow_along`** — **done 2026-08-23**. `at: [{t, u}]`
+      with `u` a fraction of arc length: 48 calls → 2, *and* the agent stops
+      computing positions, which is the half keyframes could not fix. The path
+      stays the source of geometry and only the pacing is given — the whole
+      argument for `flow_along` existing.
+      A `FlowPoint` is deliberately a `Keyframe` over a different value domain
+      (`t` scene-local, `easing` shaping the segment arriving AT the point), so
+      the form an agent already learned on `animate` transfers. It is a
+      distinct *type* because a keyframe's value may be a point or a colour and
+      neither is a position along a curve, and `start`/`duration` are derived
+      from the ends of the list so everything that reads a transition's span —
+      key moments, the sampler's own `t >= start` gate — keeps working
+      untouched. `u` need not be monotone: rising then falling is a node that
+      travels out along the path and back, which the response names.
+      Verified in the resolver *and* in pixels by `check-flows.ts`: on a
+      1600px dog-leg the profile lands exactly on the arc length it names
+      ((1100,700) at 1s, where the constant-speed token is 500px behind),
+      interpolates between its points by arc length rather than by chord
+      ((600,600) at t=0.5, which is u=0.375 and not u=0.5), holds the last
+      point after the end, and reverses. The camera framed on that one point
+      reads 2.43% / 6.96% / 2.43% as the token arrives and leaves — and with
+      the profile ignored in the sampler the same assertion fails, reporting
+      (600,400).
+      `sampleFlowU` is a deliberate copy of `sampleKeyframes` — written out
+      because mapping FlowPoints to Keyframes would allocate on every follower
+      on every frame, in the one function the render loop passes through — so
+      the check asserts the two agree across segment boundaries and between
+      them. A copy nothing compares is a copy that diverges.
 - [ ] Batch execution (gap 8) — still worth having for the long tail, but it
       is now clearly the third-best fix for the cost it was ranked on.
 

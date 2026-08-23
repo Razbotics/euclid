@@ -20,7 +20,10 @@ export const LIMITS = {
   maxNodesPerScene: 200,
   maxOpsPerEnvelope: 50,
   /**
-   * Keyframes on one property track.
+   * Keyframes on one property track — and points in one `flow_along` speed
+   * profile, which is the same constraint under a different name: a FlowPoint
+   * is a keyframe over a different value domain, and both are entries in a list
+   * stored in the document.
    *
    * There was no cap while `animate` could only add two at a time; taking a
    * whole list in one call makes one worth having. The binding constraint is

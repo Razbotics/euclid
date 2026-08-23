@@ -513,8 +513,13 @@ sugar, the batch executor, and the `flow_along` + `orbit_camera` warning.
       ranked on
 - [x] `animate` accepting a list of keyframes (2026-08-23) — run 9's Kepler
       motion rebuilt in **1 call instead of 24**, positions byte-identical
-- [ ] A speed profile on `flow_along` (48 calls → 2, and no hand-computed
-      positions)
+- [x] A speed profile on `flow_along` (2026-08-23) — `at: [{t, u}]`, u a
+      fraction of arc length. 48 calls → 2, and the agent stops computing
+      positions: the path keeps supplying the geometry and only the pacing is
+      given. Proved in the resolver and in pixels — the profile lands exactly
+      on the arc length it names where a constant-speed flow is 500px behind,
+      and the same assertion fails, reporting (600,400), when the sampler
+      ignores the profile
 
 ## Parallel track: programmatic tool calling → plans/013-programmatic-tool-calling.md
 Proposed 2026-08-23. Lets the model call `execute` from inside a

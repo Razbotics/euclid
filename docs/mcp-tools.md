@@ -135,7 +135,16 @@ shape as `remove_asset`'s `force`.
   recomputes its endpoints every frame, stopping at the edge of what it points
   at. `flow_along` rides a path by arc length and overrides the
   node's position from `start` onward — the one place a transition beats a
-  track, which the response says out loud.
+  track, which the response says out loud. It also takes a **speed profile**,
+  `at: [{t, u}…]`, where `u` is a fraction of arc length (plans/011, from
+  run 9): the path still supplies every coordinate and only the *pacing* is
+  given, so an orbit that races at perihelion and dawdles at aphelion is one
+  call rather than twenty-four hand-computed positions. `start`/`duration` are
+  derived from the ends of the list and cannot be passed with it. Times must
+  ascend; `u` need not, so a profile that rises and falls sends the node out
+  and back. The response reports the **speeds it produced** (`133–1200 px/s`)
+  rather than the profile back, because "does it vary the way I meant" is the
+  only question this form raises.
 - A node can step **out of the world**: `pin_to_frame` makes it ignore the
   camera entirely, for captions and titles that should not swing about when
   the scene orbits.

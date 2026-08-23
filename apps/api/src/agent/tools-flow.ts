@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import {
+  LIMITS,
   newId,
   op,
   type ArrowEnd,
@@ -134,18 +135,46 @@ export const flowTools = [
       '**It overrides the node\'s position from `start` onward.** Before `start` the node is wherever it normally would be, so put it at the head of the path (or start the flow there) unless you want it to jump. A `position` track on the same node loses to this, which is the opposite of the usual rule and the reason the response says so.',
       '',
       'The path is an ordinary `path` node — from add_path or plot_function — and can be invisible: give it `strokeWidth` and a colour that matches the background if you only want the trajectory, not the line.',
+      '',
+      '**Pass `at` when the speed varies along the way.** `[{t, u}, …]` is a speed profile: be `u` of the way along the path at scene-local second `t`, with `u` a fraction of arc length (0 the first point of the path, 1 the last). The path still supplies every coordinate — you are giving the *pacing*, not the geometry, which is the whole reason to ride a path rather than build a position track.',
+      '',
+      'This is the form for an orbit, a bouncing arc, anything that races and dawdles: a planet fast at perihelion and slow at aphelion is `[{t:0,u:0},{t:0.6,u:0.5},{t:3,u:1}]`, not twenty-four hand-computed coordinate pairs. A real run spent **48 of its 95 calls** on exactly that, because a flow travels at constant speed and `easing` is one monotone curve over the whole trip, so it could not say "fast, slow, fast".',
+      '',
+      '`start` and `duration` come from the ends of the list, so do not pass them with `at`. Per-point `easing` is optional and inherits the call\'s — it shapes the segment arriving AT that point, exactly as a keyframe\'s does. Times must ascend; `u` need not, so a profile that rises and falls sends the node out along the path and back.',
+      '',
+      `Up to ${LIMITS.maxKeyframesPerTrack} points. Sample as finely as the motion needs — the sampler interpolates between whatever you give it, and 200 points cost no more to render than 2.`,
     ].join('\n'),
     args: z.object({
       projectId: PROJECT_ID,
       sceneId: SCENE_ID,
       nodeId: NODE_ID.describe('the node that travels'),
       pathId: NODE_ID.describe('a path node to travel along'),
-      start: SECONDS,
-      duration: z.number().positive().default(2),
+      start: SECONDS.optional(),
+      duration: z.number().positive().optional(),
       easing: EASING,
       orient: z.boolean().default(false).describe('turn to face the direction of travel'),
+      at: z
+        .array(
+          z.object({
+            t: SECONDS,
+            u: z
+              .number()
+              .min(0)
+              .max(1)
+              .describe('fraction of the path travelled: 0 its first point, 1 its last'),
+            /** No default: an omitted per-point easing inherits the call's. */
+            easing: z
+              .enum(['linear', 'easeIn', 'easeOut', 'easeInOut', 'smooth'])
+              .optional(),
+          }),
+        )
+        .min(2)
+        .max(LIMITS.maxKeyframesPerTrack)
+        .optional()
+        .describe('speed profile, instead of constant speed over start/duration'),
     }),
-    async handler(ctx, { projectId, sceneId, nodeId, pathId, start, duration, easing, orient }) {
+    async handler(ctx, a) {
+      const { projectId, sceneId, nodeId, pathId, easing, orient, at } = a
       const { doc } = await ctx.getDoc(projectId)
       const scene = ctx.sceneOrThrow(doc, sceneId)
       const node = ctx.nodeOrThrow(doc, sceneId, nodeId)
@@ -163,20 +192,76 @@ export const flowTools = [
       }
       if (nodeId === pathId) throw new CapabilityError('a path cannot travel along itself')
 
+      // `at` carries its own timing, so taking start/duration as well would
+      // leave two answers to when the flow runs and no rule for which wins.
+      if (at && (a.start !== undefined || a.duration !== undefined)) {
+        throw new CapabilityError(
+          '`at` already says when the node is where, so it cannot be combined with ' +
+            '`start`/`duration` — the flow runs from the first point to the last. ' +
+            'Shift the whole motion by moving the times in `at`.',
+        )
+      }
+      if (!at && a.start === undefined) {
+        throw new CapabilityError(
+          'give `start` (with an optional `duration`) for a constant-speed flow, ' +
+            'or `at` for a speed profile — a list of {t, u} saying where along the ' +
+            'path the node is at each moment.',
+        )
+      }
+      if (at) {
+        // Ascending and distinct, for the same reason animate's keyframes are:
+        // two points at one time are ambiguous rather than wrong-looking, and
+        // a descending pair would silently run the motion backwards.
+        for (let i = 1; i < at.length; i++) {
+          if (at[i]!.t <= at[i - 1]!.t) {
+            throw new CapabilityError(
+              `\`at\` must be in ascending time order: [${i - 1}] is at ${at[i - 1]!.t}s and ` +
+                `[${i}] is at ${at[i]!.t}s. To send the node back along the path, lower ` +
+                `\`u\` at a LATER time — the times always move forwards, the position need not.`,
+            )
+          }
+        }
+      }
+
+      const start = at ? at[0]!.t : a.start!
+      const duration = at ? at[at.length - 1]!.t - at[0]!.t : (a.duration ?? 2)
       const transitions: Transition[] = [
         ...node.transitions.filter((t) => t.type !== 'follow'),
-        { type: 'follow', start, duration, pathId, easing: easing as Easing, orient },
+        {
+          type: 'follow',
+          start,
+          duration,
+          pathId,
+          easing: easing as Easing,
+          orient,
+          ...(at
+            ? { at: at.map((p) => ({ t: p.t, u: p.u, easing: (p.easing ?? easing) as Easing })) }
+            : {}),
+        },
       ]
       await ctx.submit(projectId, [op.updateNode(sceneId, nodeId, { transitions })])
       const tracked = node.tracks.some((t) => t.property === 'position')
       const length = pathLength(path.points, path.closed)
+      // Report the speeds the profile actually produces, not the profile back.
+      // The whole point of this form is that speed varies, so "does it vary the
+      // way I meant" is the question the caller has, and it is arithmetic over
+      // numbers they would otherwise have to do by hand.
+      const speeds = at
+        ? at.slice(1).map((p, i) => (Math.abs(p.u - at[i]!.u) * length) / (p.t - at[i]!.t))
+        : []
+      const profile = at
+        ? `, ${at.length}-point profile — ${Math.round(Math.min(...speeds))}` +
+          `–${Math.round(Math.max(...speeds))} px/s across its segments` +
+          (at.some((p, i) => i > 0 && p.u < at[i - 1]!.u) ? ', reversing partway' : '')
+        : ''
       return said(
         `${nodeId} flows along ${pathId} (${Math.round(length)}px) over ` +
-          `[${start}s, ${start + duration}s]${orient ? ', facing the way it travels' : ''}` +
+          `[${start}s, ${start + duration}s]${profile}` +
+          `${orient ? ', facing the way it travels' : ''}` +
           (tracked
             ? ` — NOTE ${nodeId} also has a position track, and the flow wins from ${start}s onward`
             : ''),
-        { nodeId, pathId, start, duration, length },
+        { nodeId, pathId, start, duration, length, points: at?.length ?? 0 },
       )
     },
   }),
