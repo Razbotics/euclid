@@ -189,6 +189,38 @@ export const previewTools = [
         .optional()
         .describe('only these nodes (and their groups); default every node'),
     }),
+    // The capability a sweep is most likely to loop over — twenty samples and
+    // a comparison in code is the shape this exists for — so what the numbers
+    // *are* is worth stating rather than leaving to be inferred from prose.
+    result: z.object({
+      sceneId: z.string(),
+      t: z.number().describe('scene-local seconds, as asked for'),
+      globalT: z.number().describe('the same moment on the whole-video timeline'),
+      spatial: z.boolean().describe('true once the scene projects — a camera yaw/pitch or any z'),
+      camera: z.unknown().nullable().describe('the resolved camera, or null when the scene has none'),
+      nodes: z.array(
+        z.object({
+          id: z.string(),
+          type: z.string(),
+          world: z
+            .object({ x: z.number(), y: z.number() })
+            .describe('composed scene position: group transforms folded in, follows applied'),
+          screen: z
+            .object({ x: z.number(), y: z.number() })
+            .describe('where that lands in canvas pixels once the camera has framed it'),
+          opacity: z.number(),
+          scale: z.unknown(),
+          rotation: z.number().describe('radians'),
+          writeProgress: z.number().optional(),
+          projection: z.unknown().optional().describe('depth/perspective, in an orbited scene'),
+          highlight: z.unknown().optional(),
+          visible: z
+            .boolean()
+            .describe('drawn at this moment — false covers opacity 0, unwritten, behind camera'),
+        }),
+      )
+        .describe('anchors, NOT extents — a node\'s size is not knowable from here'),
+    }),
     async handler(ctx, { projectId, sceneId, t, nodeIds }) {
       const { doc } = await ctx.getDoc(projectId)
       const scene = ctx.sceneOrThrow(doc, sceneId)

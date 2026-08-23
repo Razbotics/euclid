@@ -169,6 +169,19 @@ export const mediaTools = [
         .optional()
         .describe('only words containing this, for finding one in a long script'),
     }),
+    result: z.object({
+      words: z
+        .array(
+          z.object({
+            word: z.string().describe('stripped of punctuation, lowercased — how atWord matches'),
+            start: z.number().describe('scene-local seconds at which it begins'),
+            occurrence: z
+              .number()
+              .describe('1-based; what atWordOccurrence names when a word repeats'),
+          }),
+        )
+        .describe('empty when `contains` matched nothing; the capability throws if no timings exist'),
+    }),
     async handler(ctx, { projectId, sceneId, contains }) {
       const { doc } = await ctx.getDoc(projectId)
       const scene = ctx.sceneOrThrow(doc, sceneId)
@@ -218,6 +231,22 @@ export const mediaTools = [
       projectId: PROJECT_ID,
       assetId: z.string().min(1).describe('a video asset — see list_assets'),
     }),
+    result: z.object({
+      shots: z
+        .array(z.number())
+        .nullable()
+        .describe('cut times in seconds; null means detection has not run yet'),
+      segments: z
+        .array(
+          z.object({
+            index: z.number(),
+            from: z.number().describe('seconds into the source'),
+            to: z.number(),
+          }),
+        )
+        .describe('the takes between cuts — always present, empty while pending'),
+      pending: z.boolean().describe('true means not watched yet, NOT "no cuts found"'),
+    }),
     async handler(ctx, { projectId, assetId }) {
       await ctx.requireProject(projectId)
       const assets = await listProjectAssets(ctx.env, projectId, ctx.userId)
@@ -231,7 +260,12 @@ export const mediaTools = [
           `${assetId} has not been watched yet — shot detection runs in the background after ` +
             `upload and decodes the whole file, so it lags the file appearing. Ask again shortly. ` +
             `(This is not the same as "no cuts found".)`,
-          { shots: null, pending: true },
+          // `segments: []` rather than absent. The pending branch used to omit
+          // it while both settled branches carried it, so a caller looping over
+          // `data.segments` crashed on exactly the asset it most needed to wait
+          // for. `pending` is the field that distinguishes the two, and it is
+          // present in all three — an absent key must never be the signal.
+          { shots: null, segments: [], pending: true },
         )
       }
       const shots = asset.shots ?? []
@@ -291,6 +325,26 @@ export const mediaTools = [
     args: z.object({
       projectId: PROJECT_ID,
       scope: z.enum(['project', 'library']).default('project'),
+    }),
+    // One key, two shapes — and saying so is the point. The text renders a
+    // tree for `project` and a flat recency list for `library`; the data
+    // follows, so the scope-only fields are marked rather than implied.
+    result: z.object({
+      assets: z.array(
+        z.looseObject({
+          id: z.string(),
+          kind: z.string().describe('image | video | audio | model | …'),
+          bytes: z.number(),
+          path: z.string().describe('virtual — folders are derived, per project'),
+          reviewStatus: z
+            .string()
+            .nullish()
+            .describe('pending | approved | rejected; absent behaves as approved'),
+          usedBy: z.unknown().optional().describe('scope "project" only — what references it'),
+          links: z.number().optional().describe('scope "library" only — how many projects link it'),
+          linkedHere: z.boolean().optional().describe('scope "library" only'),
+        }),
+      ),
     }),
     async handler(ctx, { projectId, scope }) {
       await ctx.requireProject(projectId)

@@ -1,7 +1,9 @@
 import { findNode, type EuclidDoc, type EuclidNode, type Op } from '@euclid/dsl'
 import { AccessError, docOf, requireProjectAccess, submitOps } from '../shared'
 import type { Env } from '../env'
-import { CapabilityError, type AgentCtx } from './types'
+import { getCapability } from './catalog'
+import { executeCapability } from './execute'
+import { CapabilityError, accessKind, type AgentCtx } from './types'
 
 /**
  * Build the context handlers run in.
@@ -21,7 +23,9 @@ export function makeCtx(env: Env, userId: string, origin: string): AgentCtx {
       try {
         await requireProjectAccess(env, projectId, userId)
       } catch (e) {
-        if (e instanceof AccessError) throw new CapabilityError(e.message, e.status)
+        if (e instanceof AccessError) {
+          throw new CapabilityError(e.message, e.status, accessKind(e.status))
+        }
         throw e
       }
     },
@@ -29,7 +33,9 @@ export function makeCtx(env: Env, userId: string, origin: string): AgentCtx {
     async getDoc(projectId: string): Promise<{ doc: EuclidDoc }> {
       await ctx.requireProject(projectId)
       const doc = await docOf(env, projectId)
-      if (!doc) throw new CapabilityError(`project ${projectId} has no document yet`, 404)
+      if (!doc) {
+        throw new CapabilityError(`project ${projectId} has no document yet`, 404, 'not_found')
+      }
       return { doc }
     },
 
@@ -41,7 +47,11 @@ export function makeCtx(env: Env, userId: string, origin: string): AgentCtx {
         // Reducer rejections (missing node, invalid patch) are the agent's
         // problem to fix, not an internal fault — surface the reducer's own
         // wording, which already names the offending op.
-        throw new CapabilityError(`the edit was rejected: ${(e as Error).message}`, 422)
+        throw new CapabilityError(
+          `the edit was rejected: ${(e as Error).message}`,
+          422,
+          'rejected',
+        )
       }
     },
 
@@ -49,7 +59,11 @@ export function makeCtx(env: Env, userId: string, origin: string): AgentCtx {
       const scene = doc.scenes.find((s) => s.id === sceneId)
       if (scene) return scene
       const have = doc.scenes.map((s) => `${s.id} "${s.name}"`).join(', ') || 'none'
-      throw new CapabilityError(`scene ${sceneId} not found. This project has: ${have}`, 404)
+      throw new CapabilityError(
+        `scene ${sceneId} not found. This project has: ${have}`,
+        404,
+        'not_found',
+      )
     },
 
     nodeOrThrow(doc: EuclidDoc, sceneId: string, nodeId: string): EuclidNode {
@@ -60,7 +74,23 @@ export function makeCtx(env: Env, userId: string, origin: string): AgentCtx {
       throw new CapabilityError(
         `node ${nodeId} not found in scene ${sceneId}. That scene has: ${have}`,
         404,
+        'not_found',
       )
+    },
+
+    capabilityInfo(name: string) {
+      const cap = getCapability(name)
+      return { exists: !!cap, costsCredits: !!cap?.costsCredits }
+    },
+
+    async runCapability(name: string, args: unknown) {
+      const out = await executeCapability(ctx, name, args, { allowPaid: false })
+      return {
+        name: out.name,
+        data: out.data,
+        text: out.text,
+        ...(out.image ? { image: out.image } : {}),
+      }
     },
   }
   return ctx

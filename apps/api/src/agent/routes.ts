@@ -8,7 +8,7 @@ import {
   executeCapability,
   formatDescribe,
 } from './execute'
-import { CapabilityError } from './types'
+import { CapabilityError, accessKind } from './types'
 import type { Env, Vars } from '../env'
 
 /**
@@ -50,14 +50,15 @@ agent.post('/tools/describe', async (c) => {
     : typeof body.names === 'string'
       ? [body.names]
       : []
+  const asJson = c.req.query('format') === 'json'
   try {
     const described = describeCapabilities(names)
-    if (c.req.query('format') === 'json') {
+    if (asJson) {
       return c.json({ revision: CATALOG_REVISION, capabilities: described })
     }
     return c.text(described.map(formatDescribe).join('\n\n────────────────────────\n\n'))
   } catch (e) {
-    return failure(c, e)
+    return failure(c, e, asJson)
   }
 })
 
@@ -66,9 +67,10 @@ agent.post('/tools/:name/execute', async (c) => {
   const name = c.req.param('name')
   const args = await c.req.json().catch(() => ({}))
   const ctx = makeCtx(c.env, c.get('userId'), origin(c))
+  const asJson = c.req.query('format') === 'json'
   try {
     const out = await executeCapability(ctx, name, args, { allowPaid: c.req.query('paid') === '1' })
-    if (c.req.query('format') === 'json') {
+    if (asJson) {
       return c.json({
         revision: out.revision,
         name: out.name,
@@ -82,21 +84,43 @@ agent.post('/tools/:name/execute', async (c) => {
     // missing the point of the call.
     return c.text(out.image ? `${out.text}\n\n[image omitted: request ?format=json]` : out.text)
   } catch (e) {
-    return failure(c, e)
+    return failure(c, e, asJson)
   }
 })
 
 /**
  * Errors are the agent's only teacher here, so a CapabilityError's message is
- * returned verbatim as the body. Anything else is a real fault and says so
- * rather than being dressed up as guidance the agent could act on.
+ * returned verbatim. Anything else is a real fault and says so rather than
+ * being dressed up as guidance the agent could act on.
+ *
+ * Under `?format=json` the body is JSON **including when it fails**. It used to
+ * be `text/plain` either way, which meant a caller that parses every reply —
+ * code in a programmatic tool call does exactly that — hit a parse error on
+ * every capability error, turning the best teaching surface in this system into
+ * a crash. The prose is unchanged and lives verbatim in `message`; `kind` is
+ * present only where the throwing site knew it (see ErrorKind), so a script can
+ * branch without matching on strings and without being lied to when it can't.
  */
 function failure(
-  c: { text: (b: string, s?: any) => Response },
+  c: { text: (b: string, s?: any) => Response; json: (b: unknown, s?: any) => Response },
   e: unknown,
+  asJson: boolean,
 ): Response {
-  if (e instanceof CapabilityError) return c.text(e.message, e.status as 400)
-  if (e instanceof AccessError) return c.text(e.message, e.status as 403)
-  console.error('agent gateway fault', e)
-  return c.text(`internal error: ${(e as Error).message}`, 500)
+  const [message, status, kind] =
+    e instanceof CapabilityError
+      ? ([e.message, e.status, e.kind] as const)
+      : e instanceof AccessError
+        ? ([e.message, e.status, accessKind(e.status)] as const)
+        : ([`internal error: ${(e as Error).message}`, 500, undefined] as const)
+
+  if (!(e instanceof CapabilityError) && !(e instanceof AccessError)) {
+    console.error('agent gateway fault', e)
+  }
+  if (asJson) {
+    return c.json(
+      { error: { message, status, ...(kind ? { kind } : {}), revision: CATALOG_REVISION } },
+      status as 400,
+    )
+  }
+  return c.text(message, status as 400)
 }

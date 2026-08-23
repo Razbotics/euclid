@@ -1,4 +1,10 @@
-# 011 — Agent surface gaps (status: in progress)
+# 011 — Agent surface gaps (status: done 2026-08-23)
+
+All eight gaps are closed. One unchecked line remains under gap 6 — projecting
+path points per vertex — and it stays unchecked on purpose: it is renderer
+work, it is owned by plans/010, and the item this plan took on was the
+*warning*, which is what an agent needs while the renderer is what it is. Every
+other box here was measured before being ticked.
 
 What is missing from the capability catalog, ranked by measured cost rather
 than by plausibility. The evidence is milestone run 8 (plans/010), which was
@@ -129,9 +135,36 @@ needed the human's eyes on was the *composition* — and the preview sheet
 reached them only by being hand-carried through chat. The decision object
 already carries `refs`:
 
-- [ ] `refs` gains a preview capture (e.g. `previewAt: number[]` rendered by
+- [x] `refs` gains a preview capture (e.g. `previewAt: number[]` rendered by
       the editor via the capture backend, or an attached sheet asset), so
-      "review the video at these moments" is one capability call
+      "review the video at these moments" is one capability call — **done
+      2026-08-23**, and it went to `ask_user` rather than becoming a second
+      asking surface. `previewAt` captures those moments through
+      `preview_frames` over the gateway and returns the sheet **as an image
+      block beside the question**, so the MCP worker stays a relay and the
+      tile cap, labels and blank-frame detection come along for free.
+      The plan offered two shapes and the answer turned out to be *both, for
+      different surfaces*. An attached sheet asset was rejected — it would
+      land in the user's library with a review status, and the review queue
+      renders `assetIds` as things awaiting approval, which a picture to look
+      at is not. So: the **image block** serves the chat human (the surface
+      plans/005 says always exists, and the one run 8 actually had), and
+      **`refs.previewAt`** serves the editor, which renders a row of seek
+      buttons — the live canvas at full size, scrubbable, which is the thing a
+      contact sheet cannot be. Plural because whether a caption collides is
+      rarely answerable from one frame; `context.atSec` stays the single
+      "seek here".
+      `previewAt` is the one ref with **no consequence** — `planId` and
+      `assetIds` change what answering *does*, this only changes what is being
+      looked at — and the check asserts the DO does not mistake it for either.
+      A failed capture **refuses the whole call** and leaves no decision
+      behind: asking about pixels without them puts the human back to hunting
+      for frames without saying so, which is exactly the gap.
+      Verified in `check-decisions.ts` (both content blocks travel, the block
+      names the moments, the ref is stored and inert, a failed capture leaves
+      nothing open — and returning no sheet fails it) and in the browser: the
+      three seek buttons render and clicking `▶ 2.0s` moves the playhead to
+      2.0s / 6.00s.
 
 ### 6. Tool combinations that silently disagree
 
@@ -141,8 +174,30 @@ a follower and its track part company as yaw grows. Each capability is
 honest alone; the combination has no voice. The house pattern already
 exists — `flow_along` warns about position tracks:
 
-- [ ] `orbit_camera`/`set_camera` (yaw/pitch) warn when the scene contains
-      flat paths that moving nodes anchor to or follow
+- [x] `orbit_camera`/`set_camera` (yaw/pitch) warn when the scene contains
+      flat paths that moving nodes anchor to or follow — **done 2026-08-23**,
+      and `move_camera` and `flow_along` warn too, because any of the four can
+      create the clash and the one that does is the one an agent is reading.
+      The condition is "does this camera **ever** leave the plane", tracks
+      included: the ordinary way a scene starts orbiting is `orbit_camera`,
+      which keyframes yaw from zero, so a base-value check would miss the
+      common case entirely.
+      **The warning is measured, not asserted.** The divergence is computable
+      from the resolver's own numbers — the only thing borrowed from the
+      renderer is one line of `syncNode` — and `check-flows.ts` computes it on
+      a 500px orbit ring: **5.7px at yaw 0.05, 113.5px at yaw 0.9.** The
+      assertion says out loud that if those ever become equal the renderer has
+      started projecting per vertex and the warning has become a lie to delete.
+      Two things the work itself taught. **Which of the pair is wrong** is the
+      useful half and is not obvious: the follower's position is the honest
+      projection of where it is, and the flat polyline pinned to one anchor is
+      the approximation — so *hiding the path* leaves correct motion behind,
+      where run 8 flattened the whole camera and paid for it with the orbit.
+      And **the failure is invisible in the wrong geometry**: a first pass
+      measured 329px of drift along a straight rail through the camera's focus
+      and photographed a bead sitting neatly on its line, because the drift ran
+      along the line's own length. The check uses an orbit ring, which is both
+      what run 8 hit and what makes the bead visibly leave its curve.
 - [x] A second instance of the same class, created by gap 1 and closed with
       it: `reorder_node` can move a spatial node into a group, which silently
       switches its projection off (the sampler only projects unpinned nodes
@@ -159,8 +214,32 @@ Run 8 hand-sampled circle points twice (the orbit ring, the phase
 half-disc). `plot_function` proves the pattern: sugar compiles to dumb
 points, the document never holds a formula.
 
-- [ ] `add_arc` (circle/ellipse/arc/polygon generators onto a `path`), the
-      same shape `samplePlot` has
+- [x] `add_arc` (circle/ellipse/arc/polygon generators onto a `path`), the
+      same shape `samplePlot` has — **done 2026-08-23**. A pure `sampleArc` in
+      the DSL and one capability over it; the document holds plain points and
+      no memory of the radius, the angles or the fact that it was a circle,
+      which is what keeps every downstream consumer seeing one shape of thing.
+      The four shapes are **one generator**, not four: an arc is a partial
+      sweep, an ellipse is unequal radii, and a regular polygon is a closed
+      full turn with a small `samples` — so `samples` IS the side count there,
+      and no second argument had to be invented for it (`sides` would have been
+      two names for one idea, which the gap-3 check now forbids at load).
+      Angles are radians from 3 o'clock increasing **clockwise**, matching the
+      sense a node's `rotation` turns in, because canvas y points down. The
+      degrees mistake is the one this form invites and it is *silent* — a
+      90-radian sweep draws a perfectly plausible closed ellipse — so the
+      response names it and prints the radian value that was meant.
+      Verified by `check-arc.ts`, which is deliberately two halves: the points
+      are arithmetic (a 64-gon sits just inside 2πr, a full turn drops its
+      duplicate endpoint, four samples make a diamond that pins the clockwise
+      convention), and everything else proves it is an *ordinary path*. The
+      document is inspected for leftover geometry fields; a camera on the rim
+      reads 2.00% while one on the centre reads 0.00% — a ring, which no
+      measure of total ink could tell from a disc — and the same call with
+      `fill` floods that middle frame to 100%; and `flow_along`'s speed profile
+      rides the generated circle to 6 o'clock at a quarter turn. Reversing the
+      y term in the generator fails the diamond assertion, which is how the
+      convention earned being trusted.
 
 ### 8. No batch execution
 
@@ -168,10 +247,37 @@ Building three scenes took ~40 HTTP round trips. Scripts do not care;
 model-driven agents pay latency per call. Per-call error teaching is the
 argument against over-batching, so the middle ground:
 
-- [ ] A batch executor: apply an ordered list of free capability calls,
+- [x] A batch executor: apply an ordered list of free capability calls,
       stop at the first error, report which succeeded — keeping every error
       as teachable as it is today. Paid capabilities stay excluded, so the
-      paid-door permission split is untouched
+      paid-door permission split is untouched. **Done 2026-08-23** as
+      `execute_batch`, and the measurement corrected the framing:
+      **it saves round trips, not work.** Twelve `add_text` calls take the
+      same wall-clock either way — 286ms against 296ms, median of 7, both
+      climbing identically as the document grows — because every call still
+      reads the document and submits its own edit. That per-call submit is the
+      *reason* it is useful rather than a shortcut not taken: call *n* sees
+      call *n-1*'s work, which one composed envelope could not offer. What
+      collapses is the number of times the agent stops and waits.
+      Because there is no single envelope, it is **not a transaction**, and
+      the failure message says so and names `get_history`/`revert_to_version`
+      — undo turning out to be the thing that makes partial application
+      acceptable rather than alarming. Structural problems (a paid
+      capability, a nested batch, a misspelled name) are refused **before
+      anything runs**: refusing a `render_video` at position 5 after applying
+      four edits would be worse than not checking. Removing that pre-flight
+      fails the check, which is how it earned its place.
+      It lives in the catalog like any other capability, reaching the
+      executor through a new `ctx.runCapability` rather than importing it —
+      `AgentCtx` is already where everything a handler cannot do for itself
+      lives, and a direct import would close a loop through the catalog at
+      module load, where `ref()` and the duplicate-name check run.
+      **No reference syntax, deliberately.** An id made inside a batch is not
+      available to a later call in it, and that limit is self-evident at
+      authoring time — you cannot type a `sceneId` you have not been told.
+      The arithmetic decided it: without references, three scenes go from ~40
+      calls to 6; with them, to 3. A small expression language inside the
+      arguments is not worth the second three.
 
 ## Milestone run 9 — measuring what the first four gaps changed (2026-08-23)
 
@@ -235,13 +341,39 @@ and emits 24 coordinate pairs. Ranked by what each would have removed here:
       samples as a number and places the node at (NaN, NaN) with nothing in the
       document looking wrong. `LIMITS.maxKeyframesPerTrack` (500) is the new
       ceiling; there was none while only two could be added at a time.
-- [ ] **A speed profile on `flow_along`** (e.g. `at: [{t, u}]`, u a fraction
-      of arc length) — 48 calls → 2, *and* the agent stops computing
-      positions: the path stays the source of geometry, which is the whole
-      argument for `flow_along` existing. Subsumes the case above for motion
-      specifically.
-- [ ] Batch execution (gap 8) — still worth having for the long tail, but it
+- [x] **A speed profile on `flow_along`** — **done 2026-08-23**. `at: [{t, u}]`
+      with `u` a fraction of arc length: 48 calls → 2, *and* the agent stops
+      computing positions, which is the half keyframes could not fix. The path
+      stays the source of geometry and only the pacing is given — the whole
+      argument for `flow_along` existing.
+      A `FlowPoint` is deliberately a `Keyframe` over a different value domain
+      (`t` scene-local, `easing` shaping the segment arriving AT the point), so
+      the form an agent already learned on `animate` transfers. It is a
+      distinct *type* because a keyframe's value may be a point or a colour and
+      neither is a position along a curve, and `start`/`duration` are derived
+      from the ends of the list so everything that reads a transition's span —
+      key moments, the sampler's own `t >= start` gate — keeps working
+      untouched. `u` need not be monotone: rising then falling is a node that
+      travels out along the path and back, which the response names.
+      Verified in the resolver *and* in pixels by `check-flows.ts`: on a
+      1600px dog-leg the profile lands exactly on the arc length it names
+      ((1100,700) at 1s, where the constant-speed token is 500px behind),
+      interpolates between its points by arc length rather than by chord
+      ((600,600) at t=0.5, which is u=0.375 and not u=0.5), holds the last
+      point after the end, and reverses. The camera framed on that one point
+      reads 2.43% / 6.96% / 2.43% as the token arrives and leaves — and with
+      the profile ignored in the sampler the same assertion fails, reporting
+      (600,400).
+      `sampleFlowU` is a deliberate copy of `sampleKeyframes` — written out
+      because mapping FlowPoints to Keyframes would allocate on every follower
+      on every frame, in the one function the render loop passes through — so
+      the check asserts the two agree across segment boundaries and between
+      them. A copy nothing compares is a copy that diverges.
+- [x] Batch execution (gap 8) — still worth having for the long tail, but it
       is now clearly the third-best fix for the cost it was ranked on.
+      **Done 2026-08-23**, and the ranking held: it makes those 48 calls
+      cheaper to *issue* without making them fewer, which is exactly why the
+      two above it came first.
 
 ### Confirmed, with a correction
 
@@ -250,7 +382,9 @@ hand-sampled twice, 72 points each — precisely what the plan predicted, and th
 plan says "circle/ellipse/arc/polygon", which is right. Note the cost is not in
 *calls* (2 `add_path`) but in **output tokens**: a shell-less agent types every
 coordinate. That is the argument for the sugar, and the plan's call-based
-ranking understates it.
+ranking understates it. **Closed 2026-08-23** — and the ellipse half was the
+load-bearing part, since the run's shape was an orbit and a circle generator
+would have left it typing points anyway.
 
 ### Non-findings, recorded so they are not rediscovered
 

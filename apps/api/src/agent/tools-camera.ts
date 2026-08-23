@@ -7,6 +7,7 @@ import {
   type CameraProp,
   type CameraTrack,
   type Easing,
+  type EuclidNode,
   type KeyValue,
 } from '@euclid/dsl'
 import { resolveCamera } from '@euclid/engine'
@@ -17,6 +18,81 @@ import { capability, said, CapabilityError } from './types'
 const ZOOM = NUMBERISH.describe(
   `1 = the canvas as laid out; 2 shows half as much, twice as large (${LIMITS.minCameraZoom}–${LIMITS.maxCameraZoom})`,
 )
+
+/**
+ * Does this camera ever leave the flat plane?
+ *
+ * Tracks as well as the base value, because the ordinary way a scene starts
+ * orbiting is `orbit_camera`, which keyframes yaw from zero — a scene that is
+ * flat at t=0 and turned by 3s is exactly the case a base-value check would
+ * miss, and it is the common one.
+ */
+export function everProjects(cam: Camera | undefined): boolean {
+  if (!cam) return false
+  if (cam.yaw !== 0 || cam.pitch !== 0) return true
+  return cam.tracks.some(
+    (t) =>
+      (t.property === 'yaw' || t.property === 'pitch') &&
+      t.keyframes.some((k) => (k.value as number) !== 0),
+  )
+}
+
+/** Every node in this scene riding a path, paired with the path it rides. */
+function pathFollowers(nodes: readonly EuclidNode[]): { nodeId: string; pathId: string }[] {
+  const out: { nodeId: string; pathId: string }[] = []
+  const walk = (list: readonly EuclidNode[]): void => {
+    for (const n of list) {
+      for (const tr of n.transitions) {
+        if (tr.type === 'follow') out.push({ nodeId: n.id, pathId: tr.pathId })
+      }
+      if (n.type === 'group') walk(n.children)
+    }
+  }
+  walk(nodes)
+  return out
+}
+
+/**
+ * The warning for `flow_along` + an orbiting camera (plans/011 gap 6, from
+ * milestone run 8's off-orbit moon).
+ *
+ * A `path` is **not** projected per vertex. The stage draws it at its anchor's
+ * projected point with that anchor's single perspective scale, while a follower
+ * is a node of its own and gets projected at the scene point it actually
+ * occupies. Those two agree only while the projection is affine over the
+ * curve — that is, while the camera is flat — and part company as yaw grows.
+ *
+ * Which way round matters, and is the useful half: the **follower is right**.
+ * Its position is the honest projection of where it is; the flat polyline
+ * pinned to one anchor is the approximation. So hiding the path leaves correct
+ * motion behind, which is a remedy the agent can actually apply — run 8
+ * flattened the whole camera instead, and lost the orbit to keep the moon.
+ *
+ * Returns '' when there is nothing to say, so callers can concatenate it.
+ */
+export function orbitFlowWarning(
+  scene: { camera?: Camera; nodes: readonly EuclidNode[] },
+  cameraOverride?: Camera,
+): string {
+  const cam = cameraOverride ?? scene.camera
+  if (!everProjects(cam)) return ''
+  const riding = pathFollowers(scene.nodes)
+  if (riding.length === 0) return ''
+  const which = riding
+    .slice(0, 3)
+    .map((r) => `${r.nodeId} on ${r.pathId}`)
+    .join(', ')
+  return (
+    `\nWARNING: this scene both projects (yaw/pitch) and has ${riding.length} node(s) riding a ` +
+    `path — ${which}${riding.length > 3 ? ', …' : ''}. A path is drawn as a flat picture ` +
+    `pinned at its anchor and scaled once, while a follower is projected at the point it ` +
+    `actually occupies, so the two drift apart as the turn grows and the follower reads as ` +
+    `off its own curve. The FOLLOWER is the correct one; the drawn curve is the approximation. ` +
+    `So: hide the path (a background-coloured stroke keeps the motion and loses the line), or ` +
+    `keep yaw and pitch at 0 while the flow is on screen. Check it with preview_frames rather ` +
+    `than assuming — a small turn may look fine.`
+  )
+}
 
 /** Shared prose: the two things every camera call gets wrong on the first try. */
 const CAMERA_UNITS = [
@@ -159,7 +235,8 @@ export const cameraTools = [
             ? ` — WARNING: ${shadowed.join(' and ')} ${shadowed.length > 1 ? 'are' : 'is'} keyframed ` +
               `on this camera, so the track wins at render time and this will not be visible. ` +
               `Use move_camera, or set_camera with reset: true first.`
-            : ''),
+            : '') +
+          orbitFlowWarning(scene, camera),
         { sceneId, camera, shadowed },
       )
     },
@@ -242,7 +319,8 @@ export const cameraTools = [
         `camera on ${sceneId}: ${moves.join(', ')} over [${start}s, ${start + duration}s]` +
           (overrun
             ? ` — note the scene ends at ${scene.duration}s, so this move never finishes on screen`
-            : ''),
+            : '') +
+          orbitFlowWarning(scene, { ...base, tracks }),
         { sceneId, from, start, duration, moves },
       )
     },
@@ -289,7 +367,11 @@ export const cameraTools = [
         `orbiting ${sceneId}: ${moves.join(', ')} over [${start}s, ${start + duration}s]` +
           (from.yaw === 0 && from.pitch === 0 && pitchDegrees === undefined
             ? ' — the scene starts flat and turns into the projection as it goes'
-            : ''),
+            : '') +
+          // The camera that was just written, not the one read at the top: this
+          // call is usually what turns projection on, and warning about the
+          // state before it would never fire on the call that caused it.
+          orbitFlowWarning(scene, { ...base, tracks }),
         { sceneId, degrees, pitchDegrees, start, duration },
       )
     },

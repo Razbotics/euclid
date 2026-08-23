@@ -429,7 +429,6 @@ placeable in any of the user's projects.
       notes drive regeneration with automatic lineage, and narration
       reviews the script rather than the takes. Verified end to end for 4
       credits (four real narration takes)
-- [ ] Phase 2: asset review lifecycle (status, lineage via `revises`)
 - [x] Phase 3: review UI in the editor — `Review.tsx` renders the queue
       (plan outlines, assets inline with a lineage strip, plain questions)
       above the inspector; explorer dots mark pending/rejected; the header
@@ -475,12 +474,17 @@ agent holding a terminal too.
 - [ ] Deploy: workers, D1, R2, Containers; production secrets
 
 ## Parallel track: agent surface gaps → plans/011-agent-surface-gaps.md
-Proposed and started 2026-08-22, from driving the surface through milestone
-run 8 — gaps ranked by calls actually wasted, not plausibility. The top two
-are done: draw-order control (rebuild-to-reorder cost more than every argument
-mistake in the run combined) and a free `sample_at` read over resolved state,
-followed by the naming pass and undo. Still open: composition review, geometry
-sugar, the batch executor, and the `flow_along` + `orbit_camera` warning.
+**Done 2026-08-23.** Proposed and started 2026-08-22, from driving the surface
+through milestone run 8 — gaps ranked by calls actually wasted, not
+plausibility. All eight are closed: draw-order control (rebuild-to-reorder cost
+more than every argument mistake in the run combined), a free `sample_at` read
+over resolved state, the naming pass, undo, composition review, geometry sugar,
+batch execution, and the two silent-disagreement warnings. Run 9's re-ranking
+is closed too — `animate` keyframe lists, then the `flow_along` speed profile,
+then the geometry sugar those motions were typed onto. The one line still
+unchecked is renderer work owned by plans/010 (projecting path points per
+vertex); what this plan owed was the warning, which is measured and shipped.
+What the eight actually bought is now a question for a milestone run.
 - [x] Draw-order: `reorder_node` + a `node.move` op (2026-08-22). Moves the
       id rather than the node, because rebase-on-409 makes a remove+add pair
       re-insert a stale copy. Proved in pixels: a disc reads 24.33% lit →
@@ -497,11 +501,39 @@ sugar, the batch executor, and the `flow_along` + `orbit_camera` warning.
       applies it through the shared reducer — no editor code knows undo exists.
       Needed one thing the log lacks: a snapshot to replay from, since a
       project's canvas never arrives as an op
-- [ ] Composition review: decisions carry a preview capture
-- [~] Camera/path interaction warning — the spatial-node-into-a-group case
-      (created by, and closed with, draw-order) warns; the `flow_along` +
-      `orbit_camera` case is still open. Geometry sugar and the batch
-      executor are still to do
+- [x] Composition review: decisions carry a preview capture (2026-08-23).
+      `ask_user` takes `previewAt` — global seconds captured through
+      `preview_frames` and returned as an image block beside the question, so
+      a question about how something looks arrives with the picture instead of
+      sending the human to find it. The times are also stored as
+      `refs.previewAt`, the one ref with no consequence, and the editor renders
+      them as seek buttons. A failed capture refuses the call rather than
+      asking about pixels without them
+- [x] Geometry sugar: `add_arc` (2026-08-23) — circle, ellipse, arc and
+      regular polygon as **one** generator onto an ordinary `path`, so a
+      polygon is just a closed full turn with a small `samples` and no second
+      argument had to be invented. Saves output tokens rather than calls: two
+      runs hand-sampled circles, one of them twice at 72 points each. The
+      document keeps no memory of being a circle, which the check asserts —
+      along with a rim frame at 2.00% against a centre frame at 0.00%, the
+      only measurement that can tell a ring from a disc
+- [x] Batch execution: `execute_batch` (2026-08-23) — an ordered list of free
+      calls in one round trip, stopping at the first error and reporting what
+      ran. The measurement corrected the framing: it saves **round trips, not
+      work** (12 calls, 286ms vs 296ms), because each call still reads and
+      submits so that call *n* sees call *n-1*. Not a transaction, and the
+      failure says so and names the undo; paid, nested and misspelled calls
+      are refused before anything runs
+- [x] Camera/path interaction warning (2026-08-23) — both cases now warn. A
+      `path` is drawn at its anchor's projected point with one perspective
+      scale while a follower is projected where it actually is, so the two part
+      company as yaw grows: **5.7px at yaw 0.05, 113.5px at yaw 0.9** on a
+      500px orbit ring, measured from the resolver's own numbers rather than
+      asserted. `flow_along`, `set_camera`, `move_camera` and `orbit_camera`
+      all report it, since any of them can create the clash. The useful half is
+      which one is wrong — the follower is correct and the drawn curve is the
+      approximation, so hiding the path keeps both the motion and the orbit,
+      where run 8 flattened the camera and lost the orbit
 - [x] **Milestone run 9 (2026-08-23)** — 36s Kepler's-second-law explainer,
       95 round trips, **zero failed calls** (runs 4 and 8 had 10 and 5).
       Draw-order came up unprompted and cost one call where run 8 rebuilt two
@@ -513,8 +545,38 @@ sugar, the batch executor, and the `flow_along` + `orbit_camera` warning.
       ranked on
 - [x] `animate` accepting a list of keyframes (2026-08-23) — run 9's Kepler
       motion rebuilt in **1 call instead of 24**, positions byte-identical
-- [ ] A speed profile on `flow_along` (48 calls → 2, and no hand-computed
-      positions)
+- [x] A speed profile on `flow_along` (2026-08-23) — `at: [{t, u}]`, u a
+      fraction of arc length. 48 calls → 2, and the agent stops computing
+      positions: the path keeps supplying the geometry and only the pacing is
+      given. Proved in the resolver and in pixels — the profile lands exactly
+      on the arc length it names where a constant-speed flow is 500px behind,
+      and the same assertion fails, reporting (600,400), when the sampler
+      ignores the profile
+
+## Parallel track: programmatic tool calling → plans/013-programmatic-tool-calling.md
+Proposed 2026-08-23. Lets the model call `execute` from inside a
+code-execution script (loops, filters, fan-out) instead of one round trip
+per call — the thing that makes a twenty-sample `sample_at` verification
+sweep affordable. MCP-connector tools are excluded from PTC categorically,
+so this rides the HTTP gateway through the external-agent harness; the MCP
+worker is unaffected. Phase 1 (structured `data` actually reaching callers,
+JSON-shaped errors under `format=json`, result contracts in `describe`) is
+additive and helps today's MCP clients before any harness exists.
+- [x] Phase 1: the structured half reaches the caller (2026-08-23). A failure
+      under `?format=json` is now JSON — it used to be `text/plain` whichever
+      format was asked for, so a caller that parses every reply crashed on
+      *every* capability error. `kind` is set at the throwing site and never
+      inferred from the status, after the first cut put `kind: "forbidden"` on
+      a 404 whose own message said "not found". The reads publish the shape of
+      their `data` through `describe`, and `check-gateway.ts` calls six of them
+      for real to hold the claim against the handler — which is what found the
+      defect that motivated the phase: `get_shots` promised `segments` and
+      omitted it while detection was pending. The MCP half was **deliberately
+      not done** (see the plan): no reader needs it, and always-on
+      `structuredContent` would cost the cheap-text non-negotiable
+- [ ] Phase 2: the PTC front door (custom-tool surface; `ask_user`,
+      `execute_paid`, `preview_frames` enforced direct-only)
+- [ ] Phase 3: idempotent retries + a measured milestone run
 
 ## Parallel track: agent gateway → plans/008-mcp-gateway.md
 Started 2026-08-15. Collapses the agent surface onto one implementation: a

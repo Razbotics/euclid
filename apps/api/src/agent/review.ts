@@ -1,7 +1,7 @@
 import { linkAsset } from '../services/assets'
 import { reviewModeOf } from '../services/plan'
 import { AccessError } from '../shared'
-import { CapabilityError, type AgentCtx } from './types'
+import { CapabilityError, accessKind, type AgentCtx } from './types'
 
 /**
  * Placement implies membership (plans/010 phase 4): placing an owned library
@@ -17,7 +17,9 @@ export async function ensureLinked(
     const r = await linkAsset(ctx.env, projectId, assetId, ctx.userId)
     return { freshlyLinked: !r.already }
   } catch (e) {
-    if (e instanceof AccessError) throw new CapabilityError(e.message, e.status)
+    if (e instanceof AccessError) {
+      throw new CapabilityError(e.message, e.status, accessKind(e.status))
+    }
     throw e
   }
 }
@@ -48,6 +50,7 @@ export async function assertPlacementApproved(
         `. Regenerate it (pass revises: "${asset.id}" so the versions stay linked), ` +
         `call request_review on the new file, and place that one once approved.`,
       403,
+      'gated',
     )
   }
   throw new CapabilityError(
@@ -55,5 +58,6 @@ export async function assertPlacementApproved(
       `Call request_review(assetIds: ["${asset.id}"]) and STOP until they answer; ` +
       `place it only once approved.`,
     403,
+    'gated',
   )
 }

@@ -501,6 +501,17 @@ main.workbench { display: flex; flex: 1; min-height: 0; }
   background: none; border: none; color: var(--link); font-size: 11px;
   padding: 0; margin-bottom: 8px; cursor: pointer;
 }
+/* A row rather than a stack: these are moments of one question, and reading
+   them as a strip is what makes "3.1s, 7.4s, 12.0s" feel like a sequence. */
+.decision-moments { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.decision-moments .decision-seek { margin-bottom: 6px; }
+.decision-moments-label {
+  /* Its own line, so the times read as one strip however narrow the panel
+     gets. Sharing a row with them puts the last time on a line of its own,
+     which reads as an afterthought rather than as part of the sequence. */
+  flex-basis: 100%; margin-bottom: 2px;
+  font-size: 10px; color: var(--text-mid); text-transform: uppercase; letter-spacing: 0.04em;
+}
 .decision-options { display: flex; flex-direction: column; gap: 6px; }
 .decision-options button {
   text-align: left; background: var(--bg-raised); color: var(--text);

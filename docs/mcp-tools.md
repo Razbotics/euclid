@@ -34,6 +34,21 @@ the copy that cannot go stale.
   controls what the agent puts in its very next reply. Neither survives being
   flattened into request/response. Closing a question is ordinary state, so
   `record_answer` *is* a capability: `execute(name="record_answer")`.
+  It also takes **`previewAt`** (plans/011 gap 5): global seconds that are
+  captured as one contact sheet and returned **as an image block beside the
+  question**, so a question about how something looks arrives with the picture
+  rather than sending the human to find it. `request_review` puts *assets* in
+  front of someone; what milestone run 8 needed eyes on was the composition,
+  and the sheet reached the human only by being described in chat. Capture
+  goes through `preview_frames` over the gateway, so its tile cap, labels and
+  blank-frame detection all apply and the MCP worker stays a relay — and a
+  capture that fails **refuses the whole call**, because asking about pixels
+  without them is the failure this closes. The times are also stored as
+  `refs.previewAt`, the one ref with **no consequence**: `planId` and
+  `assetIds` change what answering *does*, this only changes what is being
+  looked at while deciding. The editor renders them as a row of seek buttons,
+  which is the thing an editor can offer that a contact sheet cannot — the
+  live canvas at full size, scrubbable around each moment.
 - **Bytes stay on REST.** Tool args are JSON; base64 through an LLM context is
   a non-starter, so asset upload is a plain endpoint (`POST
   /api/projects/:id/assets`) rather than a tool. It takes two callers now:
@@ -105,6 +120,23 @@ shape as `remove_asset`'s `force`.
   credits; everything else is free to call as often as needed. (`?format=json`
   on the gateway returns the structured payload instead, which is what the
   editor binds to — same handler, two renderings.)
+- **The reads publish the shape of their `data`** (plans/013). `describe` used
+  to document arguments and say nothing about what came back, which is the half
+  a *program* needs before it can write the loop — and a program is what reads
+  this once the agent composes calls in code rather than one per turn. A
+  capability may declare an optional `result` Zod schema; `describe` prints it
+  under `RESULT`, after the arguments, and `?format=json` carries it as JSON
+  Schema. Declared on the seven reads a script computes over (`get_project`,
+  `get_scene`, `get_history`, `get_plan`, `list_assets`,
+  `get_narration_timing`, `get_shots`, `sample_at`) and **deliberately absent
+  on the writes** — a write has nothing to compute over, and an empty contract
+  is noise. It is a claim about a handler that assembles `data` by hand, so
+  nothing in the type system holds the two together: `check-gateway.ts` calls
+  each one for real and requires every field the contract calls required to
+  actually be there. That mechanism found the defect that motivated it —
+  `get_shots` promised `segments` and omitted it while detection was still
+  pending, so a caller looping over it crashed on exactly the asset it was
+  waiting for.
 - Writes auto-rebase: fetch version → submit → retry ×3 on 409.
 - Coordinates are canvas pixels, origin top-left. Times are scene-local
   seconds. Nodes anchor at their center. A scene may also have a **camera**
@@ -118,7 +150,28 @@ shape as `remove_asset`'s `force`.
   recomputes its endpoints every frame, stopping at the edge of what it points
   at. `flow_along` rides a path by arc length and overrides the
   node's position from `start` onward — the one place a transition beats a
-  track, which the response says out loud.
+  track, which the response says out loud. It also says so when the scene both
+  **projects and has something riding a path** (plans/011 gap 6, from run 8's
+  off-orbit moon): a `path` is not projected point by point — the stage draws
+  it at its anchor's projected position with that anchor's single perspective
+  scale, while the follower is projected where it actually is. They agree while
+  the camera is flat and part company as yaw grows (measured on a 500px orbit
+  ring: 6px at yaw 0.05, 114px at yaw 0.9). The **follower** is the correct
+  one and the drawn curve is the approximation, so the remedy is to hide the
+  path — the motion left behind is right — rather than to flatten the camera
+  and lose the orbit, which is what run 8 did. `flow_along`, `set_camera`,
+  `move_camera` and `orbit_camera` all warn, because any of them can create the
+  clash. The real fix is projecting path points per vertex, which is renderer
+  work tracked in plans/010. It also takes a **speed profile**,
+  `at: [{t, u}…]`, where `u` is a fraction of arc length (plans/011, from
+  run 9): the path still supplies every coordinate and only the *pacing* is
+  given, so an orbit that races at perihelion and dawdles at aphelion is one
+  call rather than twenty-four hand-computed positions. `start`/`duration` are
+  derived from the ends of the list and cannot be passed with it. Times must
+  ascend; `u` need not, so a profile that rises and falls sends the node out
+  and back. The response reports the **speeds it produced** (`133–1200 px/s`)
+  rather than the profile back, because "does it vary the way I meant" is the
+  only question this form raises.
 - A node can step **out of the world**: `pin_to_frame` makes it ignore the
   camera entirely, for captions and titles that should not swing about when
   the scene orbits.
@@ -239,6 +292,20 @@ shape as `remove_asset`'s `force`.
 - A graph's **mapping is a node**: `add_axes` owns the rectangle, the ranges
   and the ticks, and `plot_function` takes its `axesId` to borrow them, so a
   curve cannot disagree with the frame it is read against.
+- **Geometry sugar compiles to dumb points** (plans/011 gap 7). `add_arc`
+  makes a circle, ellipse, arc or regular polygon and produces an ordinary
+  `path` — the document keeps no radius, no angles and no memory of being a
+  circle, exactly as `plot_function` keeps no formula. So the result writes on,
+  fills, morphs and is ridden by `flow_along` with no special case anywhere.
+  It saves **output tokens rather than calls**: `add_path` already took every
+  point at once, but two milestone runs still had to *compute* them, one of
+  them twice in a single run at 72 points each. `x`/`y` are the centre; equal
+  `rx`/`ry` is the only thing that makes it a circle; and on a closed full turn
+  `samples` **is** the number of sides, so 3 is a triangle and 64 reads as
+  smooth. Angles are radians from 3 o'clock, increasing **clockwise** because
+  canvas y points down — the same sense `rotation` turns in — and a sweep past
+  a full turn is reported with the radian value that was probably meant, since
+  passing degrees draws a plausible whole ellipse and is otherwise invisible.
 - Structured content is addressed by **what it is, not where it is**: `tex`
   names a sub-expression of an equation, `cells` names a row, column, cell or
   band of a `matrix`/`tokens` node (`{"rows":1}`, `{"rows":[0,1],"cols":2}`,
@@ -258,14 +325,55 @@ shape as `remove_asset`'s `force`.
   *does* exist ("scene sc_1 not found. This project has: …"). Responses carry
   `catalog revision`, so a schema that moved mid-thread can say so instead of
   looking like a malformed call.
+- **A failure under `?format=json` is JSON too** (plans/013). It used to answer
+  `text/plain` whichever format was asked for, so a caller that parses every
+  reply hit a parse error on *every* capability error — the best teaching
+  surface in the system, reaching a program as a crash. The body is now
+  `{"error": {message, status, kind?, revision}}`, with the prose verbatim in
+  `message`; the text door is untouched, because a model reads prose and must
+  not start receiving JSON because a sibling caller wanted some. `kind` is one
+  of `invalid_args`, `unknown_capability`, `wrong_executor`, `not_found`,
+  `rejected`, `forbidden`, `gated` — **set only where the throwing site knew
+  it, never inferred from the status**, since 403 covers both "not your
+  project" and "the human has not approved that asset". Absent means read the
+  message. The tenancy gate is the one place a status *is* the meaning (404 no
+  such project, 403 not yours) and is read back accordingly; the first cut of
+  this shipped `kind: "forbidden"` on a 404 whose own message said "not
+  found", which is exactly the lie the field exists to avoid.
+
+- **Several calls, one round trip** (plans/011 gap 8). `execute_batch` takes
+  `calls: [{name, args}…]` and runs them in order. It **saves round trips, not
+  work**: every call goes through the same executor, the same validation and
+  the same handlers, and each still reads the document and submits its own
+  edit — measured side by side, twelve calls take the same time either way, so
+  what collapses is how many times the agent stops and waits. That per-call
+  submit is not laziness but the reason a batch is useful: call *n* sees what
+  call *n-1* did, which one composed envelope could not offer.
+  Consequently **it is not a transaction** — a failure partway leaves earlier
+  calls applied, and the error says so and names `get_history` /
+  `revert_to_version`, which undo it in one call. The failing call's message
+  is reproduced verbatim with its index, so a batch is never a worse teacher
+  than the same call made alone. Structural problems — a paid capability, a
+  nested batch, a misspelled name — are refused **before anything runs**,
+  because refusing a `render_video` at position 5 after applying four edits
+  would be worse than not checking at all. There is deliberately **no way to
+  reference an earlier call's output**: you cannot type a `sceneId` you have
+  not been told yet, so create a scene in one call and populate it with a
+  batch. That is three scenes in six calls rather than forty, and the
+  alternative was a small expression language inside the arguments.
 
 ## Adding a capability
 
 One catalog entry in `apps/api/src/agent/tools-*.ts` — name, summary, prose
-contract, Zod args, optional `costsCredits`, handler — and it is listed,
-describable and executable. No MCP worker change, no client restart, no row to
-add here. `apps/api` is on **zod v4** (see dev-setup for why that is load
-bearing).
+contract, Zod args, optional `result`, optional `costsCredits`, handler — and
+it is listed, describable and executable. No MCP worker change, no client
+restart, no row to add here. `apps/api` is on **zod v4** (see dev-setup for why
+that is load bearing).
+
+Add `result` only if the capability is one a *script* would compute over — the
+reads. If you do, add it to the `contractHolds` list in `check-gateway.ts` in
+the same change: an unverified contract is worse than none, because a caller
+will believe it.
 
 Verified by `check-gateway.ts` (catalog over HTTP) and `check-mcp-tools.ts`
 (the same surface over JSON-RPC, which is where client-side argument

@@ -278,6 +278,21 @@ function QuestionCard({
     <div className="decision open">
       <p className="decision-question">{d.question}</p>
       {d.detail && <p className="decision-detail">{d.detail}</p>}
+      {/* A composition question names several moments, because whether a
+          caption collides or an orbit stays legible is rarely answerable from
+          one frame. The agent has already been shown these as a contact sheet;
+          here they are live, at full size, in the canvas that renders the
+          export — which is the thing the editor can offer that a sheet cannot. */}
+      {(d.refs?.previewAt?.length ?? 0) > 0 && (
+        <div className="decision-moments">
+          <span className="decision-moments-label">look at</span>
+          {d.refs!.previewAt!.map((t, i) => (
+            <button key={i} className="decision-seek" onClick={() => onSeek(t)}>
+              ▶ {t.toFixed(1)}s
+            </button>
+          ))}
+        </div>
+      )}
       {d.context?.atSec !== undefined && (
         <button className="decision-seek" onClick={() => onSeek(d.context!.atSec!)}>
           ▶ jump to {d.context.atSec.toFixed(1)}s

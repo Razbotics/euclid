@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { spatialTools } from './tools-3d'
 import { animTools } from './tools-anim'
+import { batchTools } from './tools-batch'
 import { cameraTools } from './tools-camera'
 import { decisionTools } from './tools-decision'
 import { flowTools } from './tools-flow'
@@ -26,6 +27,7 @@ const ALL: Capability[] = [
   ...genTools,
   ...previewTools,
   ...decisionTools,
+  ...batchTools,
 ]
 
 const BY_NAME = new Map(ALL.map((c) => [c.name, c]))
@@ -112,4 +114,16 @@ export const CATALOG_REVISION = ALL.map((c) => `${c.name}:${c.summary.length}`)
  */
 export function argsSchemaOf(cap: Capability): unknown {
   return z.toJSONSchema(cap.args, { io: 'input', unrepresentable: 'any' })
+}
+
+/**
+ * JSON Schema for one capability's `data`, on the capabilities that declare it.
+ *
+ * `io: 'output'` here, the mirror of `argsSchemaOf` — this describes what comes
+ * back rather than what may be sent, so a field with a default is *present*,
+ * and a caller writing `result["scenes"]` should be told so.
+ */
+export function resultSchemaOf(cap: Capability): unknown {
+  if (!cap.result) return undefined
+  return z.toJSONSchema(cap.result, { io: 'output', unrepresentable: 'any' })
 }

@@ -163,6 +163,24 @@ export interface CellMorphTransition extends Anchorable {
   easing: Easing
 }
 /**
+ * One point of a flow's speed profile: be `u` of the way along at time `t`.
+ *
+ * Deliberately the same shape as a `Keyframe` over a different value domain —
+ * `t` is scene-local seconds and `easing` shapes the segment arriving AT this
+ * point, both exactly as a keyframe means them. It is a distinct type rather
+ * than a reused `Keyframe` because a keyframe's value may be a point or a
+ * colour, and neither is a position along a curve.
+ */
+export interface FlowPoint {
+  /** Seconds, local to the owning scene. */
+  t: number
+  /** Fraction of the path's arc length: 0 is the first point, 1 the last. */
+  u: number
+  /** Shapes the segment arriving AT this point. */
+  easing: Easing
+}
+
+/**
  * Ride a `path` node from one end to the other.
  *
  * The position it produces **overrides** the node's own from `start` onward,
@@ -178,6 +196,22 @@ export interface FollowTransition extends Anchorable {
   easing: Easing
   /** Turn the node to face the direction of travel. */
   orient: boolean
+  /**
+   * Optional speed profile, in place of travelling at a constant speed.
+   *
+   * Without it a flow covers equal arc length in equal time and `easing` bends
+   * that one monotone curve over the whole trip, so "fast, slow, fast" is not
+   * expressible — which cost one milestone run 48 of its 95 calls, building the
+   * motion as a position track a segment at a time. With it, the path stays the
+   * source of geometry and only the *pacing* is given.
+   *
+   * `start`/`duration` are derived from the ends of this list, so everything
+   * that reads a transition's span keeps working unchanged.
+   *
+   * `u` need not be monotone: a profile that goes up and back down is a node
+   * that travels out along the path and returns.
+   */
+  at?: FlowPoint[]
 }
 export type Transition =
   | WriteTransition
@@ -189,6 +223,13 @@ export type Transition =
 const CellRangeSchema: z.ZodType<CellRange> = z.object({
   rows: z.tuple([z.number().int().min(0), z.number().int().min(0)]).optional(),
   cols: z.tuple([z.number().int().min(0), z.number().int().min(0)]).optional(),
+})
+
+/** `u` is bounded because it is a fraction of a path, not a distance. */
+const FlowPointSchema: z.ZodType<FlowPoint> = z.object({
+  t: z.number().min(0),
+  u: z.number().min(0).max(1),
+  easing: EasingSchema,
 })
 
 /** Row-major grid of LaTeX cells; '' is an empty cell, not a missing one. */
@@ -259,6 +300,7 @@ export const TransitionSchema: z.ZodType<Transition> = z.discriminatedUnion('typ
     pathId: z.string().min(1),
     easing: EasingSchema,
     orient: z.boolean(),
+    at: z.array(FlowPointSchema).min(2).max(LIMITS.maxKeyframesPerTrack).optional(),
   }),
 ])
 

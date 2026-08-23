@@ -1,17 +1,20 @@
 import { z } from 'zod'
 import {
+  ArcError,
   axisTicks,
   findNode,
   newId,
   niceStep,
   op,
   plotMapping,
+  sampleArc,
   samplePlot,
   type EuclidNode,
   type Track,
   type Transition,
   type Vec2,
 } from '@euclid/dsl'
+import { pathLength } from '@euclid/engine'
 import { COLOR, NODE_ID, NUMBERISH, PROJECT_ID, SCENE_ID } from './schemas'
 import { loadAsset } from '../services/assets'
 import { assertPlacementApproved, ensureLinked } from './review'
@@ -271,6 +274,112 @@ export const nodeTools = [
         nodeId: id,
         points: points.length,
       })
+    },
+  }),
+
+  capability({
+    name: 'add_arc',
+    summary: 'A circle, ellipse, arc or regular polygon as a path — without typing the points.',
+    doc: [
+      'Sugar over add_path, and it produces exactly that: an ordinary `path` node holding plain points. So it writes on, morphs, moves, fills and can be ridden by flow_along with no special case — the document never holds the fact that this was a circle.',
+      '',
+      '**It exists to save output tokens, not calls.** add_path already takes every point at once; what it cannot do is spare you *computing* them. Two milestone runs hand-sampled circles — one of them twice in a single run, 72 points each — which is 144 coordinate pairs typed by a model that could not check one of them without a picture.',
+      '',
+      '`x`/`y` are the **centre**, so the node anchors where you would expect and animating its position moves the whole shape. Equal `rx`/`ry` is a circle — that is the only difference between the two. Leave `ry` out and it copies `rx`.',
+      '',
+      '**Angles are radians, from 3 o\'clock, increasing clockwise on screen** (canvas y points down, and this is the same sense a node\'s `rotation` turns in). A quarter turn is 1.5708, not 90 — and a sweep bigger than a full turn is reported back, because passing degrees here is the obvious mistake and it draws a plausible-looking whole ellipse.',
+      '',
+      'Leave `startAngle`/`endAngle` out for the whole way round. Give them for an arc: a half circle is `endAngle: 3.1416`, and a negative sweep runs the other way.',
+      '',
+      '**A regular polygon is this with a small `samples`**: on a closed full turn, `samples` IS the number of sides, so 3 is a triangle, 5 a pentagon and 64 reads as a smooth circle. That is not a trick — a circle drawn on a screen is a many-sided polygon either way.',
+      '',
+      '`closed` defaults to whether the sweep comes back round: a full turn joins up, an arc stays open. Pass it explicitly to close an arc with a chord.',
+    ].join('\n'),
+    args: z.object({
+      projectId: PROJECT_ID,
+      sceneId: SCENE_ID,
+      x: z.number().describe('centre, absolute canvas px'),
+      y: z.number().describe('centre, absolute canvas px'),
+      rx: z.number().positive().describe('radius; with ry, the horizontal one'),
+      ry: z.number().positive().optional().describe('vertical radius; defaults to rx (a circle)'),
+      startAngle: z.number().default(0).describe('radians, from 3 o\'clock, clockwise'),
+      endAngle: z.number().optional().describe('radians; defaults to a full turn from the start'),
+      rotation: z.number().default(0).describe('tilt of the ellipse, radians; no effect on a circle'),
+      samples: z
+        .number()
+        .int()
+        .min(2)
+        .max(2000)
+        .default(64)
+        .describe('points along the sweep; on a closed full turn this is the number of sides'),
+      closed: z.boolean().optional().describe('join the ends; defaults to true on a full turn'),
+      stroke: COLOR.default('#58c4dd'),
+      strokeWidth: z.number().positive().default(4),
+      fill: COLOR.optional(),
+      parentId: PARENT_ID,
+    }),
+    async handler(ctx, a) {
+      const { projectId, sceneId, x, y, rx, startAngle, rotation, samples, stroke, strokeWidth, fill, parentId } = a
+      const ry = a.ry ?? rx
+      const endAngle = a.endAngle ?? startAngle + Math.PI * 2
+      await ctx.requireProject(projectId)
+      const { doc } = await ctx.getDoc(projectId)
+      ctx.sceneOrThrow(doc, sceneId)
+
+      let arc: ReturnType<typeof sampleArc>
+      try {
+        arc = sampleArc({ rx, ry, startAngle, endAngle, rotation, samples })
+      } catch (e) {
+        throw new CapabilityError(
+          e instanceof ArcError ? e.message : `could not build that arc: ${(e as Error).message}`,
+        )
+      }
+      // A closed full turn with two points is a line drawn twice — the shape a
+      // caller reaching for a polygon is most likely to ask for by accident.
+      const closed = a.closed ?? arc.fullTurn
+      if (closed && arc.fullTurn && arc.points.length < 3) {
+        throw new CapabilityError(
+          `a closed full turn needs at least 3 samples to be a shape — ${arc.points.length} ` +
+            `draws a line and doubles back. samples is the number of sides here: 3 is a ` +
+            `triangle, 64 reads as a circle.`,
+        )
+      }
+
+      const id = newId('path')
+      await ctx.submit(projectId, [
+        op.addNode(sceneId, {
+          ...baseNode({ x, y }),
+          id,
+          type: 'path',
+          points: arc.points,
+          stroke,
+          strokeWidth,
+          closed,
+          ...(fill ? { fill } : {}),
+        }, parentId),
+      ])
+
+      const turns = Math.abs(arc.sweep) / (Math.PI * 2)
+      const shape =
+        arc.fullTurn && closed
+          ? arc.points.length <= 12
+            ? `${arc.points.length}-sided polygon`
+            : rx === ry
+              ? 'circle'
+              : 'ellipse'
+          : `arc of ${(arc.sweep * (180 / Math.PI)).toFixed(1)}°`
+      return said(
+        `created path node ${id} — ${shape}, ${arc.points.length} points, ` +
+          `${Math.round(pathLength(arc.points, closed))}px around, centred at (${x}, ${y})` +
+          // The degrees mistake draws a whole ellipse and looks fine, so it has
+          // to be named here rather than left for a contact sheet to reveal.
+          (turns > 1.001
+            ? `\nNOTE that sweep is ${turns.toFixed(1)} full turns, which draws as one closed ` +
+              `shape. Angles here are RADIANS — if you meant ${(arc.sweep).toFixed(0)} degrees, ` +
+              `pass ${((arc.sweep * Math.PI) / 180).toFixed(4)}.`
+            : ''),
+        { nodeId: id, points: arc.points.length, sweep: arc.sweep, closed, fullTurn: arc.fullTurn },
+      )
     },
   }),
 

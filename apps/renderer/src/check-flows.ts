@@ -14,6 +14,7 @@
 import './load-env'
 import assert from 'node:assert'
 import { writeFileSync } from 'node:fs'
+import { sampleFlowU, sampleKeyframes } from '@euclid/engine'
 
 const API = process.env.API_URL ?? 'http://localhost:8787'
 const PREVIEW = process.env.PREVIEW_ORIGIN ?? 'http://localhost:8790'
@@ -190,6 +191,253 @@ assert.ok(
 // is the token itself rather than the path line clipping the corner.
 assert.ok(travel[1]! > 0.03, 'and be plainly there, not a sliver')
 
+// ---------- 3b. a speed profile paces the same path (plans/011) ----------
+// The claim is that `at` decides WHEN the node is where without touching WHERE
+// the path goes. So every assertion here is a position on the dog-leg above,
+// whose four segments (300+400+600+300 = 1600px from (300,300)) make an arc
+// length arithmetic rather than a guess.
+//
+// Positions come from sample_at, which runs the renderer's own resolver — the
+// same argument check-order and check-camera make. A profile that agreed with
+// this file's arithmetic but not with the stage would be worse than none.
+const posOf = async (sceneId: string, nodeId: string, t: number): Promise<[number, number]> => {
+  const s = await ok('sample_at', { projectId, sceneId, t, nodeIds: [nodeId] })
+  const hit = (s.data.nodes as { id: string; world: { x: number; y: number } }[]).find(
+    (n) => n.id === nodeId,
+  )
+  assert.ok(hit, `${nodeId} should be in the sample`)
+  return [hit!.world.x, hit!.world.y]
+}
+const near = (got: [number, number], want: [number, number], why: string, eps = 1.5) =>
+  assert.ok(
+    Math.hypot(got[0] - want[0], got[1] - want[1]) <= eps,
+    `${why}: expected ~(${want}), got (${got.map((v) => v.toFixed(1))})`,
+  )
+
+const paced = (
+  await ok('add_shape', {
+    projectId, sceneId: flowScene, shape: 'circle', x: 300, y: 300, radius: 30, fill: '#a6e22e',
+  })
+).data.nodeId
+// Fast for the first quarter of the time, then slow: 1200px in 1s, 400px in 3s.
+// A constant-speed flow over the same span is at u=0.25 when this is at 0.75.
+const profiled = await ok('flow_along', {
+  projectId, sceneId: flowScene, nodeId: paced, pathId: wire,
+  at: [{ t: 0, u: 0 }, { t: 1, u: 0.75 }, { t: 4, u: 1 }], easing: 'linear',
+})
+// The response reports the speeds it produced rather than the profile back —
+// 1200px/s then ~133px/s — because "does it vary the way I meant" is the only
+// question this form raises and it is arithmetic the caller would redo by hand.
+assert.match(profiled.text, /3-point profile/, 'the reply must say a profile is in force')
+assert.match(profiled.text, /133–1200 px\/s/, `the reply must report real speeds: ${profiled.text}`)
+
+// u = 0.75 is 1200px along: 300 + 400 + 500 into the third leg → (1100, 700).
+near(await posOf(flowScene, paced, 1), [1100, 700], 'the profile must land where it says at t=1')
+// ...and BETWEEN two profile points it interpolates, which is the half that
+// landing on them would not prove: at t=0.5, linear from 0 to 0.75 gives
+// u=0.375, which is 600px — the whole first leg (300) and 300 down the second,
+// so (600, 600). Note this is not u=0.5; the profile is what maps t to u.
+near(await posOf(flowScene, paced, 0.5), [600, 600], 'and interpolate by arc length between points')
+// Held at the end, like every other transition here.
+near(await posOf(flowScene, paced, 7), [1200, 1000], 'and hold the last point after the end')
+
+// The whole point: at t=1 the constant-speed token is nowhere near. Verified
+// against the OTHER token in the same scene rather than against a number, so
+// this compares the two forms rather than restating the profile.
+const [steadyX] = await posOf(flowScene, token, 1 + 1)
+assert.ok(
+  Math.abs(steadyX - 1100) > 400,
+  `a constant-speed flow must be far behind the profiled one at the same moment ` +
+    `(${steadyX.toFixed(0)} vs 1100) — otherwise the profile is doing nothing`,
+)
+
+// And in pixels, because a resolver that agreed with the arithmetic above but
+// not with the stage would be worse than none. The camera is framed tightly on
+// (1100, 700) — the point u=0.75 names — so the token is either there at the
+// moment the profile claims or it is not: empty, present, empty.
+//
+// The comparison against constant speed stays with sample_at rather than being
+// re-staged here. Both tokens ride one path, so a frame lit by "a token" cannot
+// say which, and the existing flow carries the default `smooth` easing, which
+// would make its arrival time an easing curve rather than a fact about pacing.
+await ok('set_camera', { projectId, sceneId: flowScene, x: 1100, y: 700, zoom: 6 })
+const flowStart = await sceneStart(projectId, flowScene)
+const [wireOnly, paceArrives, gone] = await inkAt(
+  projectId,
+  [flowStart + 0.4, flowStart + 1, flowStart + 3.1],
+  'check-flows-profile.png',
+)
+// The wire crosses this frame at every moment, so "empty" is the wire alone.
+assert.ok(
+  paceArrives! > wireOnly! * 2 && paceArrives! > 0.04,
+  `the profiled token must be at (1100,700) one second in: ${pct(wireOnly!)} → ` +
+    `${pct(paceArrives!)}. At constant speed it is barely off the first leg.`,
+)
+assert.ok(
+  gone! < paceArrives! / 1.5,
+  `and be past it by 3.1s, having slowed: ${pct(paceArrives!)} → ${pct(gone!)}`,
+)
+
+// A profile may descend: times move forwards, positions need not. In its own
+// scene, because it rides the same shape of path and would otherwise drift
+// through the camera frame above — two tokens in one frame is exactly the
+// ambiguity the tight framing exists to remove.
+const backScene = (await ok('add_scene', { projectId, name: 'Back', duration: 6, background: BG }))
+  .data.sceneId
+const backWire = (
+  await ok('add_path', {
+    projectId, sceneId: backScene, x: 300, y: 300,
+    points: [
+      { x: 0, y: 0 }, { x: 300, y: 0 }, { x: 300, y: 400 }, { x: 900, y: 400 },
+      { x: 900, y: 700 },
+    ],
+    stroke: '#3a4450', strokeWidth: 4,
+  })
+).data.nodeId
+const boomerang = (
+  await ok('add_shape', {
+    projectId, sceneId: backScene, shape: 'circle', x: 300, y: 300, radius: 20, fill: '#fc6255',
+  })
+).data.nodeId
+const backAgain = await ok('flow_along', {
+  projectId, sceneId: backScene, nodeId: boomerang, pathId: backWire,
+  at: [{ t: 0, u: 0 }, { t: 2, u: 1 }, { t: 4, u: 0 }], easing: 'linear',
+})
+assert.match(backAgain.text, /reversing partway/, 'a profile that goes back must say so')
+near(await posOf(backScene, boomerang, 2), [1200, 1000], 'out to the far end by 2s')
+near(await posOf(backScene, boomerang, 4), [300, 300], 'and all the way back by 4s')
+
+// ---------- 3c. the profile sampler must not drift from the keyframe one ----------
+// sampleFlowU is deliberately a copy of sampleKeyframes over a scalar domain —
+// written out because mapping FlowPoints to Keyframes would allocate on every
+// follower on every frame. A copy nothing compares is a copy that diverges, so
+// this compares them across the segment boundaries and between them.
+const pts = [
+  { t: 0, u: 0, easing: 'linear' as const },
+  { t: 1, u: 0.75, easing: 'smooth' as const },
+  { t: 4, u: 1, easing: 'easeOut' as const },
+]
+for (const t of [-1, 0, 0.3, 0.999, 1, 1.5, 2.5, 3.99, 4, 9]) {
+  assert.strictEqual(
+    sampleFlowU(pts, t),
+    sampleKeyframes(pts.map((p) => ({ t: p.t, value: p.u, easing: p.easing })), t),
+    `sampleFlowU and sampleKeyframes must agree at t=${t} — they are the same algorithm`,
+  )
+}
+
+// ---------- 3d. a flat path and an orbiting camera disagree (plans/011 gap 6) ----------
+// Run 8's off-orbit moon. A `path` is not projected per vertex: the stage draws
+// it at its anchor's projected point scaled once by that anchor's perspective
+// (stage.ts syncNode — `view.position.set(proj.x, proj.y)` and
+// `view.scale.set(scale * proj.scale)`), while a follower is a node of its own
+// and is projected at the scene point it actually occupies. The two agree only
+// while the projection is affine over the curve.
+//
+// So the divergence is computable from the resolver's own numbers, and that is
+// what makes the warning a fact rather than folklore: the only thing imported
+// from the renderer is the one line quoted above.
+const orbitScene = (await ok('add_scene', { projectId, name: 'Orbit', duration: 6, background: BG }))
+  .data.sceneId
+// An orbit ring, which is the shape run 8 hit this with — and the shape that
+// makes the failure *visible*. A straight rail through the camera's focus
+// diverges just as far, but along its own length, so the bead still appears to
+// be on it; a first pass at this test measured 329px of drift and photographed
+// a bead sitting neatly on its line.
+const rail = (
+  await ok('add_arc', {
+    projectId, sceneId: orbitScene, x: 960, y: 540, rx: 500, ry: 250, samples: 64,
+    stroke: '#3a4450', strokeWidth: 4,
+  })
+).data.nodeId
+const bead = (
+  await ok('add_shape', {
+    projectId, sceneId: orbitScene, shape: 'circle', x: 1460, y: 540, radius: 20, fill: '#e8c74a',
+  })
+).data.nodeId
+
+// No camera at all: nothing projects, so there is nothing to warn about and a
+// warning here would be noise on the common case.
+const flatFlow = await ok('flow_along', {
+  projectId, sceneId: orbitScene, nodeId: bead, pathId: rail, start: 0, duration: 4,
+})
+assert.ok(
+  !/WARNING: this scene both projects/.test(flatFlow.text),
+  `a flow in a scene with no camera must not warn: ${flatFlow.text}`,
+)
+
+/** Both projected points, plus what the stage would draw the curve as. */
+async function divergence(yaw: number): Promise<number> {
+  await ok('set_camera', { projectId, sceneId: orbitScene, x: 960, y: 540, zoom: 1, yaw })
+  const s = await ok('sample_at', { projectId, sceneId: orbitScene, t: 2, nodeIds: [bead, rail] })
+  const nodes = s.data.nodes as {
+    id: string
+    world: { x: number; y: number }
+    projection: { x: number; y: number; scale: number } | null
+  }[]
+  const b = nodes.find((n) => n.id === bead)!
+  const p = nodes.find((n) => n.id === rail)!
+  assert.ok(b.projection && p.projection, `both nodes must project at yaw ${yaw}`)
+  // Where the stage puts the point of the curve the bead is riding.
+  const drawnX = p.projection!.x + (b.world.x - p.world.x) * p.projection!.scale
+  const drawnY = p.projection!.y + (b.world.y - p.world.y) * p.projection!.scale
+  return Math.hypot(b.projection!.x - drawnX, b.projection!.y - drawnY)
+}
+
+const nearlyFlat = await divergence(0.05)
+const turned = await divergence(0.9)
+// Worth a picture, because the number is abstract and the failure is not: the
+// camera is left at yaw 0.9, so this frame is the bead sitting well off the
+// rail it is supposedly riding. It is the same thing run 8 saw as a moon off
+// its orbit ring, and the reason the warning exists.
+await inkAt(projectId, [(await sceneStart(projectId, orbitScene)) + 2], 'check-flows-orbit-drift.png')
+assert.ok(
+  turned > 30 && turned > nearlyFlat * 10,
+  `the follower must part company with its drawn curve as the turn grows: ` +
+    `${nearlyFlat.toFixed(1)}px at yaw 0.05 → ${turned.toFixed(1)}px at yaw 0.9. ` +
+    `If these are equal the renderer has started projecting path points per vertex, ` +
+    `and the warning below is now a lie that should be deleted.`,
+)
+
+// Both directions warn, because either call can create the clash. The camera
+// is already turned, so this is the flow_along half.
+const warnedFlow = await ok('flow_along', {
+  projectId, sceneId: orbitScene, nodeId: bead, pathId: rail, start: 0, duration: 4,
+})
+assert.match(warnedFlow.text, /WARNING: this scene both projects/, 'flow_along warns under yaw')
+assert.match(warnedFlow.text, new RegExp(`${bead} on ${rail}`), 'and names the pair')
+// The useful half: which of the two is wrong, and a remedy that keeps the orbit.
+assert.match(warnedFlow.text, /FOLLOWER is the correct one/, 'it says which one to trust')
+assert.match(warnedFlow.text, /hide the path/, 'and offers a fix that does not cost the orbit')
+
+// ...and the camera half, on a scene that already had the flow.
+const warnedOrbit = await ok('orbit_camera', {
+  projectId, sceneId: orbitScene, degrees: 40, start: 0, duration: 3,
+})
+assert.match(warnedOrbit.text, /WARNING: this scene both projects/, 'orbit_camera warns too')
+const warnedSet = await ok('set_camera', { projectId, sceneId: orbitScene, x: 960, y: 540, pitch: 0.4 })
+assert.match(warnedSet.text, /WARNING: this scene both projects/, 'and so does set_camera')
+
+// A camera that never leaves the plane must stay quiet — the warning has to be
+// about the combination, not about having a camera.
+await ok('set_camera', { projectId, sceneId: orbitScene, reset: true })
+const flatAgain = await ok('set_camera', { projectId, sceneId: orbitScene, x: 960, y: 540, zoom: 2 })
+assert.ok(
+  !/WARNING: this scene both projects/.test(flatAgain.text),
+  `a flat camera over a flow must not warn: ${flatAgain.text}`,
+)
+// And a turning camera with nothing riding a path must stay quiet as well.
+const emptyOrbit = await ok('orbit_camera', {
+  projectId, sceneId: shapeScene, degrees: 90, start: 0, duration: 2,
+})
+assert.ok(
+  !/WARNING: this scene both projects/.test(emptyOrbit.text),
+  `an orbit with no follower must not warn: ${emptyOrbit.text}`,
+)
+console.log(
+  `orbit/flow OK — divergence ${nearlyFlat.toFixed(1)}px → ${turned.toFixed(1)}px as yaw grows, ` +
+    `both capabilities warn, and neither warns without the other`,
+)
+
 // ---------- 4. the errors teach ----------
 const missing = await run('connect', { projectId, sceneId: shapeScene, from: a, to: 'nope_1234' })
 assert.equal(missing.status, 400)
@@ -224,6 +472,40 @@ const shadowed = await ok('flow_along', {
   projectId, sceneId: flowScene, nodeId: token, pathId: wire, start: 1, duration: 4,
 })
 assert.match(shadowed.text, /also has a position track, and the flow wins/, 'the clash is reported')
+
+// A profile carries its own timing, so start/duration alongside it would leave
+// two answers to when the flow runs and no rule for which wins.
+const both = await run('flow_along', {
+  projectId, sceneId: flowScene, nodeId: paced, pathId: wire, start: 2,
+  at: [{ t: 0, u: 0 }, { t: 1, u: 1 }],
+})
+assert.equal(both.status, 400)
+assert.match(both.body, /cannot be combined with/, '`at` with `start` is refused')
+assert.match(both.body, /moving the times in `at`/, 'and the refusal says how to shift the motion')
+
+const neither = await run('flow_along', {
+  projectId, sceneId: flowScene, nodeId: paced, pathId: wire,
+})
+assert.equal(neither.status, 400)
+assert.match(neither.body, /give `start`.*or `at`/s, 'omitting both names the two forms')
+
+// Descending times would silently run the motion backwards through a list the
+// caller wrote forwards — and the fix is to lower `u`, not to reorder `t`,
+// which is the part worth saying.
+const backwards = await run('flow_along', {
+  projectId, sceneId: flowScene, nodeId: paced, pathId: wire,
+  at: [{ t: 0, u: 0 }, { t: 3, u: 1 }, { t: 2, u: 0.5 }],
+})
+assert.equal(backwards.status, 400)
+assert.match(backwards.body, /ascending time order/, 'a descending profile is refused')
+assert.match(backwards.body, /lower `u` at a LATER time/, 'and points at the way to go backwards')
+
+// u is a fraction of the path, not a distance along it.
+const overshoot = await run('flow_along', {
+  projectId, sceneId: flowScene, nodeId: paced, pathId: wire,
+  at: [{ t: 0, u: 0 }, { t: 1, u: 800 }],
+})
+assert.equal(overshoot.status, 400, 'u outside 0..1 must be refused, not clamped')
 
 // ---------- 6. pinned nodes ignore the camera ----------
 // Milestone run 6's caption drifted across the frame and grew 46% as the space
@@ -360,6 +642,11 @@ console.log(
     `arrow must stretch across, curved pair ${pct(pair!)} vs straight ${pct(straight!)}, ` +
     `path travel ${travel.map(pct).join('→')}, pinned ${pct(afterPin!)}/${pct(panned!)}/` +
     `${pct(orbited!)} under three cameras, cell anchor ${pct(underFirst!)} vs ` +
-    `${pct(underLast!)} on the wrong side. Dangling, self-link, wrong-type, out-of-range cell, ` +
-    `grouped-pin and track-shadowing messages all teach. Frames in ${OUT}/check-flows-*.png`,
+    `${pct(underLast!)} on the wrong side. Speed profile lands on the arc length it names ` +
+    `(1100,700) at 1s where a constant flow is 500px behind — ` +
+    `${pct(wireOnly!)}/${pct(paceArrives!)}/${pct(gone!)} through a frame at that point — ` +
+    `interpolates between its points, reverses, and samples identically to sampleKeyframes. ` +
+    `Dangling, self-link, wrong-type, out-of-range cell, grouped-pin, track-shadowing, ` +
+    `at-with-start, neither, descending and out-of-range u messages all teach. ` +
+    `Frames in ${OUT}/check-flows-*.png`,
 )

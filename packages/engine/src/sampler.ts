@@ -13,6 +13,7 @@ import {
   type CellRange,
   type Easing,
   type EuclidNode,
+  type FlowPoint,
   type KeyValue,
   type Keyframe,
   type Scene,
@@ -265,7 +266,12 @@ function applyFollows(nodes: ResolvedNode[], index: Map<string, ResolvedNode>, t
     // A path that has been deleted leaves the follower where it was, rather
     // than at the origin — silently teleporting to (0,0) reads as a crash.
     if (!path || path.source.type !== 'path') continue
-    const u = easings[follow.easing](clamp01((t - follow.start) / follow.duration))
+    // A profile replaces the constant-speed ramp outright: it *is* the mapping
+    // from time to arc length, so composing it with the transition's own easing
+    // would bend a curve the caller already shaped.
+    const u = follow.at
+      ? sampleFlowU(follow.at, t)
+      : easings[follow.easing](clamp01((t - follow.start) / follow.duration))
     const at = pointAtProgress(path.source.points, path.source.closed, u)
     if (!at) continue
     n.props.position = { x: path.world.x + at.x, y: path.world.y + at.y }
@@ -528,6 +534,34 @@ function resolveMorphChain<V>(
 }
 
 /** Keyframes must be sorted by t (the reducer guarantees this on track.set). */
+/**
+ * Where along the path a speed profile puts the node at time `t`.
+ *
+ * Deliberately the same algorithm as `sampleKeyframes` below, over a scalar
+ * domain: hold the first value backwards, hold the last value forwards, and
+ * ease across the segment arriving at each point. It is written out rather
+ * than delegating because a `FlowPoint` is not a `Keyframe` — mapping one to
+ * the other would allocate a fresh array on every follower on every frame, in
+ * the one function the whole render loop passes through. `check-flows.ts`
+ * asserts the two agree on the same numbers so this copy cannot drift.
+ */
+export function sampleFlowU(at: FlowPoint[], t: number): number {
+  const first = at[0]!
+  if (t <= first.t) return first.u
+  const last = at[at.length - 1]!
+  if (t >= last.t) return last.u
+  for (let i = 0; i < at.length - 1; i++) {
+    const a = at[i]!
+    const b = at[i + 1]!
+    if (t >= a.t && t <= b.t) {
+      const span = b.t - a.t
+      const p = span <= 0 ? 1 : (t - a.t) / span
+      return a.u + (b.u - a.u) * easings[b.easing](p)
+    }
+  }
+  return last.u
+}
+
 export function sampleKeyframes(kfs: Keyframe[], t: number): KeyValue {
   const first = kfs[0]!
   if (t <= first.t) return first.value
