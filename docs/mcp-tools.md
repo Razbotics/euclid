@@ -150,7 +150,19 @@ shape as `remove_asset`'s `force`.
   recomputes its endpoints every frame, stopping at the edge of what it points
   at. `flow_along` rides a path by arc length and overrides the
   node's position from `start` onward — the one place a transition beats a
-  track, which the response says out loud. It also takes a **speed profile**,
+  track, which the response says out loud. It also says so when the scene both
+  **projects and has something riding a path** (plans/011 gap 6, from run 8's
+  off-orbit moon): a `path` is not projected point by point — the stage draws
+  it at its anchor's projected position with that anchor's single perspective
+  scale, while the follower is projected where it actually is. They agree while
+  the camera is flat and part company as yaw grows (measured on a 500px orbit
+  ring: 6px at yaw 0.05, 114px at yaw 0.9). The **follower** is the correct
+  one and the drawn curve is the approximation, so the remedy is to hide the
+  path — the motion left behind is right — rather than to flatten the camera
+  and lose the orbit, which is what run 8 did. `flow_along`, `set_camera`,
+  `move_camera` and `orbit_camera` all warn, because any of them can create the
+  clash. The real fix is projecting path points per vertex, which is renderer
+  work tracked in plans/010. It also takes a **speed profile**,
   `at: [{t, u}…]`, where `u` is a fraction of arc length (plans/011, from
   run 9): the path still supplies every coordinate and only the *pacing* is
   given, so an orbit that races at perihelion and dawdles at aphelion is one

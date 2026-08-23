@@ -475,14 +475,17 @@ agent holding a terminal too.
 - [ ] Deploy: workers, D1, R2, Containers; production secrets
 
 ## Parallel track: agent surface gaps → plans/011-agent-surface-gaps.md
-Proposed and started 2026-08-22, from driving the surface through milestone
-run 8 — gaps ranked by calls actually wasted, not plausibility. The top two
-are done: draw-order control (rebuild-to-reorder cost more than every argument
-mistake in the run combined) and a free `sample_at` read over resolved state,
-followed by the naming pass and undo. Run 9's re-ranking is now closed too —
-`animate` keyframe lists, then the `flow_along` speed profile, then the
-geometry sugar those two motions were typed onto. Still open: composition
-review, the batch executor, and the `flow_along` + `orbit_camera` warning.
+**Done 2026-08-23.** Proposed and started 2026-08-22, from driving the surface
+through milestone run 8 — gaps ranked by calls actually wasted, not
+plausibility. All eight are closed: draw-order control (rebuild-to-reorder cost
+more than every argument mistake in the run combined), a free `sample_at` read
+over resolved state, the naming pass, undo, composition review, geometry sugar,
+batch execution, and the two silent-disagreement warnings. Run 9's re-ranking
+is closed too — `animate` keyframe lists, then the `flow_along` speed profile,
+then the geometry sugar those motions were typed onto. The one line still
+unchecked is renderer work owned by plans/010 (projecting path points per
+vertex); what this plan owed was the warning, which is measured and shipped.
+What the eight actually bought is now a question for a milestone run.
 - [x] Draw-order: `reorder_node` + a `node.move` op (2026-08-22). Moves the
       id rather than the node, because rebase-on-409 makes a remove+add pair
       re-insert a stale copy. Proved in pixels: a disc reads 24.33% lit →
@@ -522,9 +525,16 @@ review, the batch executor, and the `flow_along` + `orbit_camera` warning.
       submits so that call *n* sees call *n-1*. Not a transaction, and the
       failure says so and names the undo; paid, nested and misspelled calls
       are refused before anything runs
-- [~] Camera/path interaction warning — the spatial-node-into-a-group case
-      (created by, and closed with, draw-order) warns; the `flow_along` +
-      `orbit_camera` case is still open
+- [x] Camera/path interaction warning (2026-08-23) — both cases now warn. A
+      `path` is drawn at its anchor's projected point with one perspective
+      scale while a follower is projected where it actually is, so the two part
+      company as yaw grows: **5.7px at yaw 0.05, 113.5px at yaw 0.9** on a
+      500px orbit ring, measured from the resolver's own numbers rather than
+      asserted. `flow_along`, `set_camera`, `move_camera` and `orbit_camera`
+      all report it, since any of them can create the clash. The useful half is
+      which one is wrong — the follower is correct and the drawn curve is the
+      approximation, so hiding the path keeps both the motion and the orbit,
+      where run 8 flattened the camera and lost the orbit
 - [x] **Milestone run 9 (2026-08-23)** — 36s Kepler's-second-law explainer,
       95 round trips, **zero failed calls** (runs 4 and 8 had 10 and 5).
       Draw-order came up unprompted and cost one call where run 8 rebuilt two

@@ -12,6 +12,7 @@ import {
 import { describeRange } from '@euclid/dsl'
 import { pathLength } from '@euclid/engine'
 import { COLOR, EASING, NODE_ID, NUMBERISH, PROJECT_ID, SCENE_ID, SECONDS } from './schemas'
+import { orbitFlowWarning } from './tools-camera'
 import { CELLS_ARG, checkRange, gridOrThrow } from './tools-grid'
 import { baseNode } from './tools-node'
 import { capability, said, CapabilityError } from './types'
@@ -134,7 +135,9 @@ export const flowTools = [
       '',
       '**It overrides the node\'s position from `start` onward.** Before `start` the node is wherever it normally would be, so put it at the head of the path (or start the flow there) unless you want it to jump. A `position` track on the same node loses to this, which is the opposite of the usual rule and the reason the response says so.',
       '',
-      'The path is an ordinary `path` node — from add_path or plot_function — and can be invisible: give it `strokeWidth` and a colour that matches the background if you only want the trajectory, not the line.',
+      'The path is an ordinary `path` node — from add_path, add_arc or plot_function — and can be invisible: give it `strokeWidth` and a colour that matches the background if you only want the trajectory, not the line.',
+      '',
+      '**A visible path and an orbiting camera disagree.** A path is not projected point by point: it is drawn at its anchor\'s projected position with that anchor\'s single perspective scale, while the node riding it is projected where it actually is. They agree while the camera is flat and part company as yaw grows — on a 500px orbit ring, 6px at yaw 0.05 and 114px at yaw 0.9, which reads as the follower being off its own curve. The **follower** is the correct one; the drawn curve is the approximation. So hide the path and the motion is right, or keep yaw and pitch at 0 while it is on screen. Both this and the camera capabilities say so when a scene has both.',
       '',
       '**Pass `at` when the speed varies along the way.** `[{t, u}, …]` is a speed profile: be `u` of the way along the path at scene-local second `t`, with `u` a fraction of arc length (0 the first point of the path, 1 the last). The path still supplies every coordinate — you are giving the *pacing*, not the geometry, which is the whole reason to ride a path rather than build a position track.',
       '',
@@ -260,7 +263,11 @@ export const flowTools = [
           `${orient ? ', facing the way it travels' : ''}` +
           (tracked
             ? ` — NOTE ${nodeId} also has a position track, and the flow wins from ${start}s onward`
-            : ''),
+            : '') +
+          // Either call can create the clash, so both report it. The scene read
+          // above already has this flow's node in it only if it existed before;
+          // what matters here is the camera, which this call has not touched.
+          orbitFlowWarning({ camera: scene.camera, nodes: [{ ...node, transitions }] }),
         { nodeId, pathId, start, duration, length, points: at?.length ?? 0 },
       )
     },

@@ -1,4 +1,10 @@
-# 011 — Agent surface gaps (status: in progress)
+# 011 — Agent surface gaps (status: done 2026-08-23)
+
+All eight gaps are closed. One unchecked line remains under gap 6 — projecting
+path points per vertex — and it stays unchecked on purpose: it is renderer
+work, it is owned by plans/010, and the item this plan took on was the
+*warning*, which is what an agent needs while the renderer is what it is. Every
+other box here was measured before being ticked.
 
 What is missing from the capability catalog, ranked by measured cost rather
 than by plausibility. The evidence is milestone run 8 (plans/010), which was
@@ -168,8 +174,30 @@ a follower and its track part company as yaw grows. Each capability is
 honest alone; the combination has no voice. The house pattern already
 exists — `flow_along` warns about position tracks:
 
-- [ ] `orbit_camera`/`set_camera` (yaw/pitch) warn when the scene contains
-      flat paths that moving nodes anchor to or follow
+- [x] `orbit_camera`/`set_camera` (yaw/pitch) warn when the scene contains
+      flat paths that moving nodes anchor to or follow — **done 2026-08-23**,
+      and `move_camera` and `flow_along` warn too, because any of the four can
+      create the clash and the one that does is the one an agent is reading.
+      The condition is "does this camera **ever** leave the plane", tracks
+      included: the ordinary way a scene starts orbiting is `orbit_camera`,
+      which keyframes yaw from zero, so a base-value check would miss the
+      common case entirely.
+      **The warning is measured, not asserted.** The divergence is computable
+      from the resolver's own numbers — the only thing borrowed from the
+      renderer is one line of `syncNode` — and `check-flows.ts` computes it on
+      a 500px orbit ring: **5.7px at yaw 0.05, 113.5px at yaw 0.9.** The
+      assertion says out loud that if those ever become equal the renderer has
+      started projecting per vertex and the warning has become a lie to delete.
+      Two things the work itself taught. **Which of the pair is wrong** is the
+      useful half and is not obvious: the follower's position is the honest
+      projection of where it is, and the flat polyline pinned to one anchor is
+      the approximation — so *hiding the path* leaves correct motion behind,
+      where run 8 flattened the whole camera and paid for it with the orbit.
+      And **the failure is invisible in the wrong geometry**: a first pass
+      measured 329px of drift along a straight rail through the camera's focus
+      and photographed a bead sitting neatly on its line, because the drift ran
+      along the line's own length. The check uses an orbit ring, which is both
+      what run 8 hit and what makes the bead visibly leave its curve.
 - [x] A second instance of the same class, created by gap 1 and closed with
       it: `reorder_node` can move a spatial node into a group, which silently
       switches its projection off (the sampler only projects unpinned nodes

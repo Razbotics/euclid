@@ -325,6 +325,119 @@ for (const t of [-1, 0, 0.3, 0.999, 1, 1.5, 2.5, 3.99, 4, 9]) {
   )
 }
 
+// ---------- 3d. a flat path and an orbiting camera disagree (plans/011 gap 6) ----------
+// Run 8's off-orbit moon. A `path` is not projected per vertex: the stage draws
+// it at its anchor's projected point scaled once by that anchor's perspective
+// (stage.ts syncNode — `view.position.set(proj.x, proj.y)` and
+// `view.scale.set(scale * proj.scale)`), while a follower is a node of its own
+// and is projected at the scene point it actually occupies. The two agree only
+// while the projection is affine over the curve.
+//
+// So the divergence is computable from the resolver's own numbers, and that is
+// what makes the warning a fact rather than folklore: the only thing imported
+// from the renderer is the one line quoted above.
+const orbitScene = (await ok('add_scene', { projectId, name: 'Orbit', duration: 6, background: BG }))
+  .data.sceneId
+// An orbit ring, which is the shape run 8 hit this with — and the shape that
+// makes the failure *visible*. A straight rail through the camera's focus
+// diverges just as far, but along its own length, so the bead still appears to
+// be on it; a first pass at this test measured 329px of drift and photographed
+// a bead sitting neatly on its line.
+const rail = (
+  await ok('add_arc', {
+    projectId, sceneId: orbitScene, x: 960, y: 540, rx: 500, ry: 250, samples: 64,
+    stroke: '#3a4450', strokeWidth: 4,
+  })
+).data.nodeId
+const bead = (
+  await ok('add_shape', {
+    projectId, sceneId: orbitScene, shape: 'circle', x: 1460, y: 540, radius: 20, fill: '#e8c74a',
+  })
+).data.nodeId
+
+// No camera at all: nothing projects, so there is nothing to warn about and a
+// warning here would be noise on the common case.
+const flatFlow = await ok('flow_along', {
+  projectId, sceneId: orbitScene, nodeId: bead, pathId: rail, start: 0, duration: 4,
+})
+assert.ok(
+  !/WARNING: this scene both projects/.test(flatFlow.text),
+  `a flow in a scene with no camera must not warn: ${flatFlow.text}`,
+)
+
+/** Both projected points, plus what the stage would draw the curve as. */
+async function divergence(yaw: number): Promise<number> {
+  await ok('set_camera', { projectId, sceneId: orbitScene, x: 960, y: 540, zoom: 1, yaw })
+  const s = await ok('sample_at', { projectId, sceneId: orbitScene, t: 2, nodeIds: [bead, rail] })
+  const nodes = s.data.nodes as {
+    id: string
+    world: { x: number; y: number }
+    projection: { x: number; y: number; scale: number } | null
+  }[]
+  const b = nodes.find((n) => n.id === bead)!
+  const p = nodes.find((n) => n.id === rail)!
+  assert.ok(b.projection && p.projection, `both nodes must project at yaw ${yaw}`)
+  // Where the stage puts the point of the curve the bead is riding.
+  const drawnX = p.projection!.x + (b.world.x - p.world.x) * p.projection!.scale
+  const drawnY = p.projection!.y + (b.world.y - p.world.y) * p.projection!.scale
+  return Math.hypot(b.projection!.x - drawnX, b.projection!.y - drawnY)
+}
+
+const nearlyFlat = await divergence(0.05)
+const turned = await divergence(0.9)
+// Worth a picture, because the number is abstract and the failure is not: the
+// camera is left at yaw 0.9, so this frame is the bead sitting well off the
+// rail it is supposedly riding. It is the same thing run 8 saw as a moon off
+// its orbit ring, and the reason the warning exists.
+await inkAt(projectId, [(await sceneStart(projectId, orbitScene)) + 2], 'check-flows-orbit-drift.png')
+assert.ok(
+  turned > 30 && turned > nearlyFlat * 10,
+  `the follower must part company with its drawn curve as the turn grows: ` +
+    `${nearlyFlat.toFixed(1)}px at yaw 0.05 → ${turned.toFixed(1)}px at yaw 0.9. ` +
+    `If these are equal the renderer has started projecting path points per vertex, ` +
+    `and the warning below is now a lie that should be deleted.`,
+)
+
+// Both directions warn, because either call can create the clash. The camera
+// is already turned, so this is the flow_along half.
+const warnedFlow = await ok('flow_along', {
+  projectId, sceneId: orbitScene, nodeId: bead, pathId: rail, start: 0, duration: 4,
+})
+assert.match(warnedFlow.text, /WARNING: this scene both projects/, 'flow_along warns under yaw')
+assert.match(warnedFlow.text, new RegExp(`${bead} on ${rail}`), 'and names the pair')
+// The useful half: which of the two is wrong, and a remedy that keeps the orbit.
+assert.match(warnedFlow.text, /FOLLOWER is the correct one/, 'it says which one to trust')
+assert.match(warnedFlow.text, /hide the path/, 'and offers a fix that does not cost the orbit')
+
+// ...and the camera half, on a scene that already had the flow.
+const warnedOrbit = await ok('orbit_camera', {
+  projectId, sceneId: orbitScene, degrees: 40, start: 0, duration: 3,
+})
+assert.match(warnedOrbit.text, /WARNING: this scene both projects/, 'orbit_camera warns too')
+const warnedSet = await ok('set_camera', { projectId, sceneId: orbitScene, x: 960, y: 540, pitch: 0.4 })
+assert.match(warnedSet.text, /WARNING: this scene both projects/, 'and so does set_camera')
+
+// A camera that never leaves the plane must stay quiet — the warning has to be
+// about the combination, not about having a camera.
+await ok('set_camera', { projectId, sceneId: orbitScene, reset: true })
+const flatAgain = await ok('set_camera', { projectId, sceneId: orbitScene, x: 960, y: 540, zoom: 2 })
+assert.ok(
+  !/WARNING: this scene both projects/.test(flatAgain.text),
+  `a flat camera over a flow must not warn: ${flatAgain.text}`,
+)
+// And a turning camera with nothing riding a path must stay quiet as well.
+const emptyOrbit = await ok('orbit_camera', {
+  projectId, sceneId: shapeScene, degrees: 90, start: 0, duration: 2,
+})
+assert.ok(
+  !/WARNING: this scene both projects/.test(emptyOrbit.text),
+  `an orbit with no follower must not warn: ${emptyOrbit.text}`,
+)
+console.log(
+  `orbit/flow OK — divergence ${nearlyFlat.toFixed(1)}px → ${turned.toFixed(1)}px as yaw grows, ` +
+    `both capabilities warn, and neither warns without the other`,
+)
+
 // ---------- 4. the errors teach ----------
 const missing = await run('connect', { projectId, sceneId: shapeScene, from: a, to: 'nope_1234' })
 assert.equal(missing.status, 400)
