@@ -20,6 +20,17 @@ export const LIMITS = {
   maxNodesPerScene: 200,
   maxOpsPerEnvelope: 50,
   /**
+   * Keyframes on one property track.
+   *
+   * There was no cap while `animate` could only add two at a time; taking a
+   * whole list in one call makes one worth having. The binding constraint is
+   * the document, not the sampler — it lives under a single Durable Object key
+   * and DO values stop at 128 KiB, and a position keyframe is ~50 bytes. 500
+   * is far past useful (50 per second on a 10s scene) and nowhere near the
+   * budget.
+   */
+  maxKeyframesPerTrack: 500,
+  /**
    * Audio lanes on one document, and clips on one lane. Every clip becomes an
    * ffmpeg input with its own filter chain at export, so this is a mux-time
    * ceiling as much as a UI one — `amix` with hundreds of inputs is where a

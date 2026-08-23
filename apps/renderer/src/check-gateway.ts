@@ -648,6 +648,112 @@ const noSuch = await post('/api/agent/tools/sample_at/execute', {
 assert.equal(noSuch.status, 404, 'an unknown node must fail rather than return an empty listing')
 console.log('sample_at OK — group composition, camera framing and off-frame reported without pixels')
 
+// ---------- a whole path in one call ----------
+// Milestone run 9 spent 48 of its 95 calls building two non-uniform motions a
+// segment at a time, because flow_along rides a path at constant speed and
+// `animate` took one segment per call. The assertion that matters is not that
+// the new form runs: it is that it produces the SAME MOTION as the old one, so
+// nothing is traded for the round trips.
+const kfScene = (await exec('add_scene', { projectId, name: 'Keyframes', duration: 10 }))
+  .match(/scene (\S+)/)![1]!
+const mkDot = async (x: number) =>
+  (await exec('add_shape', { projectId, sceneId: kfScene, shape: 'circle', x, y: 300, radius: 10 }))
+    .match(/node (\S+)/)![1]!
+const oneAtATime = await mkDot(100)
+const allAtOnce = await mkDot(100)
+
+// A deliberately non-uniform path — accelerating, so a single eased segment
+// could not reproduce it and the comparison has something to catch.
+const PATH = Array.from({ length: 9 }, (_, i) => ({
+  t: i * 0.5,
+  value: { x: 100 + 20 * i * i, y: 300 + (i % 2 === 0 ? 0 : 60) },
+}))
+
+for (let i = 1; i < PATH.length; i++) {
+  await exec('animate', {
+    projectId, sceneId: kfScene, nodeId: oneAtATime, property: 'position',
+    to: PATH[i]!.value, start: PATH[i - 1]!.t, duration: PATH[i]!.t - PATH[i - 1]!.t,
+    easing: 'linear',
+  })
+}
+await exec('animate', {
+  projectId, sceneId: kfScene, nodeId: allAtOnce, property: 'position',
+  keyframes: PATH.map((k) => ({ ...k, easing: 'linear' })),
+})
+
+const whereAt = async (t: number): Promise<Record<string, { x: number; y: number }>> => {
+  const { nodes } = JSON.parse(
+    (await post('/api/agent/tools/sample_at/execute?format=json', {
+      projectId, sceneId: kfScene, t, nodeIds: [oneAtATime, allAtOnce],
+    })).body,
+  ).data as { nodes: { id: string; world: { x: number; y: number } }[] }
+  return Object.fromEntries(nodes.map((n) => [n.id, n.world]))
+}
+// Sampled between keyframes as well as on them — landing on the keyframes only
+// would pass even if the easing or the segment boundaries differed.
+for (const t of [0, 0.25, 1, 1.75, 2.5, 3.1, 4]) {
+  const at = await whereAt(t)
+  assert.deepStrictEqual(
+    at[allAtOnce],
+    at[oneAtATime],
+    `one keyframes call must produce the same motion as ${PATH.length - 1} chained calls, ` +
+      `and they differ at t=${t}s`,
+  )
+}
+console.log(
+  `keyframes OK — ${PATH.length - 1} chained calls reproduced by 1, identical at 7 sampled times`,
+)
+
+// Chaining still composes: keyframes before the first `t` are kept, exactly as
+// the `to` form keeps them before `start`.
+await exec('animate', {
+  projectId, sceneId: kfScene, nodeId: allAtOnce, property: 'opacity',
+  to: 1, start: 0, duration: 1,
+})
+assert.match(
+  await exec('animate', {
+    projectId, sceneId: kfScene, nodeId: allAtOnce, property: 'opacity',
+    keyframes: [{ t: 3, value: 0.2 }, { t: 5, value: 1 }],
+  }),
+  /keeping 2 earlier keyframe/,
+  'a keyframes call must keep keyframes before its first t',
+)
+
+// A track holds its first value backwards in time, so a late first keyframe
+// shows that value from the scene's opening. Warned rather than silently
+// fixed — sometimes it is what was wanted.
+assert.match(
+  await exec('animate', {
+    projectId, sceneId: kfScene, nodeId: oneAtATime, property: 'opacity',
+    keyframes: [{ t: 3, value: 0.2 }, { t: 5, value: 1 }],
+  }),
+  /from the scene's opening/,
+  'a late first keyframe with nothing before it must warn',
+)
+
+// The refusals. A mistyped entry among hundreds is the failure this form
+// invites, and a position track holding a bare number would sample as a number
+// and place the node at (NaN, NaN) with nothing in the document looking wrong.
+for (const [args, why] of [
+  [{ to: 1, start: 0, duration: 1, keyframes: [{ t: 0, value: 1 }, { t: 1, value: 0 }] }, 'both forms'],
+  [{}, 'neither form'],
+  [{ keyframes: [{ t: 2, value: 1 }, { t: 1, value: 0 }] }, 'descending times'],
+  [{ keyframes: [{ t: 0, value: 1 }, { t: 1, value: 1 }, { t: 1, value: 0 }] }, 'a duplicate time'],
+  [{ keyframes: [{ t: 0, value: 1 }] }, 'a single keyframe'],
+] as [Record<string, unknown>, string][]) {
+  const r = await post('/api/agent/tools/animate/execute', {
+    projectId, sceneId: kfScene, nodeId: allAtOnce, property: 'opacity', ...args,
+  })
+  assert.equal(r.status, 400, `animate must refuse ${why}, got ${r.status}: ${r.body}`)
+}
+const wrongShape = await post('/api/agent/tools/animate/execute', {
+  projectId, sceneId: kfScene, nodeId: allAtOnce, property: 'position',
+  keyframes: [{ t: 0, value: { x: 0, y: 0 } }, { t: 1, value: 5 }],
+})
+assert.equal(wrongShape.status, 400, 'a number in a position track must be refused')
+assert.match(wrongShape.body, /same shape/, 'and the refusal must say what the shape should be')
+console.log('keyframes OK — composes, warns on a late start, and refuses every ambiguous list')
+
 // ---------- undo, over the event log that was always there ----------
 // plans/011 gap 4. architecture.md claimed "free undo/history from the event
 // log" from the beginning and nothing exposed it, so run 8 rebuilt scenes by

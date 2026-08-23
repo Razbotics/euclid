@@ -511,7 +511,8 @@ sugar, the batch executor, and the `flow_along` + `orbit_camera` warning.
       `flow_along` has no speed profile, so two non-uniform motions cost 48
       calls. Batch execution is now the third-best fix for the cost it was
       ranked on
-- [ ] `animate` accepting a list of keyframes (48 calls → 2)
+- [x] `animate` accepting a list of keyframes (2026-08-23) — run 9's Kepler
+      motion rebuilt in **1 call instead of 24**, positions byte-identical
 - [ ] A speed profile on `flow_along` (48 calls → 2, and no hand-computed
       positions)
 

@@ -7,6 +7,7 @@ import {
   type TimeAnchor,
   type Track,
   type Transition,
+  LIMITS,
 } from '@euclid/dsl'
 import { resolveNode } from '@euclid/engine'
 import { COLOR, EASING, NODE_ID, NUMBERISH, PROJECT_ID, SCENE_ID, SECONDS } from './schemas'
@@ -92,11 +93,31 @@ function anchorFor(
 const outside = (t: Transition, start: number, duration: number): boolean =>
   t.start + t.duration <= start || start + duration <= t.start
 
+/**
+ * A value any animatable property can take. NUMBERISH first: a colour like
+ * "#ff0000" fails it and falls through to COLOR, while "1.12" is accepted
+ * where a bare z.number() would not.
+ */
+const ANIM_VALUE = z.union([NUMBERISH, z.object({ x: NUMBERISH, y: NUMBERISH }), COLOR])
+
+/**
+ * Which of the three shapes a value is.
+ *
+ * Only needed since `animate` began taking a whole list: one mistyped entry
+ * among hundreds is the failure that form invites, and a position track
+ * holding a bare number samples as a number and puts the node at (NaN, NaN) —
+ * a wrong render with nothing in the document that looks wrong.
+ */
+function shapeOf(v: unknown): 'point' | 'colour' | 'number' {
+  if (v !== null && typeof v === 'object') return 'point'
+  return typeof v === 'string' ? 'colour' : 'number'
+}
+
 export const animTools = [
   capability({
     name: 'animate',
     summary:
-      'Keyframe one property from its current value to `to` over `duration` (rotation in radians).',
+      'Keyframe one property — one move with `to`, or a whole path with `keyframes` (rotation in radians).',
     doc: [
       'The generic motion primitive. The start value is **sampled from the document at `start`**, never assumed — so animations chain continuously and you never have to restate where something already is.',
       '',
@@ -107,6 +128,14 @@ export const animTools = [
       '**`rotation` is in RADIANS, not degrees** — a quarter turn is 1.5708, not 90. Degrees are the natural guess and the call will succeed with a wildly wrong value: 90 wraps more than fourteen full turns. Convert with `degrees × π / 180`. A node rotates about its own `position`, so a line pivots about its anchor rather than its midpoint.',
       '',
       'Existing keyframes for that property **after `start` are replaced**, so re-calling to revise a move works; keyframes before `start` are kept, which is what makes a chain of calls compose.',
+      '',
+      '**Pass `keyframes` instead when the motion is not one move.** `[{t, value}, …]` builds the whole track in a single call — `t` in scene-local seconds, ascending, each `value` the same shape as the property. Per-keyframe `easing` is optional and inherits the call\'s.',
+      '',
+      'This is the form for anything whose speed varies along the way: a planet that races near its star and dawdles far from it, a bouncing ball, a needle that overshoots and settles. `flow_along` rides a path at a *constant* speed and its easing is one curve over the whole trip, so it cannot say "fast, slow, fast" — that has to be a track. A real run spent **48 of its 95 calls** building two such motions one segment at a time before this existed.',
+      '',
+      'Keyframes before the first `t` are kept, exactly as with `to`, so this composes with earlier calls. But a track holds its first value *backwards in time*: if nothing precedes your first keyframe and it is not at 0, the node shows that value from the scene\'s opening rather than waiting. The result says so when it applies.',
+      '',
+      `Up to ${LIMITS.maxKeyframesPerTrack} keyframes on one property. Sample as finely as the motion needs — the sampler interpolates between whatever you give it, and 200 keyframes cost no more to render than 2.`,
       '',
       'Times are scene-local seconds. An animation running past the scene end simply never finishes on screen — check the scene duration in get_project.',
     ].join('\n'),
@@ -120,14 +149,120 @@ export const animTools = [
       ]),
       // NUMBERISH first: a colour like "#ff0000" fails it and falls through to
       // COLOR, while "1.12" is accepted where a bare z.number() would not.
-      to: z.union([NUMBERISH, z.object({ x: NUMBERISH, y: NUMBERISH }), COLOR]),
-      start: SECONDS,
-      duration: z.number().positive(),
+      to: ANIM_VALUE.optional(),
+      start: SECONDS.optional(),
+      duration: z.number().positive().optional(),
       easing: EASING,
+      keyframes: z
+        .array(
+          z.object({
+            t: SECONDS,
+            value: ANIM_VALUE,
+            /** No default: an omitted per-keyframe easing inherits the call's. */
+            easing: z
+              .enum(['linear', 'easeIn', 'easeOut', 'easeInOut', 'smooth'])
+              .optional(),
+          }),
+        )
+        .min(2)
+        .max(LIMITS.maxKeyframesPerTrack)
+        .optional()
+        .describe('the whole path at once, instead of to/start/duration'),
     }),
-    async handler(ctx, { projectId, sceneId, nodeId, property, to, start, duration, easing }) {
+    async handler(ctx, a) {
+      const { projectId, sceneId, nodeId, property, easing, keyframes } = a
+      const oneShot = a.to !== undefined
+      if (oneShot === (keyframes !== undefined)) {
+        throw new CapabilityError(
+          keyframes
+            ? 'give either `to` (one move) or `keyframes` (a whole path), not both — ' +
+              'they would describe two different tracks'
+            : 'nothing to animate: give `to` with `start`/`duration` for one move, ' +
+              'or `keyframes` for a whole path in one call',
+        )
+      }
       const { doc } = await ctx.getDoc(projectId)
       const node = ctx.nodeOrThrow(doc, sceneId, nodeId)
+
+      if (keyframes) {
+        // Ascending and distinct. The reducer sorts keyframes, so an
+        // out-of-order list would be silently reordered into a motion the
+        // caller did not describe — and two keyframes at one time are
+        // ambiguous rather than wrong-looking.
+        for (let i = 1; i < keyframes.length; i++) {
+          if (keyframes[i]!.t <= keyframes[i - 1]!.t) {
+            throw new CapabilityError(
+              `keyframes must be in ascending time order: [${i - 1}] is at ` +
+                `${keyframes[i - 1]!.t}s and [${i}] is at ${keyframes[i]!.t}s. ` +
+                `They are sorted before use, so an unsorted list would animate ` +
+                `something you did not ask for.`,
+            )
+          }
+        }
+        // One bad entry in a list of hundreds is the failure this form invites,
+        // and a position track holding a bare number would sample as a number
+        // and place the node at (NaN, NaN). Checked against the property's
+        // CURRENT value, so the shape is the node's own rather than a guess.
+        const current = resolveNode(node, keyframes[0]!.t).props[property]
+        if (current === undefined) {
+          throw new CapabilityError(
+            `property ${property} does not exist on ${node.type} node ${nodeId}`,
+          )
+        }
+        const wanted = shapeOf(current)
+        for (const [i, k] of keyframes.entries()) {
+          if (shapeOf(k.value) !== wanted) {
+            throw new CapabilityError(
+              `keyframe [${i}] at ${k.t}s is ${shapeOf(k.value)}, but ${property} on ` +
+                `${nodeId} is ${wanted} — every keyframe must be the same shape ` +
+                `(${wanted === 'point' ? '{"x":…,"y":…}' : wanted === 'colour' ? '"#rrggbb"' : 'a number'}).`,
+            )
+          }
+        }
+        const first = keyframes[0]!
+        const existing = node.tracks.find((t) => t.property === property)
+        const keep = existing ? existing.keyframes.filter((k) => k.t < first.t) : []
+        const track: Track = {
+          property,
+          keyframes: [
+            ...keep,
+            ...keyframes.map((k) => ({
+              t: k.t,
+              value: k.value,
+              easing: (k.easing ?? easing) as Easing,
+            })),
+          ],
+        }
+        await ctx.submit(projectId, [op.setTrack(sceneId, nodeId, track)])
+        const last = keyframes[keyframes.length - 1]!
+        // A track's first keyframe is held backwards in time, so starting at
+        // 2s does not mean "stay put until 2s" — it means the node shows that
+        // value from the scene's opening. Said rather than silently fixed:
+        // sometimes it is exactly what was wanted.
+        const jumps = first.t > 0 && keep.length === 0
+        return said(
+          `animating ${nodeId}.${property} across ${keyframes.length} keyframes over ` +
+            `[${first.t}s, ${last.t}s]` +
+            (keep.length ? `, keeping ${keep.length} earlier keyframe(s)` : '') +
+            `
+from ${JSON.stringify(first.value)} to ${JSON.stringify(last.value)}` +
+            (jumps
+              ? `
+WARNING: the first keyframe is at ${first.t}s and nothing precedes it, so ` +
+                `${nodeId} shows ${JSON.stringify(first.value)} from the scene's opening ` +
+                `rather than holding its own position until then. Add a keyframe at 0, or ` +
+                `animate into this from an earlier call.`
+              : ''),
+          { nodeId, property, keyframes: track.keyframes.length, from: first.value, to: last.value },
+        )
+      }
+
+      const start = a.start ?? 0
+      const duration = a.duration
+      if (duration === undefined) {
+        throw new CapabilityError('`to` needs a `duration` (and usually a `start`)')
+      }
+      const to = a.to!
       const current = resolveNode(node, start).props[property]
       if (current === undefined) {
         throw new CapabilityError(

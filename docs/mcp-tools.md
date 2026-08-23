@@ -150,6 +150,19 @@ shape as `remove_asset`'s `force`.
   the node; anything else geometric in the same call is measured from there* —
   a path's points, a line's `x2`/`y2`, a group's children. The one exception is
   `add_axes`/`plot_function`, whose x/y is the top-left of the plot rectangle.
+- **A whole motion is one call** (plans/011, from run 9). `animate` takes
+  either `to`/`start`/`duration` for one move or `keyframes: [{t, value}…]`
+  for the whole track. The second form exists because run 9 spent **48 of its
+  95 calls** building two non-uniform-speed motions a segment at a time:
+  `flow_along` rides a path at constant speed and its easing is a single
+  monotone curve, so "fast near the star, slow far from it, fast again" cannot
+  be a flow — it has to be a track. Keyframes before the first `t` are kept, so
+  the list composes with earlier calls exactly as `to` does; a late first
+  keyframe warns, because a track holds its first value *backwards* in time.
+  Ascending times, one shape for every value, and `LIMITS.maxKeyframesPerTrack`
+  (500) as the ceiling — a mistyped entry among hundreds is what this form
+  invites, and a bare number in a position track would sample as a number and
+  put the node at (NaN, NaN) with nothing in the document looking wrong.
 - **Undo exists, and it is not destructive** (plans/011 gap 4). `get_history`
   lists every version with its actor and op kinds; `revert_to_version` puts the
   document back to one of them. A revert is an ordinary op envelope

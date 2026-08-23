@@ -219,11 +219,22 @@ effect. But batching is the *weaker* fix — it would make those 48 calls cheape
 without making them fewer, and the agent still hand-solves Kepler's equation
 and emits 24 coordinate pairs. Ranked by what each would have removed here:
 
-- [ ] **`animate` accepting a list of keyframes** (`keyframes: [{t, value}…]`)
-      — 48 calls → 2. One op per call is the current rule and it is costing
-      more than the rule is worth; a track *is* a list of keyframes, so this
-      matches the document rather than fighting it. Highest value, smallest
-      change.
+- [x] **`animate` accepting a list of keyframes** (`keyframes: [{t, value}…]`)
+      — **done 2026-08-23**. Verified against the thing it replaces rather than
+      on its own: run 9's exact Kepler motion rebuilt in **one call instead of
+      24**, and all six sampled positions came back byte-identical. The check
+      does the same in miniature — 8 chained calls reproduced by 1, compared at
+      seven times including four *between* keyframes, since landing only on
+      them would pass even if the easing differed.
+      Keyframes before the first `t` are kept, so a list composes with earlier
+      calls exactly as `to` does. A late first keyframe warns rather than being
+      silently fixed: a track holds its first value backwards in time, so the
+      node would show it from the scene's opening. Shape is checked per entry
+      against the property's current value — one mistyped entry among hundreds
+      is the failure this form invites, and a bare number in a position track
+      samples as a number and places the node at (NaN, NaN) with nothing in the
+      document looking wrong. `LIMITS.maxKeyframesPerTrack` (500) is the new
+      ceiling; there was none while only two could be added at a time.
 - [ ] **A speed profile on `flow_along`** (e.g. `at: [{t, u}]`, u a fraction
       of arc length) — 48 calls → 2, *and* the agent stops computing
       positions: the path stays the source of geometry, which is the whole
@@ -302,6 +313,12 @@ text/LaTeX extents being estimated (preview closes the loop by design).
 - Replay is compared against reality before it is trusted, and the comparison
   is key-order-independent — otherwise two documents Zod happened to build in
   different orders would refuse a perfectly good undo.
+- **Verify a shortcut against the thing it replaces, not on its own.** The
+  keyframe list was checked by rebuilding run 9's motion and comparing every
+  sampled position with the 24-call version, and the regression check compares
+  at times *between* keyframes as well as on them — landing only on the
+  keyframes would pass even if the easing or the segment boundaries had
+  changed. "It runs and looks plausible" would have proved nothing.
 - Ink cannot see *where*. `check-order.ts` asserts the **computed** area a dot
   covers at a known zoom (8.73%), not "some ink" — a dot half out of frame
   still lights the picture and would pass a `> 0` test while sitting somewhere
