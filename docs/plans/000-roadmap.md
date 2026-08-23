@@ -429,7 +429,6 @@ placeable in any of the user's projects.
       notes drive regeneration with automatic lineage, and narration
       reviews the script rather than the takes. Verified end to end for 4
       credits (four real narration takes)
-- [ ] Phase 2: asset review lifecycle (status, lineage via `revises`)
 - [x] Phase 3: review UI in the editor — `Review.tsx` renders the queue
       (plan outlines, assets inline with a lineage strip, plain questions)
       above the inspector; explorer dots mark pending/rejected; the header
