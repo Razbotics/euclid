@@ -2,9 +2,12 @@
  * Agent → human → agent question loop.
  * Run: pnpm --filter @euclid/renderer exec tsx src/check-decisions.ts
  *
- * Free — no credits. Needs `dev:api` and `dev:mcp`. Deliberately no browser:
+ * Free — no credits. Needs `dev:api`, `dev:mcp`, and `render-worker.ts` (the
+ * composition-review section captures real frames). Deliberately no browser:
  * chat is the surface a question is asked on and the system may run headless,
- * so this drives the loop the way a shell-less client would.
+ * so this drives the loop the way a shell-less client would — which is also
+ * why the contact sheet has to travel as a content block rather than as
+ * something the human is told to go and look at.
  *
  * The editor's answer endpoint is still exercised directly. It remains a
  * valid surface for anyone with a browser open; it just isn't where the
@@ -19,6 +22,15 @@ const KEY = process.env.INTERNAL_API_KEY ?? 'dev-internal-key'
 const HEADERS = { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }
 let sessionId: string | null = null
 let rpcId = 0
+
+const PREVIEW = process.env.PREVIEW_ORIGIN ?? 'http://localhost:8790'
+if (!(await fetch(`${PREVIEW}/health`).catch(() => null))?.ok) {
+  console.error(
+    `preview backend not running at ${PREVIEW} — the composition-review section captures ` +
+      `real frames.\n  pnpm --filter @euclid/renderer exec tsx src/render-worker.ts`,
+  )
+  process.exit(1)
+}
 
 /** Reads the first SSE `data:` event; the worker holds the stream open ~10s. */
 async function rpc(method: string, params?: unknown): Promise<Record<string, any>> {
@@ -50,12 +62,19 @@ async function rpc(method: string, params?: unknown): Promise<Record<string, any
   return JSON.parse(buffered)
 }
 
-async function call(name: string, args: Record<string, unknown>): Promise<string> {
+type Block = { type: string; text?: string; data?: string; mimeType?: string }
+
+/** Every content block, for the calls whose point is that there are two. */
+async function callBlocks(name: string, args: Record<string, unknown>): Promise<Block[]> {
   const r = await rpc('tools/call', { name, arguments: args })
   if (r.error) throw new Error(`${name}: ${r.error.message}`)
-  const t = r.result?.content?.[0]?.text ?? ''
-  if (r.result?.isError) throw new Error(`${name}: ${t}`)
-  return t
+  const blocks = (r.result?.content ?? []) as Block[]
+  if (r.result?.isError) throw new Error(`${name}: ${blocks[0]?.text ?? ''}`)
+  return blocks
+}
+
+async function call(name: string, args: Record<string, unknown>): Promise<string> {
+  return (await callBlocks(name, args))[0]?.text ?? ''
 }
 
 /**
@@ -100,7 +119,8 @@ const decisions = async (): Promise<any[]> => {
 const project = {
   id: (await run('create_project', { name: 'Decision Check' })).match(/created project (\S+)/)![1]!,
 }
-await run('add_scene', { projectId: project.id, name: 'One', duration: 6 })
+const sceneOne = (await run('add_scene', { projectId: project.id, name: 'One', duration: 6 }))
+  .match(/scene (\S+)/)![1]!
 
 // ---------- 1. the agent asks ----------
 const asked = await call('ask_user', {
@@ -182,6 +202,71 @@ const relayed = await run('record_answer', {
 assert.match(relayed, /answered via agent/, 'a relayed answer is marked as such')
 assert.match(relayed, /hold it about two seconds/, 'free text is kept verbatim')
 
+// ---------- 5b. a composition question carries its frames (plans/011 gap 5) ----------
+// `request_review` puts assets in front of the human; what run 8 needed eyes on
+// was the composition, and the contact sheet reached them only by being
+// described in chat. So a question about how something LOOKS now carries the
+// picture — and the assertion is that both halves travel, because a question
+// with no image is exactly the failure this closes.
+await run('add_text', {
+  projectId: project.id, sceneId: sceneOne, text: 'composition', x: 960, y: 540,
+})
+const composed = await callBlocks('ask_user', {
+  projectId: project.id,
+  question: 'Does the title sit right against the diagram?',
+  options: [{ label: 'Yes, keep it' }, { label: 'Move it up' }],
+  previewAt: [0.5, 2, 4],
+})
+const composedText = composed[0]?.text ?? ''
+assert.equal(composed.length, 2, `a previewAt question returns text AND an image: ${composedText}`)
+assert.equal(composed[0]!.type, 'text', 'the caption comes first — an image cannot say which tile is which')
+assert.equal(composed[1]!.type, 'image', 'and the contact sheet rides beside it')
+assert.equal(composed[1]!.mimeType, 'image/png')
+assert.ok((composed[1]!.data?.length ?? 0) > 2000, 'the sheet must be a real capture, not an empty PNG')
+// The block a human reads has to place the frames in the video; a tile they
+// cannot locate is a tile they cannot judge.
+assert.match(composedText, /Frames above are at 0\.5s, 2\.0s, 4\.0s/, 'the block names the moments')
+assert.match(composedText, /contact sheet is attached/, 'and tells the agent not to describe it away')
+
+// The decision stores the moments, so the editor can scrub there — the surface
+// where a human answers with their eyes, and the one a contact sheet cannot be.
+const composedId = composedText.match(/STOP — WAITING ON THE HUMAN \(([^)]+)\)/)![1]!
+const stored = (await decisions()).find((d) => d.id === composedId)
+assert.deepStrictEqual(stored.refs.previewAt, [0.5, 2, 4], 'the moments are stored on the decision')
+// ...and nothing else. previewAt is the one ref with no consequence: the
+// others change what answering DOES, this only changes what is being looked at.
+assert.ok(!stored.refs.planId, 'a preview ref must not look like a plan approval')
+assert.ok(!stored.refs.assetIds, 'nor like an asset review')
+await run('record_answer', { projectId: project.id, decisionId: composedId, optionId: 'opt1' })
+
+// A capture that fails must REFUSE, not quietly ask a question about pixels
+// with no pixels — that would put the human back to hunting for the frames
+// without saying so, which is the whole thing this closes. A project with no
+// scenes is the cheapest way to make the capture fail for a real reason.
+const emptyProject = (await run('create_project', { name: 'Nothing To See' }))
+  .match(/created project (\S+)/)![1]!
+await assert.rejects(
+  () =>
+    call('ask_user', {
+      projectId: emptyProject,
+      question: 'How does this look?',
+      options: [{ label: 'Fine' }, { label: 'Not fine' }],
+      previewAt: [0.5],
+    }),
+  /could not capture the frames/,
+  'a question about pixels is refused rather than asked without them',
+)
+// ...and refused BEFORE the decision exists, so there is no orphan question
+// sitting open against a capture that never happened.
+const emptyDecisions = await (async () => {
+  const r = await fetch(`${API_URL}/api/projects/${emptyProject}/decisions`, {
+    headers: { 'x-internal-key': KEY, 'x-user-id': 'dev-user' },
+  })
+  return ((await r.json()) as { decisions: any[] }).decisions
+})()
+assert.equal(emptyDecisions.length, 0, 'a failed capture must leave no decision behind')
+await run('delete_project', { projectId: emptyProject, confirm: true })
+
 // ---------- 6. bad input ----------
 await assert.rejects(
   () => call('ask_user', { projectId: project.id, question: 'One option?', options: [{ label: 'Yes' }] }),
@@ -189,11 +274,14 @@ await assert.rejects(
 )
 
 const all = await decisions()
-assert.equal(all.filter((d) => d.status === 'answered').length, 2, 'both questions are answered')
+assert.equal(all.filter((d) => d.status === 'answered').length, 3, 'all three questions are answered')
 assert.deepEqual(
   all.map((d) => d.answer.via).sort(),
-  ['agent', 'editor'],
-  'the two answers keep distinct provenance',
+  // Two relays and one editor click: the composition question was also closed
+  // through record_answer, so it carries `agent` provenance like any other
+  // answer the agent interpreted rather than the human clicked.
+  ['agent', 'agent', 'editor'],
+  'the answers keep distinct provenance',
 )
 
 // Passing runs leave nothing behind; a failure keeps the fixture to inspect.
@@ -202,5 +290,7 @@ await run('delete_project', { projectId: project.id, confirm: true })
 console.log(
   'decisions OK — pasteable block asked over MCP (native ask_user), stored open, editor ' +
     'endpoint and chat relay answer with distinct provenance via execute(record_answer), ' +
-    'double-answer refused, get_answer gone',
+    'double-answer refused, get_answer gone. A composition question carries its frames: ' +
+    'text AND image blocks, the moments named in the block and stored on the decision as a ' +
+    'ref with no consequence, and a failed capture refuses without leaving a question open',
 )

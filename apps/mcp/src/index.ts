@@ -244,7 +244,12 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
         'summary at the end — an unanswered question that you worked around was not a question. ' +
         'Chat is the surface that always exists — the system may run headless with no editor ' +
         'open, so never wait on a browser. When they reply, close the question with ' +
-        'execute(name="record_answer").',
+        'execute(name="record_answer").\n\n' +
+        'IF THE QUESTION IS ABOUT HOW SOMETHING LOOKS, pass `previewAt` — global seconds. It ' +
+        'captures those moments as one contact sheet and puts it in front of the human WITH ' +
+        'the question, and marks them on the decision so the editor can scrub there. A ' +
+        'composition question asked without frames makes the human go and find them, which ' +
+        'is the step that gets skipped.',
       {
         projectId: z.string(),
         question: z.string().min(1).describe('one clear question'),
@@ -256,8 +261,39 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
         detail: z.string().optional().describe('context they need to choose well'),
         sceneId: z.string().optional(),
         atSec: z.number().min(0).optional().describe('global seconds; the editor seeks here'),
+        previewAt: z
+          .array(z.number().min(0))
+          .min(1)
+          .max(16)
+          .optional()
+          .describe('global seconds to show them, as one labeled contact sheet'),
       },
-      async ({ projectId, question, options, detail, sceneId, atSec }) => {
+      async ({ projectId, question, options, detail, sceneId, atSec, previewAt }) => {
+        // Capture BEFORE the decision exists, so a question about pixels is
+        // never opened without them. preview_frames is the only thing that can
+        // render a frame, and going through the gateway means its tile cap,
+        // its labels and its blank-frame detection all apply here for free —
+        // this worker stays a relay and learns nothing about capture.
+        let sheet: { base64: string; mimeType: string } | undefined
+        if (previewAt?.length) {
+          const shot = await this.api('/api/agent/tools/preview_frames/execute?format=json', {
+            method: 'POST',
+            body: JSON.stringify({ projectId, at: previewAt }),
+          })
+          if (!shot.ok) {
+            // Refuse rather than ask a composition question with no picture:
+            // the whole reason for the argument is that the human should not
+            // have to go and find the frames, and silently dropping it would
+            // put them back there without saying so.
+            throw new Error(
+              `could not capture the frames for this question (${shot.status}): ` +
+                `${await shot.text()}\nAsk without previewAt if you want the question anyway.`,
+            )
+          }
+          const body = (await shot.json()) as { image?: { base64: string; mimeType: string } }
+          sheet = body.image
+        }
+
         const res = await this.api(`/api/projects/${projectId}/decisions`, {
           method: 'POST',
           body: JSON.stringify({
@@ -266,6 +302,7 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
             // Stable, readable ids so the agent can refer to a choice later.
             options: options.map((o, i) => ({ id: `opt${i + 1}`, ...o })),
             context: sceneId || atSec !== undefined ? { sceneId, atSec } : undefined,
+            ...(previewAt?.length ? { refs: { previewAt } } : {}),
           }),
         })
         if (!res.ok) throw new Error(`ask_user failed (${res.status}): ${await res.text()}`)
@@ -274,8 +311,21 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
         // Preferred path: have the client collect the answer itself, so the
         // human gets their own native picker and the answer travels
         // client → server with the agent never in the middle.
+        // The sheet rides both paths. On the elicitation path the human has
+        // already answered in their own client by the time this returns, so it
+        // is here for the *agent* — it must be able to see what it just asked
+        // about in order to act on the answer.
+        const withSheet = (text: string) => ({
+          content: [
+            { type: 'text' as const, text },
+            ...(sheet
+              ? [{ type: 'image' as const, data: sheet.base64, mimeType: sheet.mimeType }]
+              : []),
+          ],
+        })
+
         const elicited = await this.elicit(projectId, decision)
-        if (elicited) return { content: [{ type: 'text' as const, text: elicited }] }
+        if (elicited) return withSheet(elicited)
 
         // Fallback. The return value is the strongest prompt surface there is
         // — the agent reads it the instant it lands. A receipt ("asked (id)")
@@ -283,27 +333,25 @@ export class EuclidMcpAgent extends McpAgent<Env, unknown, Props> {
         // wording exists because a real run asked a good question, scheduled a
         // wakeup, built the rest of the video against its own guess, and only
         // mentioned the unanswered question in its closing summary.
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text:
-                `STOP — WAITING ON THE HUMAN (${decision.id})\n` +
-                `Paste the block below into your NEXT reply, then stop and wait. Do not ` +
-                `continue building, do not pick a default, and do not save it for a ` +
-                `summary later.\n\n` +
-                `────────────────────────────\n` +
-                `${formatQuestionForChat(decision)}\n` +
-                `────────────────────────────\n\n` +
-                `When they reply to you, call execute(name="record_answer") with decisionId ` +
-                `${decision.id} and optionId ${decision.options
-                  .map((o, i) => `${i + 1}→${o.id}`)
-                  .join(' ')} (or note=<their words>). Nothing else closes this question and ` +
-                `nothing will remind you: continuing without an answer means you ` +
-                `decided it yourself.`,
-            },
-          ],
-        }
+        return withSheet(
+          `STOP — WAITING ON THE HUMAN (${decision.id})\n` +
+            `Paste the block below into your NEXT reply, then stop and wait. Do not ` +
+            `continue building, do not pick a default, and do not save it for a ` +
+            `summary later.\n\n` +
+            `────────────────────────────\n` +
+            `${formatQuestionForChat(decision)}\n` +
+            `────────────────────────────\n\n` +
+            (sheet
+              ? `The contact sheet is attached — it is what the human needs to see, so let ` +
+                `it stand beside your question rather than describing it away.\n\n`
+              : '') +
+            `When they reply to you, call execute(name="record_answer") with decisionId ` +
+            `${decision.id} and optionId ${decision.options
+              .map((o, i) => `${i + 1}→${o.id}`)
+              .join(' ')} (or note=<their words>). Nothing else closes this question and ` +
+            `nothing will remind you: continuing without an answer means you ` +
+            `decided it yourself.`,
+        )
       },
     )
   }

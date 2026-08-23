@@ -34,6 +34,21 @@ the copy that cannot go stale.
   controls what the agent puts in its very next reply. Neither survives being
   flattened into request/response. Closing a question is ordinary state, so
   `record_answer` *is* a capability: `execute(name="record_answer")`.
+  It also takes **`previewAt`** (plans/011 gap 5): global seconds that are
+  captured as one contact sheet and returned **as an image block beside the
+  question**, so a question about how something looks arrives with the picture
+  rather than sending the human to find it. `request_review` puts *assets* in
+  front of someone; what milestone run 8 needed eyes on was the composition,
+  and the sheet reached the human only by being described in chat. Capture
+  goes through `preview_frames` over the gateway, so its tile cap, labels and
+  blank-frame detection all apply and the MCP worker stays a relay — and a
+  capture that fails **refuses the whole call**, because asking about pixels
+  without them is the failure this closes. The times are also stored as
+  `refs.previewAt`, the one ref with **no consequence**: `planId` and
+  `assetIds` change what answering *does*, this only changes what is being
+  looked at while deciding. The editor renders them as a row of seek buttons,
+  which is the thing an editor can offer that a contact sheet cannot — the
+  live canvas at full size, scrubbable around each moment.
 - **Bytes stay on REST.** Tool args are JSON; base64 through an LLM context is
   a non-starter, so asset upload is a plain endpoint (`POST
   /api/projects/:id/assets`) rather than a tool. It takes two callers now:

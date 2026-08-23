@@ -499,7 +499,14 @@ review, the batch executor, and the `flow_along` + `orbit_camera` warning.
       applies it through the shared reducer — no editor code knows undo exists.
       Needed one thing the log lacks: a snapshot to replay from, since a
       project's canvas never arrives as an op
-- [ ] Composition review: decisions carry a preview capture
+- [x] Composition review: decisions carry a preview capture (2026-08-23).
+      `ask_user` takes `previewAt` — global seconds captured through
+      `preview_frames` and returned as an image block beside the question, so
+      a question about how something looks arrives with the picture instead of
+      sending the human to find it. The times are also stored as
+      `refs.previewAt`, the one ref with no consequence, and the editor renders
+      them as seek buttons. A failed capture refuses the call rather than
+      asking about pixels without them
 - [x] Geometry sugar: `add_arc` (2026-08-23) — circle, ellipse, arc and
       regular polygon as **one** generator onto an ordinary `path`, so a
       polygon is just a closed full turn with a small `samples` and no second

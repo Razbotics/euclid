@@ -129,9 +129,36 @@ needed the human's eyes on was the *composition* — and the preview sheet
 reached them only by being hand-carried through chat. The decision object
 already carries `refs`:
 
-- [ ] `refs` gains a preview capture (e.g. `previewAt: number[]` rendered by
+- [x] `refs` gains a preview capture (e.g. `previewAt: number[]` rendered by
       the editor via the capture backend, or an attached sheet asset), so
-      "review the video at these moments" is one capability call
+      "review the video at these moments" is one capability call — **done
+      2026-08-23**, and it went to `ask_user` rather than becoming a second
+      asking surface. `previewAt` captures those moments through
+      `preview_frames` over the gateway and returns the sheet **as an image
+      block beside the question**, so the MCP worker stays a relay and the
+      tile cap, labels and blank-frame detection come along for free.
+      The plan offered two shapes and the answer turned out to be *both, for
+      different surfaces*. An attached sheet asset was rejected — it would
+      land in the user's library with a review status, and the review queue
+      renders `assetIds` as things awaiting approval, which a picture to look
+      at is not. So: the **image block** serves the chat human (the surface
+      plans/005 says always exists, and the one run 8 actually had), and
+      **`refs.previewAt`** serves the editor, which renders a row of seek
+      buttons — the live canvas at full size, scrubbable, which is the thing a
+      contact sheet cannot be. Plural because whether a caption collides is
+      rarely answerable from one frame; `context.atSec` stays the single
+      "seek here".
+      `previewAt` is the one ref with **no consequence** — `planId` and
+      `assetIds` change what answering *does*, this only changes what is being
+      looked at — and the check asserts the DO does not mistake it for either.
+      A failed capture **refuses the whole call** and leaves no decision
+      behind: asking about pixels without them puts the human back to hunting
+      for frames without saying so, which is exactly the gap.
+      Verified in `check-decisions.ts` (both content blocks travel, the block
+      names the moments, the ref is stored and inert, a failed capture leaves
+      nothing open — and returning no sheet fails it) and in the browser: the
+      three seek buttons render and clicking `▶ 2.0s` moves the playhead to
+      2.0s / 6.00s.
 
 ### 6. Tool combinations that silently disagree
 

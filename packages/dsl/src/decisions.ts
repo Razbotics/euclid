@@ -42,6 +42,21 @@ export interface DecisionRefs {
   planId?: string
   /** Assets under review; the editor shows them inline. (Phase 2.) */
   assetIds?: string[]
+  /**
+   * Moments of the video this question is about, in global seconds.
+   *
+   * The one ref with **no consequence** — the others change what answering
+   * does, this only changes what the human is looking at while they decide.
+   * `request_review` puts *assets* in front of someone; what milestone run 8
+   * actually needed eyes on was the **composition**, and the contact sheet
+   * reached the human only by being described in chat.
+   *
+   * Plural on purpose. `context.atSec` is one place to seek to; a composition
+   * question is usually about how several moments sit together — does this
+   * caption collide at 3s, is the orbit still legible at 8s — and answering it
+   * from one frame is how a run concludes the wrong thing.
+   */
+  previewAt?: number[]
 }
 
 /**
@@ -90,6 +105,11 @@ export const DecisionContextSchema: z.ZodType<DecisionContext> = z.object({
 export const DecisionRefsSchema: z.ZodType<DecisionRefs> = z.object({
   planId: z.string().min(1).optional(),
   assetIds: z.array(z.string().min(1)).max(20).optional(),
+  // 16 is the contact sheet's tile cap, and this is a sanity bound rather than
+  // the enforcement: the times are handed to preview_frames, whose own cap is
+  // what actually refuses too many. Images are the most context-expensive
+  // thing a tool returns, and that is where the reasoning for the number lives.
+  previewAt: z.array(z.number().min(0)).max(16).optional(),
 })
 
 /** What a caller supplies; the server mints id/createdAt/status. */
@@ -146,6 +166,17 @@ export const DecisionSchema: z.ZodType<Decision> = z.object({
 export function formatQuestionForChat(d: Decision): string {
   const lines = [d.question]
   if (d.detail) lines.push('', d.detail)
+  // Name the moments the frames came from. A human reading this in chat is
+  // being shown a contact sheet beside it, and a tile they cannot place in the
+  // video is a tile they cannot judge.
+  const at = d.refs?.previewAt
+  if (at?.length) {
+    lines.push(
+      '',
+      `Frames above are at ${at.map((t) => `${t.toFixed(1)}s`).join(', ')} ` +
+        `(open the editor to scrub around them).`,
+    )
+  }
   lines.push('')
   d.options.forEach((o, i) => {
     lines.push(`  ${i + 1}. ${o.label}${o.detail ? ` — ${o.detail}` : ''}`)
