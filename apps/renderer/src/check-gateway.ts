@@ -446,6 +446,125 @@ assert.match(
 )
 console.log('unknown args OK — rejected by name across the catalog, valid calls unaffected')
 
+// ---------- execute_batch: many calls, one round trip (plans/011 gap 8) ----------
+// The claim is narrow on purpose: a batch is a LATENCY tool, so what has to be
+// proved is that nothing else about it is different. Same executor, same
+// validation, same errors, and the paid door still shut.
+const batchScene = (
+  JSON.parse(
+    (await post('/api/agent/tools/add_scene/execute?format=json', {
+      projectId, name: 'Batch', duration: 6,
+    })).body,
+  ) as { data: { sceneId: string } }
+).data.sceneId
+
+// Order matters, and a later call must see an earlier one's work — which is
+// why each call submits separately rather than the batch composing one
+// envelope. `reorder_node` proves it: it can only move a node that call [0]
+// created, and only within the scene call [1] added a second node to.
+const built = JSON.parse(
+  (await post('/api/agent/tools/execute_batch/execute?format=json', {
+    calls: [
+      { name: 'add_text', args: { projectId, sceneId: batchScene, text: 'first', x: 100, y: 100 } },
+      { name: 'add_text', args: { projectId, sceneId: batchScene, text: 'second', x: 200, y: 200 } },
+      { name: 'add_arc', args: { projectId, sceneId: batchScene, x: 500, y: 500, rx: 80 } },
+      { name: 'get_scene', args: { projectId, sceneId: batchScene } },
+    ],
+  })).body,
+) as { data: { ran: number; failed: number | null; results: { name: string; text: string }[] } }
+assert.equal(built.data.ran, 4, 'every call in a clean batch must run')
+assert.equal(built.data.failed, null, 'and nothing must be reported as failed')
+assert.deepStrictEqual(
+  built.data.results.map((r) => r.name),
+  ['add_text', 'add_text', 'add_arc', 'get_scene'],
+  'results come back in the order the calls were given',
+)
+// The last call read the document, so it must already contain the three the
+// batch had just added — the proof that these are separate submits and not one
+// envelope applied at the end.
+const seen = JSON.parse(
+  (await post('/api/agent/tools/get_scene/execute?format=json', { projectId, sceneId: batchScene }))
+    .body,
+) as { data: { scene: { nodes: { id: string }[] } } }
+assert.equal(seen.data.scene.nodes.length, 3, 'a batch of three creators leaves three nodes')
+
+// A failure stops the batch, keeps what ran, and teaches exactly as the same
+// call would have alone.
+const stopped = await post('/api/agent/tools/execute_batch/execute', {
+  calls: [
+    { name: 'add_text', args: { projectId, sceneId: batchScene, text: 'ok', x: 10, y: 10 } },
+    { name: 'animate', args: { projectId, sceneId: batchScene, nodeId: 'nope_404', property: 'opacity', to: 1, start: 0, duration: 1 } },
+    { name: 'add_text', args: { projectId, sceneId: batchScene, text: 'never', x: 20, y: 20 } },
+  ],
+})
+assert.equal(stopped.status, 404, 'the batch reports the failing call\'s own status')
+assert.match(stopped.body, /call \[1\] animate failed/, 'and names which call failed, by position')
+assert.match(stopped.body, /not found in scene/, 'the underlying error survives verbatim')
+assert.match(stopped.body, /That scene has:/, 'including the part that names what does exist')
+assert.match(stopped.body, /Calls \[0\.\.0\] ran and are still applied/, 'what ran is reported')
+assert.match(stopped.body, /revert_to_version/, 'and the way to undo a half-applied batch is named')
+// Call [2] must not have run.
+const afterStop = JSON.parse(
+  (await post('/api/agent/tools/get_scene/execute?format=json', { projectId, sceneId: batchScene }))
+    .body,
+) as { data: { scene: { nodes: unknown[] } } }
+assert.equal(
+  afterStop.data.scene.nodes.length,
+  4,
+  'the call before the failure applied, the one after it did not',
+)
+
+// The credit gate, which is the reason this is checked here at all: a batch
+// must not become a way around the paid door. Refused BEFORE anything runs,
+// because refusing after a partial application would be worse than useless.
+const sneakyBatch = await post('/api/agent/tools/execute_batch/execute', {
+  calls: [
+    { name: 'add_text', args: { projectId, sceneId: batchScene, text: 'trojan', x: 30, y: 30 } },
+    { name: 'render_video', args: { projectId } },
+  ],
+})
+assert.equal(sneakyBatch.status, 403, 'a paid capability in a batch is refused')
+assert.match(sneakyBatch.body, /Nothing was run/, 'and refused before anything is applied')
+assert.match(sneakyBatch.body, /execute_paid/, 'naming the door it belongs to')
+const untouched = JSON.parse(
+  (await post('/api/agent/tools/get_scene/execute?format=json', { projectId, sceneId: batchScene }))
+    .body,
+) as { data: { scene: { nodes: unknown[] } } }
+assert.equal(untouched.data.scene.nodes.length, 4, 'the free call before it must NOT have run')
+
+// Structural refusals, also before anything runs.
+const selfBatch = await post('/api/agent/tools/execute_batch/execute', {
+  calls: [{ name: 'execute_batch', args: { calls: [] } }],
+})
+assert.equal(selfBatch.status, 400)
+assert.match(selfBatch.body, /cannot contain itself/, 'a nested batch is refused')
+
+const misspelled = await post('/api/agent/tools/execute_batch/execute', {
+  calls: [
+    { name: 'add_text', args: { projectId, sceneId: batchScene, text: 'x', x: 40, y: 40 } },
+    { name: 'add_txet', args: {} },
+  ],
+})
+assert.equal(misspelled.status, 404)
+assert.match(misspelled.body, /Nothing was run/, 'a misspelled name stops the batch before it starts')
+
+// And a batch is capped, because each call is its own document round trip.
+const tooMany = await post('/api/agent/tools/execute_batch/execute', {
+  calls: Array.from({ length: 51 }, () => ({
+    name: 'get_project',
+    args: { projectId },
+  })),
+})
+assert.equal(tooMany.status, 400, 'a batch past the cap is refused')
+
+// The orientation block has to mention it, or an agent never learns latency is
+// something it can spend less of.
+assert.match(instructions.body, /execute_batch/, 'instructions must name the batch executor')
+console.log(
+  'batch OK — order preserved and visible to later calls, first error stops it and teaches ' +
+    'verbatim, paid and nested and misspelled all refused before anything runs',
+)
+
 // ---------- rotation is radians, and says so ----------
 // `animate` reported `rotation 0 → 11.46` truthfully in run 4 and was wrong by
 // 25x: the agent sent degrees. The value is correct as far as the document is

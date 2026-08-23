@@ -192,10 +192,37 @@ Building three scenes took ~40 HTTP round trips. Scripts do not care;
 model-driven agents pay latency per call. Per-call error teaching is the
 argument against over-batching, so the middle ground:
 
-- [ ] A batch executor: apply an ordered list of free capability calls,
+- [x] A batch executor: apply an ordered list of free capability calls,
       stop at the first error, report which succeeded — keeping every error
       as teachable as it is today. Paid capabilities stay excluded, so the
-      paid-door permission split is untouched
+      paid-door permission split is untouched. **Done 2026-08-23** as
+      `execute_batch`, and the measurement corrected the framing:
+      **it saves round trips, not work.** Twelve `add_text` calls take the
+      same wall-clock either way — 286ms against 296ms, median of 7, both
+      climbing identically as the document grows — because every call still
+      reads the document and submits its own edit. That per-call submit is the
+      *reason* it is useful rather than a shortcut not taken: call *n* sees
+      call *n-1*'s work, which one composed envelope could not offer. What
+      collapses is the number of times the agent stops and waits.
+      Because there is no single envelope, it is **not a transaction**, and
+      the failure message says so and names `get_history`/`revert_to_version`
+      — undo turning out to be the thing that makes partial application
+      acceptable rather than alarming. Structural problems (a paid
+      capability, a nested batch, a misspelled name) are refused **before
+      anything runs**: refusing a `render_video` at position 5 after applying
+      four edits would be worse than not checking. Removing that pre-flight
+      fails the check, which is how it earned its place.
+      It lives in the catalog like any other capability, reaching the
+      executor through a new `ctx.runCapability` rather than importing it —
+      `AgentCtx` is already where everything a handler cannot do for itself
+      lives, and a direct import would close a loop through the catalog at
+      module load, where `ref()` and the duplicate-name check run.
+      **No reference syntax, deliberately.** An id made inside a batch is not
+      available to a later call in it, and that limit is self-evident at
+      authoring time — you cannot type a `sceneId` you have not been told.
+      The arithmetic decided it: without references, three scenes go from ~40
+      calls to 6; with them, to 3. A small expression language inside the
+      arguments is not worth the second three.
 
 ## Milestone run 9 — measuring what the first four gaps changed (2026-08-23)
 
@@ -287,8 +314,11 @@ and emits 24 coordinate pairs. Ranked by what each would have removed here:
       on every frame, in the one function the render loop passes through — so
       the check asserts the two agree across segment boundaries and between
       them. A copy nothing compares is a copy that diverges.
-- [ ] Batch execution (gap 8) — still worth having for the long tail, but it
+- [x] Batch execution (gap 8) — still worth having for the long tail, but it
       is now clearly the third-best fix for the cost it was ranked on.
+      **Done 2026-08-23**, and the ranking held: it makes those 48 calls
+      cheaper to *issue* without making them fewer, which is exactly why the
+      two above it came first.
 
 ### Confirmed, with a correction
 

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { spatialTools } from './tools-3d'
 import { animTools } from './tools-anim'
+import { batchTools } from './tools-batch'
 import { cameraTools } from './tools-camera'
 import { decisionTools } from './tools-decision'
 import { flowTools } from './tools-flow'
@@ -26,6 +27,7 @@ const ALL: Capability[] = [
   ...genTools,
   ...previewTools,
   ...decisionTools,
+  ...batchTools,
 ]
 
 const BY_NAME = new Map(ALL.map((c) => [c.name, c]))

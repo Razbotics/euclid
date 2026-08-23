@@ -195,10 +195,17 @@ This phase is that tool surface plus the rules three tools need.
   user message may contain *only* `tool_result` blocks — no text. The
   harness cannot piggyback status or human input on those turns, which is
   one more reason `ask_user` cannot cross the code boundary.
-- **`execute_batch` (plans/011) multiplies with PTC rather than competing.**
-  Each programmatic call is still a pause → HTTP round trip → resume
-  cycle and a separate DO submit; run 9's 48 calls under PTC would be one
-  model round trip but still 48 network cycles. The script computes the
-  batch, one call applies it. Keep it ranked where 011 ranked it.
+- **`execute_batch` (plans/011) multiplies with PTC rather than competing** —
+  and it **shipped 2026-08-23**, before Phase 2. Each programmatic call is
+  still a pause → HTTP round trip → resume cycle and a separate DO submit; run
+  9's 48 calls under PTC would be one model round trip but still 48 network
+  cycles. The script computes the batch, one call applies it.
+  Measuring it sharpened what PTC is for, too. A batch does the same server
+  work in the same time (12 calls, 286ms vs 296ms) — what it removes is the
+  agent stopping to wait. So the two save different things and stack: the
+  batch collapses round trips for calls whose arguments are already known,
+  and PTC collapses the *reasoning* turns for calls whose arguments have to
+  be computed from what the last call returned. Neither makes the DO faster,
+  and no phase here should claim it does.
 - Batch/PTC interaction with review gates is a non-issue by construction:
   free work is never gated, and everything gated is paid and direct-only.

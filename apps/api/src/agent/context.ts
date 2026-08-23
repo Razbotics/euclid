@@ -1,6 +1,8 @@
 import { findNode, type EuclidDoc, type EuclidNode, type Op } from '@euclid/dsl'
 import { AccessError, docOf, requireProjectAccess, submitOps } from '../shared'
 import type { Env } from '../env'
+import { getCapability } from './catalog'
+import { executeCapability } from './execute'
 import { CapabilityError, accessKind, type AgentCtx } from './types'
 
 /**
@@ -74,6 +76,21 @@ export function makeCtx(env: Env, userId: string, origin: string): AgentCtx {
         404,
         'not_found',
       )
+    },
+
+    capabilityInfo(name: string) {
+      const cap = getCapability(name)
+      return { exists: !!cap, costsCredits: !!cap?.costsCredits }
+    },
+
+    async runCapability(name: string, args: unknown) {
+      const out = await executeCapability(ctx, name, args, { allowPaid: false })
+      return {
+        name: out.name,
+        data: out.data,
+        text: out.text,
+        ...(out.image ? { image: out.image } : {}),
+      }
     },
   }
   return ctx

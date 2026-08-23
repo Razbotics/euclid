@@ -124,6 +124,13 @@ export function buildInstructions(): string {
     '  Most capabilities are callable straight from the one-line summary. Call',
     '  describe when the summary is not enough, or when execute rejects your args.',
     '',
+    ...wrap(
+      `When you already know every argument for several calls — populating a scene you ` +
+        `just created, animating a dozen nodes — ${ref('execute_batch')} runs them in order ` +
+        `in ONE round trip. Same executor, same validation, same errors; it only saves the ` +
+        `waiting. It is not a transaction and cannot reach a paid capability.`,
+    ),
+    '',
     'ORIENTATION',
     '  A project holds scenes; scenes play in sequence on one timeline; scenes',
     ...wrap(`hold nodes — ${nodePhrases('basic')}.`),

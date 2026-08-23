@@ -28,6 +28,29 @@ export interface AgentCtx {
   sceneOrThrow(doc: EuclidDoc, sceneId: string): EuclidDoc['scenes'][number]
   /** Node lookup, searching into groups. */
   nodeOrThrow(doc: EuclidDoc, sceneId: string, nodeId: string): EuclidNode
+  /**
+   * Does a capability exist, and does it spend credits — without running it.
+   *
+   * For a caller that must check a whole list *before* it starts: discovering
+   * a paid or misspelled name halfway through a batch would mean refusing
+   * after already changing the document.
+   */
+  capabilityInfo(name: string): { exists: boolean; costsCredits: boolean }
+  /**
+   * Run another capability by name, as `execute` would.
+   *
+   * Here rather than imported directly because the executor reads the catalog
+   * and the catalog is built from the tool files — a handler importing it back
+   * would close the loop at module load, where `ref()` and the duplicate-name
+   * check already run. `AgentCtx` is where everything a handler cannot do for
+   * itself already lives, so this is the seam that was waiting for it.
+   *
+   * **Free capabilities only**, and not negotiable from the caller's side:
+   * there is no `allowPaid` to pass. The paid door is a separate MCP tool so a
+   * standing approval on the free one can never cover a charge, and a batch
+   * that could reach `render_video` would be a way around exactly that.
+   */
+  runCapability(name: string, args: unknown): Promise<CapabilityResult & { name: string }>
 }
 
 /**

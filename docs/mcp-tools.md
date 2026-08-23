@@ -314,6 +314,27 @@ shape as `remove_asset`'s `force`.
   this shipped `kind: "forbidden"` on a 404 whose own message said "not
   found", which is exactly the lie the field exists to avoid.
 
+- **Several calls, one round trip** (plans/011 gap 8). `execute_batch` takes
+  `calls: [{name, args}…]` and runs them in order. It **saves round trips, not
+  work**: every call goes through the same executor, the same validation and
+  the same handlers, and each still reads the document and submits its own
+  edit — measured side by side, twelve calls take the same time either way, so
+  what collapses is how many times the agent stops and waits. That per-call
+  submit is not laziness but the reason a batch is useful: call *n* sees what
+  call *n-1* did, which one composed envelope could not offer.
+  Consequently **it is not a transaction** — a failure partway leaves earlier
+  calls applied, and the error says so and names `get_history` /
+  `revert_to_version`, which undo it in one call. The failing call's message
+  is reproduced verbatim with its index, so a batch is never a worse teacher
+  than the same call made alone. Structural problems — a paid capability, a
+  nested batch, a misspelled name — are refused **before anything runs**,
+  because refusing a `render_video` at position 5 after applying four edits
+  would be worse than not checking at all. There is deliberately **no way to
+  reference an earlier call's output**: you cannot type a `sceneId` you have
+  not been told yet, so create a scene in one call and populate it with a
+  batch. That is three scenes in six calls rather than forty, and the
+  alternative was a small expression language inside the arguments.
+
 ## Adding a capability
 
 One catalog entry in `apps/api/src/agent/tools-*.ts` — name, summary, prose

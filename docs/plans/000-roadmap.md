@@ -508,9 +508,16 @@ review, the batch executor, and the `flow_along` + `orbit_camera` warning.
       document keeps no memory of being a circle, which the check asserts —
       along with a rim frame at 2.00% against a centre frame at 0.00%, the
       only measurement that can tell a ring from a disc
+- [x] Batch execution: `execute_batch` (2026-08-23) — an ordered list of free
+      calls in one round trip, stopping at the first error and reporting what
+      ran. The measurement corrected the framing: it saves **round trips, not
+      work** (12 calls, 286ms vs 296ms), because each call still reads and
+      submits so that call *n* sees call *n-1*. Not a transaction, and the
+      failure says so and names the undo; paid, nested and misspelled calls
+      are refused before anything runs
 - [~] Camera/path interaction warning — the spatial-node-into-a-group case
       (created by, and closed with, draw-order) warns; the `flow_along` +
-      `orbit_camera` case is still open. The batch executor is still to do
+      `orbit_camera` case is still open
 - [x] **Milestone run 9 (2026-08-23)** — 36s Kepler's-second-law explainer,
       95 round trips, **zero failed calls** (runs 4 and 8 had 10 and 5).
       Draw-order came up unprompted and cost one call where run 8 rebuilt two
