@@ -554,14 +554,20 @@ What the eight actually bought is now a question for a milestone run.
       ignores the profile
 
 ## Parallel track: programmatic tool calling → plans/013-programmatic-tool-calling.md
-Proposed 2026-08-23. Lets the model call `execute` from inside a
-code-execution script (loops, filters, fan-out) instead of one round trip
-per call — the thing that makes a twenty-sample `sample_at` verification
-sweep affordable. MCP-connector tools are excluded from PTC categorically,
-so this rides the HTTP gateway through the external-agent harness; the MCP
-worker is unaffected. Phase 1 (structured `data` actually reaching callers,
-JSON-shaped errors under `format=json`, result contracts in `describe`) is
-additive and helps today's MCP clients before any harness exists.
+Proposed 2026-08-23. **Phase 1 shipped; Phases 2-3 deferred to v2
+(2026-08-26.)** PTC lets the model call `execute` from inside a code-execution
+script (loops, filters, fan-out) instead of one round trip per call.
+MCP-connector tools are excluded from it categorically, so it needs an agent
+harness owning the `/v1/messages` loop — a new application rather than an
+increment, which is what puts it in v2.
+The deferral got easier because `execute_batch` shipped in between and already
+collapses round trips for every call whose arguments are known up front. The
+irreducible gap is narrower than this plan assumed: loops with a data
+dependency, and filtering a large result before it reaches the context. Both
+real, neither measured — so it is deferred for want of evidence, not because
+it was judged not worth it. The plan lists what brings it back, including one
+unverified documentation check (whether Managed Agents supports
+`allowed_callers`) that would make Phase 2 dramatically cheaper.
 - [x] Phase 1: the structured half reaches the caller (2026-08-23). A failure
       under `?format=json` is now JSON — it used to be `text/plain` whichever
       format was asked for, so a caller that parses every reply crashed on
@@ -574,9 +580,11 @@ additive and helps today's MCP clients before any harness exists.
       omitted it while detection was pending. The MCP half was **deliberately
       not done** (see the plan): no reader needs it, and always-on
       `structuredContent` would cost the cheap-text non-negotiable
-- [ ] Phase 2: the PTC front door (custom-tool surface; `ask_user`,
-      `execute_paid`, `preview_frames` enforced direct-only)
-- [ ] Phase 3: idempotent retries + a measured milestone run
+- [~] Phase 2: the PTC front door (custom-tool surface; `ask_user`,
+      `execute_paid`, `preview_frames` enforced direct-only) — **deferred to
+      v2**, needs the agent harness
+- [~] Phase 3: idempotent retries + a measured milestone run — **deferred to
+      v2**, with Phase 2
 
 ## Parallel track: agent gateway → plans/008-mcp-gateway.md
 Started 2026-08-15. Collapses the agent surface onto one implementation: a

@@ -1,4 +1,13 @@
-# 013 — Programmatic tool calling (status: in progress)
+# 013 — Programmatic tool calling (status: Phase 1 done; Phases 2-3 deferred to v2)
+
+**Deferred 2026-08-26.** Phase 1 shipped and stays — it was built to be
+additive and serves any caller that reads a reply as data, including the
+editor. Phases 2 and 3 need an agent harness that owns the `/v1/messages`
+loop, and that is a new application rather than an increment, so it is v2
+work. What made the call easy is that the gap PTC closes turns out to be
+narrower than this plan assumed when it was written: `execute_batch`
+(plans/011 gap 8) shipped in between and already collapses round trips for
+every call whose arguments are known up front. See "What deferring costs".
 
 Proposed 2026-08-23, from reading the gateway against Anthropic's
 programmatic tool calling (PTC) docs. Under PTC the model writes a Python
@@ -57,6 +66,51 @@ The genuine fits:
   decided (run 9's 48-call motion was this shape before keyframe lists).
 - **Asset triage**: filter `list_assets` + `get_shots` across a library so
   the model reasons over five candidates instead of fifty.
+
+## What deferring costs, and what brings it back
+
+`execute_batch` landed after this plan was written and changes the arithmetic
+it was argued on. The comparison for Phase 2 is no longer "PTC versus one call
+at a time" — it is "PTC versus a batch", which is a much higher bar. A batch
+already covers every call whose arguments are known when the list is written,
+in one round trip.
+
+So the **irreducible** gap is two things, and only two:
+
+- **Loops with a data dependency** — call, read the result, decide the next
+  call, with no model turn in between. A batch cannot express this because it
+  is written before any of it runs; the same limit as its missing reference
+  syntax, recorded in plans/011 gap 8.
+- **Filtering a large result before it reaches the context** — the twenty-sample
+  `sample_at` sweep that returns only the violations. A batch runs the twenty
+  calls in one trip, but every reply still lands in the model's context, so the
+  sweep stays unaffordable for exactly the reason PTC would fix.
+
+Both are real and neither is *measured*. That is the honest state: this plan's
+fits were reasoned from the docs, not from a run.
+
+**What brings it back:**
+
+- A milestone run where one of the two gaps above costs something countable,
+  the way run 9 measured 48 of 95 calls on one missing capability. Deferring is
+  not "PTC is not worth it" — it is "nobody has paid for it yet".
+- Euclid needing to own the agent loop for product reasons anyway — headless
+  runs, billing, a UX that cannot be someone else's chat client. The harness
+  stops being a cost attributable to PTC at that point, and PTC comes free.
+- **Managed Agents supporting `allowed_callers`** — unverified, and one
+  documentation check. Anthropic hosts the loop and the container there, so if
+  the answer is yes, Phase 2 costs a fraction of what this plan assumes and the
+  deferral should be revisited immediately rather than in v2.
+- A client-side MCP harness exposing `allowed_callers` on the tools it
+  re-presents. The restriction is on the API's **MCP connector** specifically,
+  not on MCP as such — a harness that speaks MCP itself and passes those tools
+  through as ordinary custom tools is a different mechanism, and whether any
+  does this is unverified.
+
+**What deferring does not cost:** Phase 1 is merged and independent. JSON-shaped
+errors and published result contracts serve the editor and any code caller
+today, and they are what a harness would have needed first anyway — so nothing
+here has to be rebuilt if this comes back.
 
 ## Phase 1: The structured half reaches the caller   (status: done 2026-08-23)
 
@@ -125,7 +179,7 @@ external agent.
       result is a claim about a handler that assembles `data` by hand and
       nothing in the type system holds the two together.
 
-## Phase 2: The PTC front door   (status: not started — rides the external-agent harness)
+## Phase 2: The PTC front door   (status: deferred to v2 — needs an agent harness)
 
 The harness that drives the Claude API defines the gateway as custom tools.
 This phase is that tool surface plus the rules three tools need.
@@ -168,7 +222,7 @@ This phase is that tool surface plus the rules three tools need.
       `preview_frames` from code.* Any capability named in that paragraph
       goes through `ref()` like everywhere else.
 
-## Phase 3: Scripted-retry safety and the measurement   (status: not started)
+## Phase 3: Scripted-retry safety and the measurement   (status: deferred to v2, with Phase 2)
 
 - [ ] **Idempotency for scripted retries.** The docs note the model's code
       "typically retries" after a `TimeoutError` — but a timed-out call may
