@@ -553,6 +553,24 @@ What the eight actually bought is now a question for a milestone run.
       and the same assertion fails, reporting (600,400), when the sampler
       ignores the profile
 
+## Parallel track: review surfaces → plans/014-review-surfaces.md
+Proposed 2026-08-26 from **milestone run 10** ("A sine wave is a circle,
+unrolled" — 13s, 29 gateway calls, 1 failed, 2 credits spent and none wasted).
+Five findings, ranked by what they cost, and the theme is one thing: *what the
+agent is shown about its own work is wrong in specific, nameable ways.* The
+top two are the dangerous ones because the surface is confidently unhelpful
+rather than silent — a bare `preview_frames` returned **2 tiles for a 13s
+video** (three transitions sharing 0→12s collapse to one key moment), and
+`get_project` flagged `tail 3.62s (long)` on a scene still animating, whose
+documented remedy would have truncated the animation. The run also measured
+`execute_batch` removing **8 of 31 round trips (~26%)** and confirmed the
+`flow_along` speed profile as necessary rather than decorative.
+- [ ] Key moments collapse when transitions share timing
+- [ ] The pacing flag is blind to motion, and recommends a truncating fix
+- [ ] Thin strokes vanish from the contact sheet
+- [ ] `write_on` is the only transition with no `easing` — decide, or document
+- [ ] "reversing partway" fires on a profile that never reverses
+
 ## Parallel track: programmatic tool calling → plans/013-programmatic-tool-calling.md
 Proposed 2026-08-23. **Phase 1 shipped; Phases 2-3 deferred to v2
 (2026-08-26.)** PTC lets the model call `execute` from inside a code-execution
