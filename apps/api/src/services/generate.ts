@@ -2,7 +2,9 @@ import { slugify } from '../shared'
 import { adjustCredits, getBalance } from '../billing'
 import { mayAccess, requireProjectAccess } from '../shared'
 import {
+  checkRequest,
   extensionFor,
+  priceOf,
   falModel,
   falProvider,
   readOutput,
@@ -11,7 +13,7 @@ import {
   type GenKind,
   type GenerationRequest,
 } from '../fal'
-import { storeAsset } from './assets'
+import { requireAsset, storeAsset } from './assets'
 import { PlanGateError, chargePlanBudget, refundPlanBudget, reviewModeOf } from './plan'
 import type { Env } from '../env'
 
@@ -90,6 +92,155 @@ const INLINE_WAIT_MS = 20_000
 const POLL_EVERY_MS = 1_500
 
 /**
+ * fal fetches the reference image itself, and project assets are not publicly
+ * readable — the read route is behind the same auth as everything else. So an
+ * asset id cannot be handed over as a link; the bytes are inlined as a data
+ * URL instead.
+ *
+ * This is what makes the grounding recipe work at all (docs/recipes.md): the
+ * image you want to ground on is almost always one this system just generated,
+ * which means it is an asset, not a URL. A signed asset URL (plans/003 §5)
+ * would be the cheaper mechanism and is still worth having — it would replace
+ * the body of this function and nothing else.
+ *
+ * The cap is on the *encoded* size, since that is what the request carries.
+ */
+const MAX_INLINE_BYTES = 3 * 1024 * 1024
+
+function toBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf)
+  // Chunked: String.fromCharCode(...bytes) on a multi-megabyte array blows the
+  // argument limit, and does it as a RangeError nobody would connect to size.
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  }
+  return btoa(binary)
+}
+
+async function resolveImageUrl(
+  env: Env,
+  userId: string,
+  ref: string,
+): Promise<string> {
+  if (/^(https?|data):/i.test(ref)) return ref
+
+  let asset
+  try {
+    asset = await requireAsset(env, ref, userId)
+  } catch {
+    throw new GenerationError(
+      'image_not_found',
+      `imageUrl "${ref}" is neither a URL nor an asset you can read. Pass a public URL, ` +
+        `a data: URL, or the id of an image asset — list_assets shows the ids`,
+      404,
+    )
+  }
+  if (asset.kind !== 'image') {
+    throw new GenerationError(
+      'image_wrong_kind',
+      `asset ${ref} is a ${asset.kind}, and a generation can only be grounded on an image. ` +
+        `To ground on a moment of a video, capture the frame first`,
+      400,
+    )
+  }
+  if (asset.bytes > MAX_INLINE_BYTES) {
+    throw new GenerationError(
+      'image_too_large',
+      `asset ${ref} is ${Math.round(asset.bytes / 1024)}KB, over the ${MAX_INLINE_BYTES / 1024}KB ` +
+        `inline limit — it has to travel to the provider inside the request. Use a smaller image`,
+      413,
+    )
+  }
+  const object = await env.ASSETS.get(asset.r2_key)
+  if (!object) {
+    throw new GenerationError('image_missing', `asset ${ref} has no stored bytes`, 410)
+  }
+  return `data:${asset.mime};base64,${toBase64(await object.arrayBuffer())}`
+}
+
+/**
+ * The rows behind reference videos, with the rule that they be assets.
+ *
+ * A URL would do for fal, but not for us: a per-second model is priced from the
+ * reference's length, and only a probed asset knows its length. So an id is
+ * required, and one whose probe has not run yet is refused with "ask again"
+ * rather than priced as zero seconds.
+ */
+async function loadVideoRefs(
+  env: Env,
+  userId: string,
+  model: FalModel,
+  ids: string[],
+): Promise<{ id: string; durationSec: number }[]> {
+  const out: { id: string; durationSec: number }[] = []
+  for (const id of ids) {
+    if (/^(https?|data):/i.test(id)) {
+      throw new GenerationError(
+        'reference_needs_asset',
+        `referenceVideos takes asset ids, not URLs — the price depends on each video's length, ` +
+          `and only a stored, probed file has one. Import or upload it first`,
+        400,
+      )
+    }
+    let asset
+    try {
+      asset = await requireAsset(env, id, userId)
+    } catch {
+      throw new GenerationError('reference_not_found', `reference video ${id} is not an asset you can read — see list_assets`, 404)
+    }
+    if (asset.kind !== 'video') {
+      throw new GenerationError('reference_wrong_kind', `reference ${id} is a ${asset.kind}; referenceVideos takes videos`, 400)
+    }
+    if (!asset.duration_sec) {
+      throw new GenerationError(
+        'reference_not_probed',
+        `reference video ${id} has not been measured yet — probing runs in the background after the file lands. Ask again shortly`,
+        409,
+      )
+    }
+    const range = model.takesReferences
+    if (range && (asset.duration_sec < range.videoSecMin || asset.duration_sec > range.videoSecMax)) {
+      throw new GenerationError(
+        'reference_bad_length',
+        `reference video ${id} is ${asset.duration_sec.toFixed(2)}s; ${model.name} takes ` +
+          `${range.videoSecMin}–${range.videoSecMax}s per video. Join short shots into one reference, or trim a long one`,
+        400,
+      )
+    }
+    out.push({ id, durationSec: asset.duration_sec })
+  }
+  return out
+}
+
+/** A reference, made reachable: URLs pass through, assets go to fal's CDN. */
+async function uploadReference(
+  env: Env,
+  userId: string,
+  provider: ReturnType<typeof falProvider>,
+  ref: string,
+  kind: 'image' | 'video',
+): Promise<string> {
+  if (/^(https?|data):/i.test(ref)) return ref
+  let asset
+  try {
+    asset = await requireAsset(env, ref, userId)
+  } catch {
+    throw new GenerationError('reference_not_found', `reference ${ref} is not an asset you can read — see list_assets`, 404)
+  }
+  if (asset.kind !== kind) {
+    throw new GenerationError('reference_wrong_kind', `reference ${ref} is a ${asset.kind}, expected ${kind}`, 400)
+  }
+  const object = await env.ASSETS.get(asset.r2_key)
+  if (!object) throw new GenerationError('reference_missing', `asset ${ref} has no stored bytes`, 410)
+  try {
+    return await provider.upload(await object.arrayBuffer(), asset.mime, `${asset.id}.${asset.mime.split('/')[1] ?? 'bin'}`)
+  } catch (e) {
+    throw new GenerationError('reference_upload_failed', (e as Error).message, 502)
+  }
+}
+
+/**
  * Submit a generation, debit for it, and wait briefly for the result.
  *
  * Credits are taken up front because the price is a property of the *model*,
@@ -108,6 +259,12 @@ export async function startGeneration(
     model: string
     prompt: string
     imageUrl?: string
+    strength?: number
+    /** Asset ids or URLs, in @Image1… order. */
+    referenceImages?: string[]
+    /** Video asset ids, in @Video1… order — ids only, since the price needs their length. */
+    referenceVideos?: string[]
+    resolution?: string
     aspectRatio?: string
     durationSec?: number
     path?: string
@@ -124,6 +281,34 @@ export async function startGeneration(
     model = falModel(args.model)
   } catch (e) {
     throw new GenerationError('unknown_model', (e as Error).message, 400)
+  }
+
+  // Reference videos are looked up first, and only in the database: their
+  // lengths are part of the price and part of what checkRequest enforces, and
+  // reading a row costs nothing, where reading the bytes does.
+  const videoRefs = await loadVideoRefs(env, userId, model, args.referenceVideos ?? [])
+  const referenceVideoSec = videoRefs.length
+    ? videoRefs.reduce((sum, v) => sum + v.durationSec, 0)
+    : undefined
+
+  // Checked here, against the raw arguments, so a combination the model cannot
+  // accept is refused before the plan budget is drawn down or any reference is
+  // read out of R2. `submit` checks it again at the seam.
+  const raw: GenerationRequest = {
+    prompt: args.prompt,
+    ...(args.imageUrl ? { imageUrl: args.imageUrl } : {}),
+    ...(args.strength !== undefined ? { strength: args.strength } : {}),
+    ...(args.referenceImages?.length ? { referenceImages: args.referenceImages } : {}),
+    ...(videoRefs.length ? { referenceVideos: videoRefs.map((v) => v.id) } : {}),
+    ...(referenceVideoSec !== undefined ? { referenceVideoSec } : {}),
+    ...(args.resolution ? { resolution: args.resolution } : {}),
+    ...(args.aspectRatio ? { aspectRatio: args.aspectRatio } : {}),
+    ...(args.durationSec ? { durationSec: args.durationSec } : {}),
+  }
+  try {
+    checkRequest(model, raw)
+  } catch (e) {
+    throw new GenerationError('invalid_request', (e as Error).message, 400)
   }
 
   if (args.revises) {
@@ -149,7 +334,22 @@ export async function startGeneration(
     }
   }
 
-  const cost = model.credits
+  // Read before anything is charged: resolving an asset id can fail (wrong
+  // kind, too large, not readable), and a failure after the plan drawdown
+  // below would strand budget that only `submit` knows how to refund.
+  const imageUrl = args.imageUrl
+    ? await resolveImageUrl(env, userId, args.imageUrl)
+    : undefined
+  // References go to fal's CDN rather than inline: a video is megabytes, and
+  // a reference photo is routinely over the inline ceiling too.
+  const referenceImages = await Promise.all(
+    (args.referenceImages ?? []).map((ref) => uploadReference(env, userId, provider, ref, 'image')),
+  )
+  const referenceVideos = await Promise.all(
+    videoRefs.map((v) => uploadReference(env, userId, provider, v.id, 'video')),
+  )
+
+  const cost = priceOf(model, raw)
   const balance = await getBalance(env, userId)
   if (balance < cost) {
     throw new GenerationError('insufficient_credits', 'not enough credits', 402, {
@@ -171,8 +371,11 @@ export async function startGeneration(
   }
 
   const req: GenerationRequest = {
+    ...raw,
+    ...(imageUrl ? { imageUrl } : {}),
+    ...(referenceImages.length ? { referenceImages } : {}),
+    ...(referenceVideos.length ? { referenceVideos } : {}),
     prompt: args.prompt,
-    ...(args.imageUrl ? { imageUrl: args.imageUrl } : {}),
     ...(args.aspectRatio ? { aspectRatio: args.aspectRatio } : {}),
     ...(args.durationSec ? { durationSec: args.durationSec } : {}),
     ...(args.extra ? { extra: args.extra } : {}),
@@ -305,7 +508,11 @@ export async function collectGeneration(
   try {
     const bytes = await provider.fetchBytes(output.url)
     const ext = extensionFor(output.mime, model.kind)
-    const name = suggestedPath ?? `/${model.kind}s/${slugify(job.prompt ?? model.name) || model.name}.${ext}`
+    // Capped: a slug of the whole prompt made 491-character paths for the
+    // long reference prompts, which then overflowed every surface that names
+    // the file (a review question refused them outright).
+    const slug = slugify(job.prompt ?? model.name).slice(0, 60).replace(/-+$/, '')
+    const name = suggestedPath ?? `/${model.kind}s/${slug || model.name}.${ext}`
     // Provenance sets the initial review status (plans/010): a generated file
     // is born pending while the project is in review mode — judged at collect
     // time, since that is when the file exists to be judged.

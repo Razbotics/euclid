@@ -297,6 +297,8 @@ interface Item {
   labelTexts?: Text[]
   /** image only: the sprite, and the box it is cropped to when fit is `cover` */
   imageSprite?: Sprite
+  /** video only, with `holdVideoFrames`: the last frame drawn, shown while the next decodes */
+  heldVideoFrame?: Texture
   cropMask?: Graphics
   /** emphasis marker, drawn behind the node's content */
   highlight?: Graphics
@@ -335,6 +337,14 @@ export class EuclidStage {
   private imageCache = new Map<string, Texture | 'pending'>()
   /** Keyed by `assetId@second`, so scrubbing back to a time reuses its frame. */
   private videoCache = new Map<string, Texture | 'pending'>()
+  /**
+   * Decoded frames kept at once. Playback asks for a new millisecond every
+   * tick, and an uncapped cache kept every one of them — ~900 bitmaps for a
+   * 15s clip. Evicting is safe for export: a missing key is simply fetched
+   * again and `whenIdle()` waits for it.
+   */
+  private static readonly VIDEO_CACHE_MAX = 90
+  private holdVideoFrames: boolean
   private pendingTex = new Set<Promise<unknown>>()
   private currentSceneId: string | null = null
   /** The 3D half of the camera while a spatial scene is being drawn; null when flat. */
@@ -355,11 +365,25 @@ export class EuclidStage {
       texProvider?: TexProvider
       imageProvider?: ImageProvider
       videoProvider?: VideoProvider
+      /**
+       * Editor playback only. While a video frame is still decoding, keep the
+       * clip's previous frame on screen instead of drawing nothing.
+       *
+       * Off by default, and never on for export or `preview_frames`: those wait
+       * for `whenIdle()` before capturing, so every frame they keep is the exact
+       * frame for its time and this option would change nothing but the risk.
+       * In the editor, playback asks for a new frame every tick and decoding
+       * cannot keep up, so without it a playing video is a black canvas. The
+       * settled picture for a given (document, time) is unchanged either way —
+       * this only decides what is shown in the milliseconds before it arrives.
+       */
+      holdVideoFrames?: boolean
     },
   ) {
     this.texProvider = opts?.texProvider ?? null
     this.imageProvider = opts?.imageProvider ?? null
     this.videoProvider = opts?.videoProvider ?? null
+    this.holdVideoFrames = opts?.holdVideoFrames ?? false
     root.addChild(this.bg)
     root.addChild(this.layer)
     root.addChild(this.overlay)
@@ -1293,10 +1317,21 @@ export class EuclidStage {
     const sourceSec = videoSourceTime(node, this.localT)
     if (sourceSec === null) {
       sprite.visible = false
+      item.heldVideoFrame = undefined
       return
     }
-    const texture = this.videoFrame(node.assetId, sourceSec)
-    if (!texture) {
+    // Under hold, a frame that arrives late still becomes this node's picture.
+    // During playback *every* frame arrives late — the playhead has moved on by
+    // the time it decodes, so its exact key is never asked for again — and
+    // holding only on-time frames left every shot after the first black.
+    const fresh = this.videoFrame(
+      node.assetId,
+      sourceSec,
+      this.holdVideoFrames ? (tex) => { item.heldVideoFrame = tex } : undefined,
+    )
+    if (fresh && this.holdVideoFrames) item.heldVideoFrame = fresh
+    const texture = fresh ?? (this.holdVideoFrames ? item.heldVideoFrame : null)
+    if (!texture || texture.destroyed) {
       sprite.visible = false
       return
     }
@@ -1310,7 +1345,7 @@ export class EuclidStage {
    * 1.2s must not decode twice, and a document evaluated at the same `t` must
    * land on the same key or the frame cache would never hit.
    */
-  private videoFrame(assetId: string, sourceSec: number): Texture | null {
+  private videoFrame(assetId: string, sourceSec: number, onReady?: (tex: Texture) => void): Texture | null {
     const key = `${assetId}@${Math.round(sourceSec * 1000)}`
     const cached = this.videoCache.get(key)
     if (cached && cached !== 'pending') return cached
@@ -1320,6 +1355,8 @@ export class EuclidStage {
       .getFrame(assetId, sourceSec)
       .then((tex) => {
         this.videoCache.set(key, tex)
+        onReady?.(tex)
+        this.evictVideoFrames()
       })
       .catch(() => {
         this.videoCache.delete(key)
@@ -1327,6 +1364,23 @@ export class EuclidStage {
       .finally(() => this.pendingTex.delete(p))
     this.pendingTex.add(p)
     return null
+  }
+
+  /** Drop the oldest decoded frames past the cap, sparing any a node is holding on screen. */
+  private evictVideoFrames(): void {
+    const held = new Set<Texture>()
+    for (const item of this.items.values()) {
+      if (item.heldVideoFrame) held.add(item.heldVideoFrame)
+      // A sprite may still be showing a frame between updates; destroying the
+      // texture under it would crash the next render rather than blank it.
+      if (item.imageSprite) held.add(item.imageSprite.texture)
+    }
+    for (const [key, tex] of this.videoCache) {
+      if (this.videoCache.size <= EuclidStage.VIDEO_CACHE_MAX) break
+      if (tex === 'pending' || held.has(tex)) continue
+      this.videoCache.delete(key)
+      tex.destroy(true)
+    }
   }
 
   /**

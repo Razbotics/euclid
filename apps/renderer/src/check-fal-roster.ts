@@ -109,6 +109,9 @@ const ALL: { name: string; kind: string }[] = [
   { name: 'flux-pro', kind: 'image' },
   { name: 'ltx-video', kind: 'video' },
   { name: 'kling-video', kind: 'video' },
+  { name: 'flux-i2i', kind: 'image' },
+  { name: 'ltx-video-i2v', kind: 'video' },
+  { name: 'kling-video-i2v', kind: 'video' },
   { name: 'stable-audio', kind: 'audio' },
   { name: 'trellis', kind: 'model' },
   { name: 'hunyuan3d', kind: 'model' },
@@ -120,11 +123,45 @@ if (targets.length === 0) {
   process.exit(1)
 }
 
+/** The image-conditioned entries, which need something to be conditioned on. */
+const grounded = (name: string) => name.endsWith('-i2i') || name.endsWith('-i2v')
+
 const needsSeed = targets.some((m) => m.kind === 'model')
 const seed = needsSeed ? await seedImageUrl() : ''
 if (needsSeed) console.log(`seed image for image-to-3D: ${seed.slice(0, 80)}…\n`)
 
 const projectId = (await run('create_project', { name: 'Fal Roster Check' })).data.id
+// Review mode is on by default (plans/010), and it gates every paid generation
+// behind an approved plan. This script is testing the provider, not the review
+// lifecycle — check-review.ts owns that — so it opts out explicitly.
+await run('set_review_mode', { projectId, enabled: false })
+/**
+ * What the grounded models are grounded ON: a still generated into this very
+ * project, referenced by **asset id**.
+ *
+ * Deliberately not a public URL like the 3D seed above. An asset id is the case
+ * the recipe actually needs (docs/recipes.md — the reference is nearly always a
+ * frame this system just made), and it is the harder one: the bytes are private,
+ * so they have to be read out of R2 and inlined as a data URL before fal ever
+ * sees them. Passing a URL here would leave that path untested.
+ */
+let groundAsset = ''
+if (targets.some((m) => grounded(m.name))) {
+  const seedGen = await run(
+    'generate_image',
+    {
+      projectId,
+      model: 'flux-schnell',
+      prompt: 'a red ceramic teapot on a pale grey table, plain background, soft studio light',
+      path: '/images/ground.jpg',
+    },
+    true,
+  )
+  groundAsset = seedGen.data.assetId
+  if (!groundAsset) throw new Error(`grounding seed did not finish: ${seedGen.text}`)
+  console.log(`grounding reference (project asset): ${groundAsset}\n`)
+}
+
 const rows: string[] = []
 let failures = 0
 
@@ -134,7 +171,18 @@ for (const m of targets) {
   let line = `${m.name.padEnd(14)} ${m.kind.padEnd(6)}`
   try {
     const args: Record<string, unknown> =
-      m.kind === 'model'
+      grounded(m.name)
+        ? {
+            projectId,
+            model: m.name,
+            imageUrl: groundAsset,
+            prompt:
+              m.kind === 'image'
+                ? 'the same teapot, but glazed deep blue'
+                : 'the camera pushes slowly towards the teapot',
+            ...(m.name === 'flux-i2i' ? { strength: 0.6 } : {}),
+          }
+        : m.kind === 'model'
         ? { projectId, model: m.name, imageUrl: seed }
         : m.kind === 'audio'
           ? { projectId, model: m.name, prompt: 'a warm ambient synth pad, slow swell', durationSec: 10 }

@@ -255,6 +255,53 @@ shape as `remove_asset`'s `force`.
   slower ones come back `pending` with a job id. **`get_generation_status` is
   what advances a job** — there is no background worker, so asking is
   collecting. Polling is idempotent and a failure refunds in full.
+- **Grounding is a model choice, not a flag** (2026-09-15). `generate_image`
+  and `generate_video` take an `imageUrl`, but only the image-conditioned
+  entries in the roster accept one — `flux-i2i`, `ltx-video-i2v`,
+  `kling-video-i2v`. Handing an `imageUrl` to a text-to-image endpoint is
+  **refused**, because fal would accept the call and ignore the field: the
+  result is a good picture of the wrong thing, which costs credits and looks
+  like success. The same rule refuses `aspectRatio` on a grounded model (the
+  output takes the reference's shape) and `strength` anywhere but
+  image-to-image. One function, `checkRequest` in `fal.ts`, holds all of it and
+  runs twice — in the capability layer before any budget is drawn down, and
+  again inside `submit` so the seam cannot be bypassed.
+- **`imageUrl` accepts an asset id**, and that is the normal case: the
+  reference is nearly always a still this system just generated. Project assets
+  are not publicly readable and fal fetches the URL itself, so an asset is read
+  from R2 and **inlined as a data URL** (3MB ceiling, image kinds only). A
+  signed asset URL (plans/003 §5) would replace that mechanism and nothing
+  else. `generate_3d` takes the same argument with the same meaning — it used
+  to demand a public URL.
+- **A post link is a second front door** (2026-09-17). `import_social_video`
+  reads a post through SocialCrawl and downloads the video *in the same call*,
+  because the only link a login-gated post comes with is signed and expires
+  within the hour. The result is an ordinary video asset, so `get_shots` and
+  everything after it works unchanged. Instagram only for now.
+- **Some models are priced by what they make** (2026-09-17). The Seedance
+  entries bill in **tokens** — width × height × seconds × 24 / 1024, plus
+  reference video at 0.6x — at a per-endpoint price read from fal's pricing
+  API, so a roster entry may carry a `price(req)` alongside its fixed
+  `credits`. The family differs only in that unit price: `seedance-2.5-ref`
+  is $0.0214 per 1000 tokens, `seedance-2.0-ref` $0.014, `seedance-2.0-mini-ref` $0.007, so a 5s 480p
+  test costs ~$0.34 on mini against ~$1.04 on 2.5. (Pricing from the rounded
+  per-second figures on fal's model pages overcharged by ~6%.) Mini is capped
+  at 9 reference images and 4–15s; out-of-range lengths are refused rather
+  than clamped, since a clamp bills a different clip from the one asked for. A `propose_plan` asset item for such a model takes
+  `durationSec` / `resolution` and is priced from them; without them the
+  typical-call figure (10s at 480p) stands in, which budgeted a 15s 2.5 clip
+  at 313 credits against a real 469 — and the gate then refused the call the
+  plan was made for. `credits` stays the *typical* call, which is what a plan estimate
+  multiplies; the budget gate draws down the real price, so an underestimated
+  plan is refused at the call that overruns it rather than overspent.
+  `durationSec` is required on such a model: "auto" cannot be priced.
+- **References are named in the prompt** and move by upload, not inline.
+  `referenceImages` / `referenceVideos` become @Image1… / @Video1… in the order
+  passed; project assets are put on fal's CDN (an unguessable public URL — the
+  same exposure as sending the bytes for inference). Reference videos must be
+  asset ids, because their length is part of the price, and each must be
+  1.8–30.2s. **The clip being cloned is never a reference** — see
+  docs/recipes.md; pass per-shot control tiles instead.
 - **Every generated kind now reaches the stage**, by its own door: a still with
   `add_image`, a clip with `add_video`, a model with `import_mesh` (which
   decimates it to fit the document), and music onto a lane with

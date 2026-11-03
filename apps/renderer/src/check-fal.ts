@@ -39,6 +39,10 @@ const balance = async (): Promise<number> => {
 }
 
 const projectId = (await ok('create_project', { name: 'Fal Check' })).data.id
+// Review mode is on by default (plans/010), and it gates every paid generation
+// behind an approved plan. This script is testing the provider, not the review
+// lifecycle — check-review.ts owns that — so it opts out explicitly.
+await ok('set_review_mode', { projectId, enabled: false })
 
 // ---------- 1. an image really arrives, and is really a file ----------
 const before = await balance()
@@ -130,6 +134,65 @@ assert.equal(unknown.status, 400, 'an unknown model is refused')
 
 const noImage = await run('generate_3d', { projectId, model: 'trellis' }, true)
 assert.equal(noImage.status, 400, 'image-to-3D without an image is refused before it costs anything')
+
+// ---------- 6. grounding: what a model will and will not accept ----------
+// All free — every one of these is refused before fal is contacted, which is
+// the property under test as much as the wording is. The paid half (a real
+// grounded generation) lives in check-fal-roster.ts.
+const beforeRefusals = await balance()
+const groundTextOnly = await run(
+  'generate_image',
+  { projectId, prompt: 'x', model: 'flux-schnell', imageUrl: gen.data.assetId },
+  true,
+)
+assert.equal(
+  groundTextOnly.status,
+  400,
+  'a text-only model handed an imageUrl must be refused, not quietly ignore it',
+)
+assert.match(
+  groundTextOnly.body,
+  /flux-i2i/,
+  `the refusal must name a model that does take one: ${groundTextOnly.body}`,
+)
+
+const groundNoImage = await run('generate_image', { projectId, prompt: 'x', model: 'flux-i2i' }, true)
+assert.equal(groundNoImage.status, 400, 'an image-to-image model with no imageUrl is refused')
+
+const groundAspect = await run(
+  'generate_image',
+  { projectId, prompt: 'x', model: 'flux-i2i', imageUrl: gen.data.assetId, aspectRatio: '16:9' },
+  true,
+)
+assert.equal(
+  groundAspect.status,
+  400,
+  'aspectRatio on a model that takes its shape from the reference must be refused, not ignored',
+)
+
+const groundStrength = await run(
+  'generate_video',
+  { projectId, prompt: 'x', model: 'ltx-video-i2v', imageUrl: gen.data.assetId, strength: 0.5 },
+  true,
+)
+assert.equal(groundStrength.status, 400, 'strength on an image-to-video model is refused')
+
+const groundMissing = await run(
+  'generate_image',
+  { projectId, prompt: 'x', model: 'flux-i2i', imageUrl: 'ast_nope' },
+  true,
+)
+assert.equal(groundMissing.status, 404, 'an imageUrl naming nothing is refused')
+assert.match(groundMissing.body, /list_assets/, 'and says where the ids come from')
+
+// Not one of the five refusals above reached fal, so none of them may have
+// moved the balance. This is the assertion the others exist to protect: a
+// refusal that charged would be worse than one that never fired.
+assert.equal(
+  await balance(),
+  beforeRefusals,
+  'refused combinations must never cost credits',
+)
 
 // The doc has to be honest that a generated file is not yet in the video.
 const described = await fetch(`${API}/api/agent/tools/describe`, {

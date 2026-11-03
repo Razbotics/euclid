@@ -31,6 +31,7 @@ Two kinds of content live here:
 | [dev-setup.md](dev-setup.md) | Local environment, commands, verification tools |
 | [mcp-tools.md](mcp-tools.md) | The agent-facing tool surface and its semantics |
 | [market.md](market.md) | Competitive landscape, monetization evidence, strategy |
+| [recipes.md](recipes.md) | Working procedures for generated video: reel cloning, grounding, how many passes |
 
 | Plan | Scope |
 |---|---|

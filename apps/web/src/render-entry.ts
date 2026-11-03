@@ -53,28 +53,47 @@ async function videoFor(assetId: string): Promise<HTMLVideoElement> {
 }
 
 const snapshotCanvas = document.createElement('canvas')
+/** Per asset, the tail of its seek queue. */
+const videoQueue = new Map<string, Promise<unknown>>()
 
 const preloadedVideo: VideoProvider = {
+  /**
+   * Seeks on one element run one at a time, each followed by its own copy.
+   *
+   * Two nodes can play the same asset on the same frame — a cut between two
+   * slices of one clip whose times round across the boundary (a slice ending
+   * at 7.5002s, the next starting at 7.50s). Both requests used to seek the one
+   * <video> at once; the second assignment of `onseeked` replaced the first,
+   * so the first promise never settled, `whenIdle()` never resolved, and the
+   * export hung forever on that frame. Queued, every request still gets its
+   * exact frame — unlike the editor, nothing here may be skipped.
+   */
   async getFrame(assetId: string, sourceSec: number) {
     const el = await videoFor(assetId)
     // Clamp rather than fail: a document may ask past the end of a clip whose
     // real duration differs from what was recorded when it was placed.
     const want = Math.max(0, Math.min(sourceSec, Math.max(0, el.duration - 1e-3)))
-    if (Math.abs(el.currentTime - want) > 1e-4) {
-      await new Promise<void>((resolve, reject) => {
-        el.onseeked = () => resolve()
-        el.onerror = () => reject(new Error(`seek failed on ${assetId}`))
-        el.currentTime = want
-      })
+    const run = async (): Promise<Texture> => {
+      if (Math.abs(el.currentTime - want) > 1e-4) {
+        await new Promise<void>((resolve, reject) => {
+          el.onseeked = () => resolve()
+          el.onerror = () => reject(new Error(`seek failed on ${assetId}`))
+          el.currentTime = want
+        })
+      }
+      snapshotCanvas.width = el.videoWidth
+      snapshotCanvas.height = el.videoHeight
+      const g = snapshotCanvas.getContext('2d')!
+      g.drawImage(el, 0, 0)
+      // A fresh bitmap per frame: a texture sharing the canvas would change
+      // under the renderer the moment the next frame is drawn into it.
+      const bitmap = await createImageBitmap(snapshotCanvas)
+      return Texture.from(bitmap)
     }
-    snapshotCanvas.width = el.videoWidth
-    snapshotCanvas.height = el.videoHeight
-    const g = snapshotCanvas.getContext('2d')!
-    g.drawImage(el, 0, 0)
-    // A fresh bitmap per frame: a texture sharing the canvas would change
-    // under the renderer the moment the next frame is drawn into it.
-    const bitmap = await createImageBitmap(snapshotCanvas)
-    return Texture.from(bitmap)
+    const tail = videoQueue.get(assetId) ?? Promise.resolve()
+    const next = tail.then(run, run)
+    videoQueue.set(assetId, next.catch(() => undefined))
+    return next
   },
 }
 

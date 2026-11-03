@@ -25,6 +25,7 @@ behavior and leaves the docs stale is incomplete. Concretely:
 | Architecture, a seam, a core decision | `docs/architecture.md` |
 | Commands, env vars, ports, setup, tooling | `docs/dev-setup.md` |
 | An MCP tool's name, args, or semantics | `docs/mcp-tools.md` |
+| A working procedure for generation (grounding, control images) | `docs/recipes.md` |
 | Finished plan work | flip `- [ ]` → `- [x]` in the plan file |
 | Finished a whole phase | mark the phase `(status: done)`, update `000-roadmap.md` |
 | Started significant new work | new plan `docs/plans/NNN-short-name.md` |

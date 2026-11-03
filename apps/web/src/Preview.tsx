@@ -25,9 +25,31 @@ const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8787'
  * original, so what an agent checks and what ships stay the same pixels.
  */
 const videoEls = new Map<string, Promise<HTMLVideoElement>>()
-const snapshot = document.createElement('canvas')
+/** Per asset: the newest request, and the tail of the seek queue. */
+const videoLatest = new Map<string, number>()
+const videoQueue = new Map<string, Promise<unknown>>()
+let videoRequestSeq = 0
+
+function seek(el: HTMLVideoElement, assetId: string, want: number): Promise<void> {
+  if (Math.abs(el.currentTime - want) <= 1e-4) return Promise.resolve()
+  return new Promise<void>((resolve, reject) => {
+    el.onseeked = () => resolve()
+    el.onerror = () => reject(new Error(`seek failed on ${assetId}`))
+    el.currentTime = want
+  })
+}
 
 const sessionVideoProvider = {
+  /**
+   * One seek at a time per element, and only the newest request gets one.
+   *
+   * Playback asks for a new frame every tick, faster than a seek completes.
+   * This used to start a seek per request on the same <video>, each assigning
+   * `onseeked` over the last — so every earlier request's promise never
+   * settled, and a playing clip drew nothing. Now requests queue behind each
+   * other, and one superseded before its turn is refused instead of seeking.
+   * The stage treats a refusal as "not ready" and shows the frame it has.
+   */
   async getFrame(assetId: string, sourceSec: number): Promise<Texture> {
     let elp = videoEls.get(assetId)
     if (!elp) {
@@ -48,17 +70,20 @@ const sessionVideoProvider = {
     }
     const el = await elp
     const want = Math.max(0, Math.min(sourceSec, Math.max(0, el.duration - 1e-3)))
-    if (Math.abs(el.currentTime - want) > 1e-4) {
-      await new Promise<void>((resolve, reject) => {
-        el.onseeked = () => resolve()
-        el.onerror = () => reject(new Error(`seek failed on ${assetId}`))
-        el.currentTime = want
-      })
+    const token = ++videoRequestSeq
+    videoLatest.set(assetId, token)
+
+    const run = async (): Promise<Texture> => {
+      if (videoLatest.get(assetId) !== token) throw new Error('superseded')
+      await seek(el, assetId, want)
+      // Straight from the element: a shared scratch canvas raced when two
+      // clips decoded at once.
+      return Texture.from(await createImageBitmap(el))
     }
-    snapshot.width = el.videoWidth
-    snapshot.height = el.videoHeight
-    snapshot.getContext('2d')!.drawImage(el, 0, 0)
-    return Texture.from(await createImageBitmap(snapshot))
+    const tail = videoQueue.get(assetId) ?? Promise.resolve()
+    const next = tail.then(run, run)
+    videoQueue.set(assetId, next.catch(() => undefined))
+    return next
   },
 }
 
@@ -117,6 +142,8 @@ export function Preview({ doc, time }: Props) {
           texProvider: new MathJaxTexProvider(),
           imageProvider: sessionImageProvider,
           videoProvider: sessionVideoProvider,
+          // Editor only — see the option's doc. Export never sets it.
+          holdVideoFrames: true,
         })
         app.ticker.add(() => {
           stage.update(docRef.current, timeRef.current)

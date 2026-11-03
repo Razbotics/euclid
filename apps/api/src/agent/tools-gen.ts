@@ -22,7 +22,11 @@ function asCapabilityError(e: unknown): never {
 /** The roster, rendered into the tool doc so the choice is visible without a second call. */
 function rosterFor(kind: GenKind): string {
   return modelsOfKind(kind)
-    .map((m) => `- \`${m.name}\` — ${m.credits} credits, ~${m.typicalSec}s. ${m.summary}`)
+    .map(
+      (m) =>
+        `- \`${m.name}\` — ${m.credits} credits, ~${m.typicalSec}s. ${m.summary}` +
+        (m.needsImage ? ' **Requires `imageUrl`.**' : ''),
+    )
     .join('\n')
 }
 
@@ -33,6 +37,20 @@ const WAITING = [
   'A generation that fails refunds its credits in full, so a failure costs time and nothing else.',
   '',
   'In review mode the file lands **pending the human\'s approval** — call request_review on it and wait before placing it. When iterating on a rejected file, pass `revises` with the old asset id so the versions stay linked and the human can compare them.',
+].join('\n')
+
+/**
+ * The grounding paragraph, shared by the two capabilities that take a
+ * reference image. Written once because the rule is one rule: an agent that
+ * learns it on generate_image must not have to relearn it on generate_video.
+ */
+const GROUNDING = [
+  '',
+  '**Grounding on a reference image.** A single generation is internally consistent for free; consistency *between* two generations has to be bought, by handing the second one an image from the first. Pass `imageUrl` with a model whose roster line says it requires one — a background, a person, a garment or an accessory then carries across instead of being re-invented.',
+  '',
+  '`imageUrl` takes **an image asset id from this project** (the usual case — it is nearly always a still this system just made; list_assets has the ids), a public URL, or a data: URL. An asset is read and sent inline, so it must be an image and under 3MB.',
+  '',
+  'A text-only model handed an `imageUrl` is **refused, not ignored** — it would otherwise return a good picture of the wrong thing. Scenes that need not match should simply be generated separately, with no reference at all.',
 ].join('\n')
 
 const MODEL_NAMES = FAL_MODELS.map((m) => m.name) as [string, ...string[]]
@@ -61,6 +79,7 @@ export const genTools = [
       rosterFor('image'),
       '',
       'Iterate on `flux-schnell` and only move up once the prompt is settled — the expensive models are not better at telling you whether the composition is right.',
+      GROUNDING,
       WAITING,
       '',
       '**Then put it in a scene with `add_image`**, which draws the still as an ordinary node — camera, animation and write_on all work on it. It can also feed generate_3d, though that needs a publicly reachable URL rather than a project asset.',
@@ -69,13 +88,32 @@ export const genTools = [
     args: z.object({
       ...genArgs,
       model: z.enum(MODEL_NAMES).default('flux-schnell'),
-      aspectRatio: z.enum(['1:1', '16:9', '9:16', '4:3', '3:4']).default('1:1'),
+      // Optional rather than defaulted: an image-to-image model takes its shape
+      // from the reference and refuses this, and a default the caller never
+      // typed would make that refusal impossible to understand. Undefined still
+      // means square, exactly as `'1:1'` did.
+      imageUrl: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('reference image to ground on — an image asset id, a public URL, or a data: URL'),
+      strength: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe(
+          'image-to-image only: how far the result may travel from the reference. Low keeps it, high leaves it',
+        ),
+      aspectRatio: z.enum(['1:1', '16:9', '9:16', '4:3', '3:4']).optional(),
     }),
-    async handler(ctx, { projectId, prompt, model, aspectRatio, path, revises }) {
+    async handler(ctx, { projectId, prompt, model, imageUrl, strength, aspectRatio, path, revises }) {
       const r = await startGeneration(ctx.env, projectId, ctx.userId, {
         model,
         prompt,
-        aspectRatio,
+        ...(imageUrl ? { imageUrl } : {}),
+        ...(strength !== undefined ? { strength } : {}),
+        ...(aspectRatio ? { aspectRatio } : {}),
         ...(path ? { path } : {}),
         ...(revises ? { revises } : {}),
       }).catch(asCapabilityError)
@@ -91,6 +129,12 @@ export const genTools = [
       '',
       'Models:',
       rosterFor('video'),
+      GROUNDING,
+      'For video the reference is the **opening frame**, so a shot can continue from the last frame of the one before it.',
+      '',
+      '**Directing by reference (`seedance-2.5-ref`).** Instead of an opening frame, give `referenceImages` and name them in the prompt as @Image1, @Image2… in the order passed — the subject (a face, an outfit, a set) and, for a clone, one **control tile per shot** (coarse depth colour-coded by scene, the face as a black/white negative, a pose skeleton on top; see docs/recipes.md). It is billed per second of output, so `durationSec` is required, and the response states the price.',
+      '',
+      '**Never pass the clip being cloned as a reference video.** It carries the original performer\'s face, body and look, and the model will reproduce them — the control tiles exist precisely to hand over geometry and pose without the likeness. `referenceVideos` is for footage this project owns the look of, such as an earlier generated scene to stay consistent with: asset ids only, each 1.8–30.2s, 30.2s in total, and billed on top of the output seconds.',
       WAITING,
       '',
       '**Then put it in a scene with `add_video`**, which plays the clip as an ordinary node. Note that video is much slower to render than anything else — every frame seeks the source and copies a picture out of it.',
@@ -99,13 +143,37 @@ export const genTools = [
     args: z.object({
       ...genArgs,
       model: z.enum(MODEL_NAMES).default('ltx-video'),
+      imageUrl: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('the still the clip opens on — an image asset id, a public URL, or a data: URL'),
+      referenceImages: z
+        .array(z.string().min(1))
+        .optional()
+        .describe('reference-to-video only: image asset ids or URLs, named @Image1… in the prompt'),
+      referenceVideos: z
+        .array(z.string().min(1))
+        .optional()
+        .describe('reference-to-video only: video asset ids, named @Video1… in the prompt'),
+      resolution: z
+        .enum(['480p', '720p', '1080p'])
+        .optional()
+        .describe('where the model offers a choice; lower is much cheaper — test at 480p'),
       aspectRatio: z.enum(['16:9', '9:16', '1:1']).optional(),
       durationSec: z.number().positive().max(30).optional().describe('where the model accepts one'),
     }),
-    async handler(ctx, { projectId, prompt, model, aspectRatio, durationSec, path, revises }) {
+    async handler(
+      ctx,
+      { projectId, prompt, model, imageUrl, referenceImages, referenceVideos, resolution, aspectRatio, durationSec, path, revises },
+    ) {
       const r = await startGeneration(ctx.env, projectId, ctx.userId, {
         model,
         prompt,
+        ...(imageUrl ? { imageUrl } : {}),
+        ...(referenceImages?.length ? { referenceImages } : {}),
+        ...(referenceVideos?.length ? { referenceVideos } : {}),
+        ...(resolution ? { resolution } : {}),
         ...(aspectRatio ? { aspectRatio } : {}),
         ...(durationSec ? { durationSec } : {}),
         ...(path ? { path } : {}),
@@ -154,7 +222,7 @@ export const genTools = [
       'Models:',
       rosterFor('model'),
       '',
-      '`imageUrl` must be reachable by the provider — a public URL, or a data URL. An asset id is not enough on its own, because project assets are not publicly readable.',
+      '`imageUrl` takes an image asset id from this project, a public URL, or a data: URL — an asset is read and inlined for the provider, so it must be an image and under 3MB.',
       WAITING,
       '',
       '**Then put it in the video with `import_mesh`**, which reads the GLB this produces and lands it as an ordinary mesh node — camera, animation and write_on all work on it. It is simplified on the way in, because imported geometry is stored in the document and the document has a hard size budget; the response says what it started from and what it became.',
@@ -164,7 +232,10 @@ export const genTools = [
     costsCredits: true,
     args: z.object({
       projectId: PROJECT_ID,
-      imageUrl: z.string().url().describe('public URL of the image to lift into 3D'),
+      imageUrl: z
+        .string()
+        .min(1)
+        .describe('the image to lift into 3D — an image asset id, a public URL, or a data: URL'),
       prompt: z.string().default('').describe('optional hint; most image-to-3D models ignore it'),
       model: z.enum(MODEL_NAMES).default('trellis'),
       path: z.string().optional().describe('e.g. /models/statue.glb'),

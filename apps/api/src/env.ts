@@ -23,6 +23,12 @@ export interface Env {
    * so rather than failing obscurely.
    */
   FAL_KEY?: string
+  /**
+   * Social ingest provider (SocialCrawl): reads a post link and its media.
+   * Optional — absent only disables import_social_video, which says so and
+   * points at upload instead.
+   */
+  SOCIALCRAWL_API_KEY?: string
   STRIPE_SECRET_KEY: string
   STRIPE_WEBHOOK_SECRET: string
   /** Shared secret for service-to-service calls (MCP worker, render worker). */

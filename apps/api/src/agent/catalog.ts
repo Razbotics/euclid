@@ -7,6 +7,7 @@ import { decisionTools } from './tools-decision'
 import { flowTools } from './tools-flow'
 import { genTools } from './tools-gen'
 import { gridTools } from './tools-grid'
+import { ingestTools } from './tools-ingest'
 import { mediaTools } from './tools-media'
 import { nodeTools } from './tools-node'
 import { planTools } from './tools-plan'
@@ -24,6 +25,7 @@ const ALL: Capability[] = [
   ...animTools,
   ...cameraTools,
   ...mediaTools,
+  ...ingestTools,
   ...genTools,
   ...previewTools,
   ...decisionTools,

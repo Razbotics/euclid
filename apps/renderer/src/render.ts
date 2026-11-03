@@ -30,7 +30,9 @@ import { buildFfmpegArgs } from './mux'
  *
  * Deployment target: Cloudflare Containers, fed by a Queue the API's
  * /render endpoint pushes to. Runs identically on a laptop:
- *   pnpm --filter @euclid/renderer render -- --project <id> --out out.mp4
+ *   pnpm --filter @euclid/renderer exec tsx src/render.ts --project <id> --out out.mp4
+ * (Not `render -- --project`: pnpm forwards the `--` itself, and parseArgs
+ * refuses it as an unexpected positional.)
  *
  * With --job it drives the job lifecycle: marks the job `rendering`, uploads
  * the MP4 to R2 through the API, marks it `done` — or marks it `failed`,

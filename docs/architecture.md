@@ -17,6 +17,29 @@ accumulated state, no wall-clock, no randomness. Consequences:
 Anything that would break this (physics, particles) must be expressed as a
 deterministic function of `t` when it's added.
 
+**The one sanctioned difference is what the editor shows while a video frame
+is still decoding** (2026-09-17). Export and `preview_frames` wait for
+`whenIdle()`, so every frame they keep is the exact frame for its `t`. The
+editor cannot wait — playback asks for a new frame every tick, faster than a
+seek completes, so every frame arrives after the playhead has moved on — and
+drawing nothing while pending made playing video a black canvas. The editor
+alone constructs the stage with `holdVideoFrames`, which keeps a video node's
+latest *delivered* frame on screen until the next one lands. The settled
+picture for a `(document, t)` is unchanged; only the milliseconds before it
+differ, and only in the editor. The stage's decoded-frame cache is also capped
+(90 frames): uncapped, playback kept a bitmap for every millisecond it asked
+for, and evicting is safe for export because a missing key is refetched and
+waited for.
+
+Both frame fetchers — the editor's and the export's — **queue seeks per video
+element** (2026-09-17). One `<video>` serves every node that plays an asset,
+and two nodes can want it on the same frame: a cut between two slices of one
+clip whose playback-rate rounding makes the first end at 7.5002s and the next
+start at 7.50s. Seeking concurrently reassigned `onseeked`, orphaned the first
+request, and the export waited on `whenIdle()` forever — a 14.7s edit hung at
+frame 450 of 882, twice, with no error. The editor additionally skips requests
+superseded before their turn; the export may not, and runs every one.
+
 ## Document model
 
 `packages/dsl` defines the scene document: project → scenes (sequential on

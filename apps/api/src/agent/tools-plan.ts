@@ -6,7 +6,7 @@ import {
   type PlanAssetKind,
   type ProposedPlan,
 } from '@euclid/dsl'
-import { falModel, modelsOfKind } from '../fal'
+import { falModel, modelsOfKind, priceOf } from '../fal'
 import { requireAsset } from '../services/assets'
 import { listPlans, proposePlan, reviewModeOf, setReviewMode } from '../services/plan'
 import { AccessError, projectStub } from '../shared'
@@ -50,6 +50,8 @@ const STOP_BLOCK = (decisionId: string, chat: string) =>
     'changes mean revise and propose again.',
   ].join('\n')
 
+const clip = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, max - 1)}…`)
+
 export const planTools = [
   capability({
     name: 'propose_plan',
@@ -85,6 +87,15 @@ export const planTools = [
             description: z.string().min(1).max(300).describe("what it is for, in the human's terms"),
             model: z.string().optional().describe('roster name; defaults to the cheap model of that kind'),
             count: z.number().int().min(1).max(20).default(1).describe('budgeted attempts, iterations included'),
+            durationSec: z
+              .number()
+              .positive()
+              .optional()
+              .describe('for models priced by length (the Seedance family): the clip length to budget for'),
+            resolution: z
+              .string()
+              .optional()
+              .describe('for models priced by frame size: the resolution to budget for'),
           }),
         )
         .max(30)
@@ -123,7 +134,18 @@ export const planTools = [
           description: a.description,
           model: m.name,
           count: a.count,
-          estCredits: m.credits * a.count,
+          // A per-second model is priced from the item's own length when it
+          // gives one. Without that the typical-call figure stands in — and it
+          // underestimated a 15s Seedance 2.5 clip by a third, so the gate
+          // refused the very generation the plan was proposed for.
+          estCredits:
+            (m.price && a.durationSec
+              ? priceOf(m, {
+                  prompt: '',
+                  durationSec: a.durationSec,
+                  ...(a.resolution ? { resolution: a.resolution } : {}),
+                })
+              : m.credits) * a.count,
         }
       })
 
@@ -260,7 +282,9 @@ export const planTools = [
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          question: `Review ${files.length} file(s): ${files.map((f) => f.path).join(', ')}`,
+          // The DO caps a question at 400 characters; the full list, with
+          // links, is in `detail` either way.
+          question: clip(`Review ${files.length} file(s): ${files.map((f) => f.path).join(', ')}`, 400),
           detail: (note ? `${note}\n\n` : '') + lines.join('\n'),
           options: [
             { id: 'approve', label: 'Approve', detail: 'unlocks placing these in the video' },
@@ -274,7 +298,14 @@ export const planTools = [
         }),
       })
       if (!res.ok) {
-        throw new CapabilityError(`could not open the review (${res.status})`, 502)
+        // The DO says *why* (a schema refusal names the field); dropping that
+        // left "could not open the review (400)", which no caller can act on.
+        const body = (await res.json().catch(() => ({}))) as { error?: string; detail?: string }
+        throw new CapabilityError(
+          `could not open the review (${res.status}): ${body.error ?? 'unknown'}` +
+            (body.detail ? ` — ${body.detail.slice(0, 300)}` : ''),
+          502,
+        )
       }
       const { decision } = (await res.json()) as { decision: Decision }
       const chat = [

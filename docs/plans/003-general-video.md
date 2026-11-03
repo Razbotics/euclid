@@ -724,6 +724,33 @@ filed by their own name. A refusal names the file and the reason, and stops
 rather than continuing — uploading three of five and reporting "failed" leaves
 the user guessing which two.
 
+### Reversed 2026-09-17: **a fetcher, through SocialCrawl**
+
+The user chose to integrate SocialCrawl (socialcrawl.dev) so a post link can be
+ingested directly — the reel-cloning workflow in docs/recipes.md starts from
+someone else's post, which option 1 cannot serve. Upload stays as it was;
+this adds a second door rather than replacing the first.
+
+What landed: `apps/api/src/socialcrawl.ts` (a provider seam shaped like fal.ts)
+and the `import_social_video` capability, which reads the post and **downloads
+its video in the same call** — SocialCrawl cannot host durable copies of
+login-gated posts (age-restricted ones among them), so the only media link is a
+short-lived signed CDN URL. The file lands as an ordinary video asset and runs
+through probe, shot detection and proxy exactly like an upload. Instagram only,
+deliberately: a platform is added when it has been exercised on a real post.
+
+What this does **not** settle, and should be decided before this is a product
+surface rather than a dev capability:
+
+- The ToS and copyright exposure the section above describes is now real. The
+  shape most tools in the category use — option 3, the user attests rights
+  plus a takedown path — has not been built.
+- Nothing records that an asset was imported rather than uploaded, so nothing
+  can enforce "never hand an imported clip to a generation as a reference"
+  (docs/recipes.md). Today that rule lives in the capability docs only.
+- A SocialCrawl read is not metered to the user (1 SocialCrawl credit per
+  import, a fraction of a cent), unlike every other paid provider.
+
 ## Sequencing
 
 1. **Finish the current audio/render loop first** (plans/002 Phases 3–4).
